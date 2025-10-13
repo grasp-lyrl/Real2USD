@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>real2usd</name>
+  <version>0.0.0</version>
+  <description>a package that does observes the world and builds a usd</description>
+  <maintainer email="chsu8@seas.upenn.edu">christopher hsu</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- depend are packages that are reuqred during build (c++) and execution -->
+  <!-- exec_depend is only for packages only needed at runtime, e.g. python-->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>example_interfaces</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>twist_mux</exec_depend>
+  <exec_depend>joy</exec_depend>
+  <exec_depend>teleop_twist_joy</exec_depend>
+  
+  <exec_depend>unitree_go</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

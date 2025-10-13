@@ -1,0 +1,56 @@
+# ROS2 workspace
+humble_ws/build
+humble_ws/install
+humble_ws/log
+
+# Gemini API key
+humble_ws/src_Real2USD/real2usd/config/gemini_key.py
+
+# Models
+models/
+mobileclip_blt.ts
+
+# Evaluation data
+humble_ws/evaluations/results/
+humble_ws/evaluations/pc_data/
+humble_ws/evaluations/clio/
+humble_ws/evaluations/supervisely/
+humble_ws/evaluations/usda/
+humble_ws/evaluations/odom/
+humble_ws/video_frames/
+
+humble_ws/vggt_evaluation*
+
+# System files
+.sudo_as_admin_successful
+.bash_history
+.ssh
+tmp
+data
+.cache
+.local
+.ros
+.vscode
+*.log
+*.egg-info/
+__pycache__/
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+eggs
+parts
+bin
+var
+sdist
+develop-eggs
+.installed.cfg
+lib
+lib64

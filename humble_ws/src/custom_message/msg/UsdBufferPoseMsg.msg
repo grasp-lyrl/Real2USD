@@ -1,0 +1,1 @@
+UsdStringIdPoseMsg[] objects 
