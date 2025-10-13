@@ -1,12 +1,14 @@
-# Real2USD: Scene Representation with Universal Scene Description Language
-close the loop: go2 edu quadruped <-> ros2 <-> isaac sim
+# Real2USD: Scene Representation with Universal Scene Description Language ([Paper]())
+Authors: Christopher D. Hsu and Pratik Chaudhari
 
-isaac sim in the robotics stack
+Large Language Models (LLMs) can help robots reason about abstract task specifications. This requires augmenting classical representations of the environment used by robots with natural language-based priors. There are a number of existing approaches to doing so, but they are tailored to specific tasks, e.g., visual-language models for navigation, language-guided neural radiance fields for mapping, etc. This paper argues that the Universal Scene Description (USD) language is an effective and general representation of geometric, photometric and semantic information in the environment for LLM-based robotics tasks. Our argument is simple: a USD is an XML-based scene graph, readable by LLMs and humans alike, and rich enough to support essentially any task---Pixar developed this language to store assets, scenes and even movies. We demonstrate a ``Real to USD'' system using a Unitree Go2 quadruped robot carrying LiDAR and a RGB camera that (i) builds an explicit USD representation of indoor environments with diverse objects and challenging settings with lots of glass, and (ii) parses the USD using Google's Gemini to demonstrate scene understanding, complex inferences, and planning. We also study different aspects of this system in simulated warehouse and hospital settings using Nvidia's Issac Sim.
 
 1. ubuntu 22
 2. ros2 humble
 3. unitree go2 edu
 4. isaac sim 4.5
+
+For semantic navigation fully in simulation (IsaacSim) Sec III of the paper, please see my [MobilityGen Fork](https://github.com/christopher-hsu/MobilityGen).
 
 ## Clone
 ```
@@ -16,8 +18,11 @@ if you just git clone and forget to use the `--recurse-submodules` flag you can 
 ```
 git submodule init
 git submodule update
-
-git pull origin master --recurse-submodules
+```
+for the go2_ros2_webrtc_sdk please use the `update` branch, if not already on that branch
+```
+cd src_go2_ros2_webrtc_sdk 
+git checkout update
 ```
 
 ## Docker container
@@ -107,7 +112,7 @@ ros2 launch real2usd real2usd.launch.py
 ```
 
 ### Running the code with a robot
-Start up your Unitree Go2. Follow the RoboVerse Unitree GO2 Ros2 SDK project setup where we utilize webRTC. The main requirement is to set the docker envirnoment variable `ROBOT_IP` which is also in `setup.sh`.
+Start up your Unitree Go2. Follow the RoboVerse Unitree GO2 Ros2 SDK project setup where we utilize webRTC. The main requirement is to set the docker envirnoment variable `ROBOT_IP` which is also set in `setup.sh`. To get the robot ip, connect to your Go2 via the Unitree app and find your wifi ip address.
 
 ```
 export CONN_TYPE='webrtc'
