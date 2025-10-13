@@ -1,4 +1,0 @@
-[submodule "humble_ws/src_go2_ros2_webrtc_sdk"]
-	path = humble_ws/src_go2_ros2_webrtc_sdk
-	url = git@github.com:grasp-lyrl/go2_ros2_webrtc_sdk.git
-	branch = update
