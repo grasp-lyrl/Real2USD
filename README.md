@@ -1,4 +1,4 @@
-# What Changed?
+# Real2USD: Scene Representation with Universal Scene Description Language
 close the loop: go2 edu quadruped <-> ros2 <-> isaac sim
 
 isaac sim in the robotics stack
@@ -10,7 +10,7 @@ isaac sim in the robotics stack
 
 ## Clone
 ```
-git clone --recurse-submodules git@github.com:grasp-lyrl/whatchanged.git
+git clone --recurse-submodules git@github.com:grasp-lyrl/Real2USD.git
 ```
 if you just git clone and forget to use the `--recurse-submodules` flag you can do:
 ```
