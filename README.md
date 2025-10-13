@@ -10,6 +10,8 @@ Large Language Models (LLMs) can help robots reason about abstract task specific
 
 For semantic navigation fully in simulation (IsaacSim) Sec III of the paper, please see my [MobilityGen Fork](https://github.com/christopher-hsu/MobilityGen).
 
+For a baseline in Sec V, we utilize [Clio: Real-time Task-Driven Open-Set 3D Scene Graphs](https://arxiv.org/abs/2404.13696) from MIT. Please see our forked version of [Clio-Eval github](https://github.com/christopher-hsu/Clio-Eval), which requires RealSense data.
+
 ## Clone
 ```
 git clone --recurse-submodules git@github.com:grasp-lyrl/Real2USD.git
@@ -125,7 +127,7 @@ In another terminal, launch the real2usd package
 ros2 launch real2usd real2usd.launch.py
 ```
 
-### Visualizing built USD in Isaac Sim
+### Visualizing the built USD in Isaac Sim
 The `real2usd` package and launch file will save the registered objects in a buffer in a `json` file. This was done so that an Isaac Sim instance was not needed during execution. We can upload the json buffer file to Isaac Sim to create a USD scene. Once again, outside of the docker container run the following using the `python.sh` from Isaacsim.
 ```
 BUFFER_PATH=/data/SimIsaacData/buffer/matched_buffer_123.json
