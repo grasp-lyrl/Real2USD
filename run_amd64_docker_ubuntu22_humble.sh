@@ -24,6 +24,7 @@ sudo docker run -it --rm\
     --volume="/home/$USER/.bash_aliases:/root/.bash_aliases" \
     --volume="$BAGS_DIR:/opt/bags" \
     --volume="/home/$USER/isaacsim:/opt/isaacsim" \
+    --volume="/home/$USER/repos/sam-3d-objects:/home/me/src_Real2USD/real2sam3d/sam-3d-objects" \
     --volume="$DATA_DIR:/data" \
     --env HOME=/home/me/tmp \
     --env XDG_CACHE_HOME=/home/me/tmp/.cache \

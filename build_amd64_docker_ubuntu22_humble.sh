@@ -14,13 +14,17 @@ sudo docker run -it --rm \
     --network=host \
     --ipc=host \
     --pid=host \
+    --gpus all \
     --env="DISPLAY=${DISPLAY}" \
     --env="QT_X11_NO_MITSHM=1" \
     --volume="./humble_ws:/home/me" \
+    --volume="/home/$USER/.bash_aliases:/root/.bash_aliases" \
+    --volume="$BAGS_DIR:/opt/bags" \
+    --volume="/home/$USER/isaacsim:/opt/isaacsim" \
+    --volume="/home/$USER/repos/sam-3d-objects:/home/me/src_Real2USD/real2sam3d/sam-3d-objects" \
+    --volume="$DATA_DIR:/data" \
     --env HOME=/home/me/tmp \
     --env XDG_CACHE_HOME=/home/me/tmp/.cache \
-    --volume="$BAGS_DIR:/opt/bags" \
-    --volume="$DATA_DIR:/data" \
     --user me \
     --privileged \
     --name="real2usd" \

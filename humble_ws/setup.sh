@@ -9,7 +9,8 @@ sudo apt-get update \
     gcc \
     git \
     python3 \
-    python3-pip
+    python3-pip \
+    wget
 
 # go2_ros2_sdk installations
 sudo apt install ros-$ROS_DISTRO-image-tools
@@ -23,6 +24,9 @@ rosdep update
 rosdep install --from-paths src_go2_ros2_webrtc_sdk --ignore-src --rosdistro=humble -y
 rosdep install --from-paths src_Real2USD --ignore-src --rosdistro=humble -y
 rosdep install --from-paths src --ignore-src --rosdistro=humble -y
+
+# Add local bin to PATH to avoid warnings
+export PATH="/home/me/tmp/.local/bin:$PATH"
 
 # ros2 building
 rm -rf build

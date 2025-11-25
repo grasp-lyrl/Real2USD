@@ -31,6 +31,9 @@ data
 .local
 .ros
 .vscode
+
+# User data directory (all hidden files go here via HOME=/home/me/tmp)
+humble_ws/tmp
 *.log
 *.egg-info/
 __pycache__/
