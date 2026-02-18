@@ -8,9 +8,11 @@ import numpy as np
 import open3d as o3d
 from scipy.spatial.transform import Rotation as R
 from custom_message.msg import UsdStringIdPoseMsg, UsdStringIdSrcTargMsg
+from std_msgs.msg import Float64
 from ipdb import set_trace as st
 from sklearn.cluster import DBSCAN
 import random
+import time
 
 
 class RegistrationNode(Node):
@@ -29,6 +31,7 @@ class RegistrationNode(Node):
         # Debug visualization publishers
         self.pub_clusters = self.create_publisher(PointCloud2, "/registration/clusters", 10)
         self.pub_best_match = self.create_publisher(PointCloud2, "/registration/best_match", 10)
+        self.timing_pub = self.create_publisher(Float64, "/timing/registration_node", 10)
         
         # Debug visualization parameters
         self.debug_visualization = True  # Set to False to disable debug visualization
@@ -59,6 +62,7 @@ class RegistrationNode(Node):
         self.cluster_colors = {}  # Store colors for each cluster
 
     def callback_src_targ(self, msg):
+        t_start = time.perf_counter()
         points_src = np.asarray(
             point_cloud2.read_points_list(
                 msg.src_pc, field_names=("x", "y", "z"), skip_nans=True
@@ -83,11 +87,12 @@ class RegistrationNode(Node):
 
             if t is not None and quatXYZW is not None:
                 # print(quatXYZW)
-                # publish data_path, id, and pose as a single message
-                msg = UsdStringIdPoseMsg()
-                msg.header = Header(frame_id="odom")
-                msg.data_path = usd_url
-                msg.id = trackId
+                # publish data_path, id, and pose as a single message (propagate header.stamp for e2e timing)
+                pose_msg = UsdStringIdPoseMsg()
+                pose_msg.header = msg.header
+                pose_msg.header.frame_id = "odom"
+                pose_msg.data_path = usd_url
+                pose_msg.id = trackId
                 pose = Pose()
                 pose.position.x = t[0]
                 pose.position.y = t[1]
@@ -96,8 +101,11 @@ class RegistrationNode(Node):
                 pose.orientation.x = quatXYZW[0]
                 pose.orientation.y = quatXYZW[1]
                 pose.orientation.z = quatXYZW[2]
-                msg.pose = pose
-                self.pub_pose.publish(msg)
+                pose_msg.pose = pose
+                self.pub_pose.publish(pose_msg)
+        timing_msg = Float64()
+        timing_msg.data = time.perf_counter() - t_start
+        self.timing_pub.publish(timing_msg)
 
     def preprocess_point_cloud(self, pcd, voxel_size, skip_downsample=False):
         # Minimal logging for preprocessing

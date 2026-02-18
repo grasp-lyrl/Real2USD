@@ -6,7 +6,7 @@ from go2_interfaces.msg import Go2State, IMU
 from nav_msgs.msg import Odometry
 # from custom_message.msg import UsdStringIdPCMsg
 from custom_message.msg import CropImgDepthMsg
-from std_msgs.msg import Header, Int64
+from std_msgs.msg import Header, Int64, Float64
 import cv2
 from cv_bridge import CvBridge
 import json, asyncio, time, pickle
@@ -47,6 +47,7 @@ class LidarDriverNode(Node):
         self.depth_pub = self.create_publisher(Image, "/depth_image/lidar", 10)
         self.rgbd_pub = self.create_publisher(Image, "/depth_image/rgbd", 10)
         self.color_pc_pub = self.create_publisher(PointCloud2, "/segment/pointcloud_color", 10)
+        self.timing_pub = self.create_publisher(Float64, "/timing/lidar_cam_node", 10)
 
         # prompted model
         model_path = "models/yoloe-11l-seg.pt"
@@ -84,6 +85,7 @@ class LidarDriverNode(Node):
 
 
         if lidar_pts.shape[0] > 0 and self.cam_info is not None and self.rgb_image is not None and self.odom_info["t"] is not None:    
+            t_start = time.perf_counter()
             # Process the lidar points into 2D camera frame and publish the depth image       
             depth_image, depth_color, mask = self.projection.lidar2depth(lidar_pts, self.cam_info, self.odom_info)
             depth_msg = self.bridge.cv2_to_imgmsg(depth_image, encoding="16UC1")
@@ -109,13 +111,15 @@ class LidarDriverNode(Node):
             self.get_logger().info(f"labels: {labels}")
             self.seg_pub.publish(img_result_msg)
 
+            # One stamp per frame so timing_node can measure time-per-frame (CropImgDepth → last StringIdPose for this frame)
+            frame_stamp = self.get_clock().now().to_msg()
             # publish the cropped image, depth image, and point cloud
             for ii in range(len(mask_pts)):
                 # Create new CropImgDepthMsg
                 crop_msg = CropImgDepthMsg()
                 
-                # Set header
-                crop_msg.header.stamp = self.get_clock().now().to_msg()
+                # Set header (same stamp for all objects in this frame)
+                crop_msg.header.stamp = frame_stamp
                 crop_msg.header.frame_id = "odom"
                 
                 # Set RGB image
@@ -156,6 +160,10 @@ class LidarDriverNode(Node):
                 
                 # Publish the message
                 self.crop_rgb_depth_pub.publish(crop_msg)
+            t_end = time.perf_counter()
+            timing_msg = Float64()
+            timing_msg.data = t_end - t_start
+            self.timing_pub.publish(timing_msg)
 
     def rgb_listener_callback(self, msg):
         image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")

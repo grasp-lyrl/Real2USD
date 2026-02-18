@@ -3,12 +3,27 @@ import time
 import asyncio
 import base64
 import cv2
-from config.gemini_key import GEMINI_API_KEY
+import os
+
+
+def _get_gemini_api_key():
+    """Prefer env var (works when installed); fall back to config.gemini_key when run from source."""
+    key = os.environ.get("GEMINI_API_KEY")
+    if key:
+        return key
+    try:
+        from config.gemini_key import GEMINI_API_KEY
+        return GEMINI_API_KEY
+    except ModuleNotFoundError:
+        raise RuntimeError(
+            "GEMINI_API_KEY not set. Either set the GEMINI_API_KEY environment variable "
+            "or, when running from source, ensure config/gemini_key.py exists (copy from gemini_key_template.py)."
+        ) from None
+
 
 class GeminiUSDSelector:
     def __init__(self):
-
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
+        self.client = genai.Client(api_key=_get_gemini_api_key())
         
         # Rate limiting variables
         self.last_gemini_call_time = 0

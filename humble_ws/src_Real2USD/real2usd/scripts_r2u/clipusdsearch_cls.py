@@ -8,6 +8,19 @@ from typing import List, Tuple, Dict, Optional
 import torch
 import torch.nn.functional as F
 from PIL import Image
+
+# Use CPU if no GPU or if GPU has unsupported CUDA capability (e.g. RTX 5090 sm_120)
+def _infer_device():
+    if not torch.cuda.is_available():
+        return "cpu"
+    try:
+        cap = torch.cuda.get_device_capability()
+        if cap[0] > 9:
+            return "cpu"
+    except Exception:
+        return "cpu"
+    return "cuda"
+
 import clip
 import json
 import asyncio
@@ -49,8 +62,8 @@ class CLIPUSDSearch:
         """
         self.model_name = model_name
         
-        # Load CLIP model
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Load CLIP model (use CPU when GPU has unsupported capability, e.g. RTX 5090)
+        self.device = _infer_device()
         self.model, self.preprocess = clip.load(model_name, device=self.device)
         
         # Initialize FAISS index

@@ -35,6 +35,7 @@ setup(
             "isaac_lidar_node = real2usd.nonessential_nodes.isaac_lidar_node:main",   
             "pc_node = real2usd.nonessential_nodes.pc_node:main",
             "stats_node = real2usd.nonessential_nodes.stats_node:main",
+            "timing_node = real2usd.nonessential_nodes.timing_node:main",
             "color_pc_node = real2usd.nonessential_nodes.color_pc_node:main",
         ],
     },

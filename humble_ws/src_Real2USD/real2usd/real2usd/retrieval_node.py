@@ -4,9 +4,9 @@ from sensor_msgs.msg import Image, PointCloud2
 from sensor_msgs_py import point_cloud2
 from custom_message.msg import UsdStringIdPCMsg
 from custom_message.msg import CropImgDepthMsg
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Float64
 from cv_bridge import CvBridge
-import json, asyncio
+import json, asyncio, time
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
@@ -51,6 +51,7 @@ class RetrievalNode(Node):
         self.seg_pc_pub = self.create_publisher(PointCloud2, "/segment/pointcloud", 10)
         self.usd_search_pub = self.create_publisher(Image, "/usd_search/image", 10)
         self.usd_search_result_pub = self.create_publisher(Image, "/usd_search/img_result", 10)
+        self.timing_pub = self.create_publisher(Float64, "/timing/retrieval_node", 10)
 
         self.ground_plane_height_threshold = 0.1  # Points below this height are considered ground
 
@@ -60,7 +61,7 @@ class RetrievalNode(Node):
 
         self.usdsearch = CLIPUSDSearch()
         self.usdsearch.load_index(self.faiss_index_path)
-        self.gemini_usd_selector = GeminiUSDSelector()
+        self.gemini_usd_selector = GeminiUSDSelector() if self.use_gemini else None
 
     def cam_info_callback(self, cam_msg):
         cam_info = {}
@@ -85,6 +86,15 @@ class RetrievalNode(Node):
         """
         msg: CropImgDepthMsg
         """
+        t_start = time.perf_counter()
+        try:
+            self._retrieval_callback_impl(msg)
+        finally:
+            timing_msg = Float64()
+            timing_msg.data = time.perf_counter() - t_start
+            self.timing_pub.publish(timing_msg)
+
+    def _retrieval_callback_impl(self, msg):
         # decompose the msg
         imgs_crop = self.bridge.imgmsg_to_cv2(msg.rgb_image, desired_encoding="bgr8")
         seg_pts = np.array(msg.seg_points).reshape(-1, 2)

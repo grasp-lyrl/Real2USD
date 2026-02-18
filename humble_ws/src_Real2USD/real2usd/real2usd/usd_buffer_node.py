@@ -9,9 +9,11 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial import ConvexHull, Delaunay, KDTree
 from pxr import Usd, UsdGeom, Gf
 from custom_message.msg import UsdStringIdPoseMsg, UsdBufferPoseMsg
+from std_msgs.msg import Float64
 import struct
 import json
 import os
+import time
 from datetime import datetime
 from collections import defaultdict
 
@@ -61,6 +63,7 @@ class USDBufferNode(Node):
         # Publishers
         self.pub_pcd = self.create_publisher(PointCloud2, "/usd/pcd_occupied", 10)
         self.pub_usd_pose = self.create_publisher(UsdBufferPoseMsg, "/usd/SimUsdPoseBuffer", 10)
+        self.timing_pub = self.create_publisher(Float64, "/timing/usd_buffer_node", 10)
 
     def _init_data_structures(self):
         """Initialize data structures for object tracking and point cloud processing"""
@@ -126,12 +129,16 @@ class USDBufferNode(Node):
         Handle incoming USD object messages and update the buffer.
         Processes new objects and updates spatial clustering.
         """
+        t_start = time.perf_counter()
         self.update_object_buffer(
             msg.id,
             msg.data_path,
             [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z],
             [msg.pose.orientation.w, msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z]
         )
+        timing_msg = Float64()
+        timing_msg.data = time.perf_counter() - t_start
+        self.timing_pub.publish(timing_msg)
 
     def update_object_buffer(self, obj_id, usd_file_path, position, quatWXYZ):
         """
