@@ -18,14 +18,6 @@ def generate_launch_description():
         ),
         Node(
             package='real2sam3d',
-            executable='retrieval_node',
-        ),
-        Node(
-            package='real2sam3d',
-            executable='isaac_lidar_node_preprocessed',
-        ),
-        Node(
-            package='real2sam3d',
             executable='registration_node',
         ),
         Node(
