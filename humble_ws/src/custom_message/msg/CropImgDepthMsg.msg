@@ -20,3 +20,6 @@ int64 track_id
 
 # Optional: Label of the detected object
 string label
+
+# Optional: Crop bbox in full-image coords [x_min, y_min, x_max, y_max] for aligning depth/mask to rgb crop (e.g. for SAM3D jobs)
+int32[] crop_bbox

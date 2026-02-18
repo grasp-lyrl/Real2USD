@@ -7,6 +7,8 @@ import time
 from ultralytics import SAM, FastSAM, YOLO, YOLOE
 from ultralytics import settings
 
+from scripts_r2s3d.track_id_utils import track_ids_from_boxes_id as _track_ids_from_boxes_id
+
 """
 author: Christopher D. Hsu
 email: chsu8@seas.upenn.edu
@@ -33,12 +35,20 @@ class Segmentation:
 
         self.model.set_classes(self.classes, self.model.get_text_pe(self.classes))
 
+    @staticmethod
+    def track_ids_from_boxes_id(boxes_id, num_boxes):
+        """Delegate to track_id_utils (no ultralytics in tests)."""
+        return _track_ids_from_boxes_id(boxes_id, num_boxes)
+
     def crop_img_w_bbox(self, image, retina_masks=True, imgsz=1024, conf=0.8, iou=0.9):
         """
         given an image (cv2), segment image under params and crop the image with the bounding box
         conf : Sets the minimum confidence threshold for detections. Objects detected with confidence below this threshold will be disregarded. Adjusting this value can help reduce false positives.
         iou: Intersection Over Union (IoU) threshold for Non-Maximum Suppression (NMS). Lower values result in fewer detections by eliminating overlapping boxes, useful for reducing duplicates.
-        disclaimer: segmentation tracks create a new track id if the object leaves the image
+        disclaimer: segmentation tracks create a new track id if the object leaves the image.
+        Ultralytics track(): with persist=True, same object in view keeps same id; when an object
+        leaves the frame and re-enters it gets a NEW id. result.boxes.id can be None if the tracker
+        does not assign an ID (e.g. first frame, lost association); we return -1 for those.
 
         returns:
         full image with annotations in cv2
@@ -86,8 +96,8 @@ class Segmentation:
                 class_names = [""] * len(box_xyxy)
                 class_names_usd = [""] * len(box_xyxy)
 
-            # Then try to get track IDs separately
-            track_ids = result.boxes.id.int().cpu().tolist()
+            # Track IDs: can be None when tracker doesn't assign (e.g. first frame, lost association)
+            track_ids = self.track_ids_from_boxes_id(result.boxes.id, len(box_xyxy))
 
         except:
             # If no detections at all, return empty lists

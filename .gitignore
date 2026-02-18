@@ -58,3 +58,5 @@ develop-eggs
 .installed.cfg
 lib
 lib64
+.pytest_cache/
+.pytest_ros_log/

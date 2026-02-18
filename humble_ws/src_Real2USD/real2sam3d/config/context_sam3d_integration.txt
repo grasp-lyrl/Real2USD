@@ -1,0 +1,104 @@
+CONTEXT: INTEGRATING SAM3D-OBJECTS INTO REAL2USD PIPELINE
+
+WORKING RULES (for anyone editing this integration)
+- Only edit files under real2sam3d (and custom_message when new or changed message types are needed for the integration). Do not modify real2usd or other baseline packages; use real2usd only to read and understand the pipeline.
+- Update this context file as the integration progresses and as you learn more about the problem (e.g. new findings, design decisions, file locations, or constraints).
+
+1. OVERVIEW
+The Real2USD pipeline currently maps environments by segmenting objects (YOLOE) and retrieving matching .usd assets from a database (CLIP + FAISS). We are introducing a "Generative Branch" using SAM3D-Objects to handle "unseen" objects that do not exist in the database. This repo runs entirely inside Docker; SAM3D has non-trivial dependencies and may require a separate conda env, so masks and inputs are written to disk and processed by an external SAM3D worker.
+
+2. REAL2USD PIPELINE (REFERENCE)
+- lidar_cam_node: Subscribes to /camera/image_raw, /point_cloud2, /camera/camera_info, /odom. Runs YOLOE segmentation (segment_cls), projects lidar to depth, publishes one CropImgDepthMsg per detected object on /usd/CropImgDepth.
+- retrieval_node: Subscribes to /usd/CropImgDepth. Runs CLIP embedding + FAISS search; optionally Gemini for best match. Publishes UsdStringIdPCMsg (data_path, id, pc) on /usd/StringIdPC when a match is found. Currently returns without publishing when no label match or no URLs.
+- isaac_lidar_node_preprocessed: Subscribes to /usd/StringIdPC. Loads preprocessed point cloud for the USD, publishes UsdStringIdSrcTargMsg (src_pc from USD, targ_pc from segment) on /usd/StringIdSrcTarg.
+- registration_node: Subscribes to /usd/StringIdSrcTarg. Runs FGR+ICP to align source to target; publishes UsdStringIdPoseMsg (data_path, id, pose) on /usd/StringIdPose.
+- usd_buffer_node: Subscribes to /usd/StringIdPose and /global_lidar_points. Clusters objects, matches to point cloud, publishes UsdBufferPoseMsg; periodically saves matched buffer to disk.
+
+real2sam3d launch currently omits retrieval_node and isaac_lidar_node (base pipeline without CLIP). For hybrid integration we will add retrieval (or a hybrid retrieval node) and a path that triggers SAM3D when CLIP confidence is below threshold.
+
+BASIC COMPONENTS (to confirm SAM3D can run in the pipeline):
+- CropImgDepthMsg (custom_message): optional crop_bbox [x_min, y_min, x_max, y_max]; real2sam3d lidar_cam_node sets it so depth/mask can be aligned to rgb crop. New or changed custom_message types are allowed when needed for the integration.
+- sam3d_job_writer_node: Subscribes to /usd/CropImgDepth; writes queue_dir/input/<job_id>/ with rgb.png, mask.png, depth.npy, meta.json. track_id from Ultralytics: same object in view keeps same id (persist=True); object leaving and re-entering frame gets a NEW id; boxes.id can be None (we use -1). Dedup: dedup_track_id_sec (default 60) skips same track_id within N s (only for id >= 0); dedup_position_m (default 0.5) skips same label + position within N m. Launch with sam3d_job_writer:=true (default), queue dir via sam3d_queue_dir. Core logic in write_sam3d_job() for unit testing.
+- scripts_sam3d_worker/run_sam3d_worker.py: Run in sam3d-objects env; reads input jobs, runs SAM3D (or --dry-run to only write pose.json). Use --once --dry-run to confirm pipeline without SAM3D installed.
+
+RUNNING THE FULL PIPELINE (ROS2 LAUNCH):
+- The main pipeline is started with ros2 launch (tests remain pytest). Single entry point:
+  ros2 launch real2sam3d real2sam3d.launch.py
+- Launch runs: lidar_cam_node, registration_node, usd_buffer_node; optionally sam3d_job_writer_node, sam3d_injector_node; optionally the SAM3D worker process (run_sam3d_worker:=true). Flow: lidar_cam -> job_writer -> [worker] -> injector -> usd_buffer. Injector watches queue_dir/output and publishes UsdStringIdPoseMsg so usd_buffer_node receives generated objects.
+- Launch args: sam3d_queue_dir (base path, default /data/sam3d_queue), use_run_subdir (default true: create a new run_YYYYMMDD_HHMMSS subdir per launch so each run has its own input/output), sam3d_job_writer, sam3d_injector, run_sam3d_worker. Set run_sam3d_worker:=true to run the worker in the same launch. Set use_run_subdir:=false to use the base dir as a single shared queue.
+- For real SAM3D inference (separate conda env), run the worker in another terminal/container and keep injector in the launch so results are published to /usd/StringIdPose. User checklist: config/USER_NEXT_STEPS.md.
+
+BUILD PLAN AND TESTS:
+- Methodical build plan: config/SAM3D_BUILD_PLAN.md (phases 0–6, deliverables, test mapping).
+- Run SAM3D tests after sourcing workspace: python3 -m pytest src_Real2USD/real2sam3d/test/test_sam3d_*.py -v. See test/README_TESTS.md.
+- Phase 1 tests: test_sam3d_job_writer.py (write_sam3d_job produces valid job dirs), test_sam3d_worker.py (load_job + process_one_job dry-run).
+
+3. INPUTS AVAILABLE FROM REAL2USD
+- CropImgDepthMsg (per object) on /usd/CropImgDepth:
+  - rgb_image: Cropped RGB (bbox + padding) for the object.
+  - seg_points: Flattened [u1,v1,u2,v2,...] in full-image coordinates (mask pixels from YOLOE).
+  - depth_image: Full-frame depth (16UC1) from lidar projection.
+  - camera_info: K, P, width, height.
+  - odometry: Pose (position, quaternion) in odom frame.
+  - track_id, label: YOLOE track ID and semantic label (e.g. "Chair", "Table").
+- For SAM3D we need (RGB, Mask, Depth). From CropImgDepth we can derive:
+  - Cropped RGB: use rgb_image as-is.
+  - Cropped depth: crop depth_image using the same bbox that produced the crop (bbox can be inferred from seg_points extents or passed separately if we extend the message).
+  - Binary mask: Rasterize seg_points into a full-frame mask, then crop to the same bbox; or rasterize in crop coordinates using seg_points minus bbox origin. Prefer crop-space mask so SAM3D receives aligned (crop_rgb, crop_mask, crop_depth).
+
+4. SAM3D-OBJECTS REQUIREMENTS & ENVIRONMENT
+- Model: SAM3D-Objects (SAM3D-Team et al., 2025).
+- Input: Pair (RGB, Mask) + conditioning Depth. Use cropped RGB, cropped binary mask (from seg_points), and cropped depth; all in the same crop frame.
+- Output: 3D Mesh (.glb) or Gaussian Splat (.ply).
+- Sampling Rate: Offline processing (~0.02 Hz per image frame).
+- Package requirements are non-trivial (conda env, PyTorch/CUDA, pytorch3d, Kaolin, etc.). SAM3D runs on the host in a conda env "sam3d-objects" (repo sam-3d-objects, kept outside Real2USD). The ROS2 pipeline in Docker does not import SAM3D.
+- Disk-based handoff: The ROS2 side (in Docker) writes jobs to a shared directory (e.g. host path mounted as /data/sam3d_queue/input/). Each job is a folder: rgb.png, mask.png, depth.npy, meta.json. A worker process on the host (sam3d-objects conda env) reads input/, runs SAM3D, writes output/ (e.g. object.usd, pose.json). The "generated-USD injector" node in Docker watches output/ and publishes UsdStringIdPoseMsg so usd_buffer_node and overlay work unchanged.
+
+5. PIPELINE LOGIC (CODING GOALS)
+Implement a "Hybrid Decision Module":
+A) Confidence check: In retrieval_node (or a new hybrid_retrieval_node), after CLIP+FAISS search, if the best cosine score (or Gemini confidence when used) is below threshold T, or no label-matched result exists, do not publish UsdStringIdPCMsg; instead enqueue a SAM3D job (write CropImgDepth-derived inputs to the shared input directory with a unique job_id and track_id in meta.json).
+B) Generative branch (worker, outside ROS2):
+   1. Read job from input directory; load rgb, mask, depth.
+   2. Run SAM3D; output mesh (.glb).
+   3. Transform mesh from camera frame to world frame using odom from meta.json (same convention as Real2USD: Z-up, odom frame).
+   4. Convert .glb to .usd (e.g. via pxr/Usd or usd-core); save to output directory; write pose.json (position, quaternion) and job_id/track_id.
+C) Integration (ROS2):
+   1. "Generated-USD injector" node: Watch output directory for new job results; for each new result publish UsdStringIdPoseMsg with data_path = path to generated .usd, id = track_id, pose = from pose.json. This feeds usd_buffer_node and downstream overlay without changing them.
+   2. Optionally run registration for generated meshes (source = sampled points from generated USD, target = segment PC) for refinement; or use odom-derived pose directly for simplicity.
+   3. When building the main scene USDA, insert generated objects as Xform with SemanticsAPI and PhysicsCollisionAPI (see section 8).
+
+6. DOCKER & DEPLOYMENT (BEST PRACTICE)
+- Pipeline only in Docker: one container runs the ROS2 stack (real2sam3d nodes). No conda, no SAM3D in the image. Small and fast to rebuild.
+- Worker on host: SAM3D runs in a conda env (sam3d-objects) on the host, outside Docker. Keep the sam-3d-objects repo outside the Real2USD repo.
+- Shared queue: /data/sam3d_queue on both host and container (create on host, mount into container as -v /data/sam3d_queue:/data/sam3d_queue). Pipeline writes input/; worker on the host reads input/ and writes output/; injector in the container sees output/ and publishes to ROS. Ensure the queue directory is writable and has enough space.
+
+7. DATA STRUCTURE & CLEANING (REPEATED OBJECTS)
+- Keep lidar_cam_node unchanged: do not restrict the number of objects published there. Segmentation and CropImgDepth are the single source of truth for retrieval and for SAM3D; throttling at the source would drop valid detections.
+- Filter when enqueueing SAM3D jobs: to avoid running the slow SAM3D process on the same object many times, deduplicate in the job writer (or in the future hybrid retrieval node when it enqueues a job). Do not filter in lidar_cam_node.
+- Dedup logic (in job writer): (1) Same track_id: skip if we already wrote a job for this track_id within the last N seconds (e.g. 30–60 s). (2) Same label + nearby 3D position: skip if we already have a recent job with same label and position within a distance threshold (handles track_id changes when object leaves/re-enters frame). Conflict resolution: keep first-seen (or highest confidence when available).
+- Comparison 1: Cosine similarity of YOLOE semantic labels (or exact label match).
+- Comparison 2: If labels match, calculate 3D Intersection over Union (IoU) of bounding boxes (from segment PC or odom pose).
+- Can also be reinforced in the injector node or usd_buffer_node (which already clusters by position and label).
+
+8. TARGET USD SCHEMA FOR GENERATED OBJECTS
+When writing or referencing generated meshes in the main scene, use USDA like:
+
+    def Xform "generated_object_N" (
+        prepend apiSchemas = ["SemanticsAPI:Semantics", "PhysicsCollisionAPI", "PhysicsMeshCollisionAPI", "PhysicsRigidBodyAPI"]
+    )
+    {
+        custom string semanticLabel = "unique_object_name"
+        double3 xformOp:translate = (X, Y, Z)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        def Mesh "mesh" (
+            prepend payload = @./generated_meshes/object_N.usd@
+        ) {}
+    }
+
+Generated .usd files should live under a stable path (e.g. /data/generated_meshes/ or inside the queue output dir) so that usd_buffer_node and overlay can resolve data_path.
+
+9. CONSTRAINTS
+- Real-time is not required for SAM3D; focus on metric accuracy.
+- Depth conditioning is mandatory so the generated mesh is scaled correctly to the real world.
+- Coordinate system must match existing Real2USD world frame (Z-up, odom).
+- Do not add SAM3D as a Python dependency of the ROS2 package; use disk-based handoff and a separate env/process/container for SAM3D.

@@ -103,12 +103,14 @@ class LidarDriverNode(Node):
             self.color_pc_pub.publish(color_pc_msg)
 
             # Segment the image and publish the segmentation output and tracks
-            result, _, imgs_crop, _, mask_pts, track_ids, labels, labels_usd = self.segment.crop_img_w_bbox(self.rgb_image, conf=0.5, iou=0.2)
+            result, _, imgs_crop, box_pts, mask_pts, track_ids, labels, labels_usd = self.segment.crop_img_w_bbox(self.rgb_image, conf=0.5, iou=0.2)
             # publish annotated segmented image
             img_result_msg = self.bridge.cv2_to_imgmsg(result, encoding="bgr8")
             self.get_logger().info(f"labels: {labels}")
             self.seg_pub.publish(img_result_msg)
 
+            dim_x, dim_y = self.rgb_image.shape[1], self.rgb_image.shape[0]
+            pad = 10  # same as segment_cls img_crop padding
             # publish the cropped image, depth image, and point cloud
             for ii in range(len(mask_pts)):
                 # Create new CropImgDepthMsg
@@ -117,6 +119,14 @@ class LidarDriverNode(Node):
                 # Set header
                 crop_msg.header.stamp = self.get_clock().now().to_msg()
                 crop_msg.header.frame_id = "odom"
+                
+                # Crop bbox in full-image coords (same as img_crop: box + pad) for SAM3D job alignment
+                bp = box_pts[ii]
+                x_min = int(np.clip(bp[1, 0] - pad, 0, dim_x - 1))
+                y_min = int(np.clip(bp[1, 1] - pad, 0, dim_y - 1))
+                x_max = int(np.clip(bp[4, 0] + pad, 0, dim_x - 1))
+                y_max = int(np.clip(bp[4, 1] + pad, 0, dim_y - 1))
+                crop_msg.crop_bbox = [x_min, y_min, x_max, y_max]
                 
                 # Set RGB image
                 crop_msg.rgb_image = self.bridge.cv2_to_imgmsg(imgs_crop[ii], encoding="bgr8")
