@@ -18,6 +18,7 @@ humble_ws/evaluations/supervisely/
 humble_ws/evaluations/usda/
 humble_ws/evaluations/odom/
 humble_ws/video_frames/
+humble_ws/evaluations/timing_results/
 
 humble_ws/vggt_evaluation*
 
