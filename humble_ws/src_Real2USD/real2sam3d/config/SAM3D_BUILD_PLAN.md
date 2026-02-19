@@ -62,6 +62,8 @@ python3 -m pytest src_Real2USD/real2sam3d/test/test_sam3d_worker.py -v
 
 **Goal:** When CLIP retrieval confidence is below threshold (or no match), enqueue a SAM3D job instead of publishing UsdStringIdPC.
 
+**Detailed plan (FAISS index for SAM3D objects + multi-view capture):** See `config/PHASE3_FAISS_MULTIVIEW_PLAN.md`.
+
 **Deliverables:**
 - Port or add retrieval (CLIP + FAISS) into real2sam3d, or a thin "hybrid_retrieval_node" that:
   - Subscribes to `/usd/CropImgDepth`.

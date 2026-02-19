@@ -68,6 +68,21 @@ Run the full path (job writer → worker → injector) **without** the SAM3D con
    Replace `/path/to/sam-3d-objects` with the path to your sam-3d-objects repo (the directory that contains `notebook/` and `checkpoints/`).
    If you use per-run subdirs, pass the same run dir: `--queue-dir /data/sam3d_queue/run_YYYYMMDD_HHMMSS`. The injector in the container will see new results in `output/` and publish them to `/usd/StringIdPose`.
 
+4. **Worker output and frame:** The worker writes **object.ply** (gaussian splat) and **object.glb** (mesh, when the inference returns `output["glb"]`) in **object-local frame** (centroid at origin, world axes), plus `pose.json` and a copy of `rgb.png`. Both assets are transformed from SAM3D’s camera frame to world using `meta["odometry"]`; the frame convention matches [demo_go2.py](https://github.com/christopher-hsu/sam-3d-objects/blob/main/demo_go2.py). When both are present, the same world centroid (from the PLY) is used so pose and origin are consistent. For a camera offset (e.g. go2), include in `meta.json`: `"R_world_to_cam"` and `"t_world_to_camera"`. The worker needs **plyfile** for the PLY transform; if the inference provides a trimesh as `output["glb"]`, it is exported as object.glb (no extra deps beyond the inference API).
+
+5. **FAISS indexer (Phase 3):** To build a similarity-search index over SAM3D-generated objects, run the indexer where CLIP and FAISS are installed (e.g. same host as worker or a conda env with `clip`, `faiss-cpu`/`faiss-gpu`, `torch`). It watches `queue_dir/output/` and adds each new job’s `rgb.png` (or `views/*.png` if present) + object path to the index. You do **not** need to create a faiss folder: the script creates `<index-path>/faiss/` and puts all outputs there (`index.faiss`, `index.pkl`, `indexed_jobs.txt`). Example:
+   ```bash
+   cd /path/to/Real2USD/humble_ws/src_Real2USD/real2sam3d/scripts_sam3d_worker
+   python index_sam3d_faiss.py --queue-dir /data/sam3d_queue --index-path /data/sam3d_faiss --once
+   ```
+   Or run continuously: omit `--once` so it scans every `--watch-interval` seconds (default 5). Requires **real2usd** in the workspace (for `scripts_r2u/clipusdsearch_cls.py`).
+
+6. **Multi-view rendering (Phase 3b):** For richer FAISS retrieval, render multiple views **with appearance** (vertex colors / materials) into `output/<job_id>/views/0.png .. N-1.png`. The script prefers **object.glb** when present (mesh + materials), then **object.ply** (mesh or point cloud; vertex colors used when available). So retrieval matches on look, not just shape. Requires **open3d** (`pip install open3d`). For GLB: **trimesh** (`pip install trimesh`). Example:
+   ```bash
+   python render_sam3d_views.py --job-dir /data/sam3d_queue/output/<job_id>
+   ```
+   Or scan the queue: `python render_sam3d_views.py --queue-dir /data/sam3d_queue --once`. Uses 8 azimuth views by default. For best results, export **object.glb** from SAM3D (e.g. in the worker or in demo_go2) so views are rendered with full appearance.
+
 ---
 
 ## 3. Checklist summary
@@ -77,6 +92,8 @@ Run the full path (job writer → worker → injector) **without** the SAM3D con
 | Queue dir | `mkdir -p /data/sam3d_queue` on the host. Mount into the container: `-v /data/sam3d_queue:/data/sam3d_queue`. Same path on both sides. |
 | Pipeline | Docker only. Build: `colcon build --packages-select custom_message real2sam3d`, then `ros2 launch real2sam3d real2sam3d.launch.py` (no worker in launch). |
 | Worker | On host: `conda activate sam3d-objects` then `python run_sam3d_worker.py --queue-dir /data/sam3d_queue`. |
+| FAISS indexer | On host (CLIP/FAISS env): `python index_sam3d_faiss.py --queue-dir /data/sam3d_queue --index-path /data/sam3d_faiss` (or `--once`). |
+| Multi-view render | Optional: `python render_sam3d_views.py --queue-dir /data/sam3d_queue --once` (needs open3d). Indexer then uses `views/*.png` when present. |
 | Dry-run (no conda) | Inside Docker: `ros2 launch real2sam3d real2sam3d.launch.py run_sam3d_worker:=true`. |
 | Dedup | Job writer skips same object within 60 s (track_id) or 0.5 m (label+position). Set `dedup_track_id_sec:=0` and `dedup_position_m:=0` to disable. |
 | Tests | Inside Docker after build: `python3 -m pytest src_Real2USD/real2sam3d/test/test_sam3d_*.py -v`. |

@@ -19,6 +19,11 @@ import sys
 import time
 from pathlib import Path
 
+# Allow importing ply_frame_utils when run from any cwd (e.g. share/real2sam3d/scripts_sam3d_worker/)
+_script_dir = Path(__file__).resolve().parent
+if str(_script_dir) not in sys.path:
+    sys.path.insert(0, str(_script_dir))
+
 
 def _move_to_processed(job_path: Path, processed_dir: Path) -> None:
     """Move a completed job from input/ to input_processed/ so we don't reprocess it."""
@@ -107,14 +112,12 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
         print(f"[ERROR] {e}", file=sys.stderr)
         return False
 
-    # Pose in world (odom) frame: we use odometry as placeholder; SAM3D output is in camera frame,
-    # so a full implementation would transform mesh to world using meta["odometry"].
+    # Pose: keep robot/camera pose when image was retrieved (from odom); useful for later (e.g. registration).
     odom = meta["odometry"]
-    position = odom["position"]
-    orientation = odom["orientation"]  # x,y,z,w
+    position = list(odom["position"])
+    orientation = list(odom["orientation"])  # qx, qy, qz, qw
 
     if dry_run:
-        # Only write pose so downstream can confirm pipeline; no mesh/ply.
         pose = {
             "position": position,
             "orientation": orientation,
@@ -125,6 +128,11 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
         with open(out_path / "pose.json", "w") as f:
             json.dump(pose, f, indent=2)
         (out_path / "object.ply").write_text("# dry-run placeholder\n")
+        try:
+            if (job_path / "rgb.png").exists():
+                shutil.copy2(str(job_path / "rgb.png"), str(out_path / "rgb.png"))
+        except OSError:
+            pass
         print(f"[dry-run] Wrote pose.json and placeholder object.ply for {job_id}")
         return True
 
@@ -134,14 +142,38 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
         print(f"[ERROR] SAM3D inference failed for {job_id}: {e}", file=sys.stderr)
         return False
 
-    # Export: gaussian splat as PLY (injector needs pose.json + object.ply or object.usd)
+    # Export: PLY and GLB centered at origin only (no odom transform). Registration places object later.
     object_ply_path = out_path / "object.ply"
+    object_glb_path = out_path / "object.glb"
     if "gs" in output:
         output["gs"].save_ply(str(object_ply_path))
+        try:
+            from ply_frame_utils import center_ply_to_origin
+            center_ply_to_origin(object_ply_path, out_path=object_ply_path, z_up=True)
+        except Exception as e:
+            print(f"[WARN] Could not center PLY to origin: {e}", file=sys.stderr)
     else:
-        # So injector still picks up this job; log that we didn't get gs
         object_ply_path.write_text("# no gs in output (keys: {})\n".format(list(output.keys()) if isinstance(output, dict) else type(output).__name__))
         print(f"[WARN] SAM3D output had no 'gs'; wrote placeholder object.ply for {job_id}. Keys: {list(output.keys()) if isinstance(output, dict) else 'N/A'}", file=sys.stderr)
+
+    # Export GLB centered at origin, Z-up world frame (SAM3D/glTF use Y-up).
+    if "glb" in output:
+        try:
+            import numpy as np
+            from ply_frame_utils import vertices_y_up_to_z_up
+            glb_mesh = output["glb"]
+            if hasattr(glb_mesh, "vertices") and hasattr(glb_mesh, "export"):
+                verts = np.asarray(glb_mesh.vertices, dtype=np.float64)
+                centroid = np.mean(verts, axis=0)
+                verts_local = verts - centroid
+                verts_local = vertices_y_up_to_z_up(verts_local)
+                glb_mesh.vertices = verts_local
+                glb_mesh.export(str(object_glb_path))
+                print(f"[OK] Wrote object.glb (origin, Z-up)", file=sys.stderr)
+            else:
+                print(f"[WARN] output['glb'] is not a trimesh (no vertices/export); skipping GLB.", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARN] Could not export object.glb: {e}", file=sys.stderr)
 
     pose = {
         "position": position,
@@ -152,7 +184,19 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
     }
     with open(out_path / "pose.json", "w") as f:
         json.dump(pose, f, indent=2)
-    print(f"[OK] Wrote {out_path} (pose.json + object.ply)", file=sys.stderr)
+
+    # Copy input crop to output so result dir is self-contained (for FAISS indexer / multi-view)
+    try:
+        src_rgb = job_path / "rgb.png"
+        if src_rgb.exists():
+            shutil.copy2(str(src_rgb), str(out_path / "rgb.png"))
+    except OSError as e:
+        print(f"[WARN] Could not copy rgb.png to output: {e}", file=sys.stderr)
+
+    outputs = "pose.json + object.ply"
+    if object_glb_path.exists():
+        outputs += " + object.glb"
+    print(f"[OK] Wrote {out_path} ({outputs}, origin)", file=sys.stderr)
     return True
 
 
