@@ -31,6 +31,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/UsdStringIdSrcTargMsg.msg"
   "msg/CropImgDepthMsg.msg"
   "msg/UsdBufferPoseMsg.msg"
+  "msg/SlotReadyMsg.msg"
+  "msg/Sam3dObjectForSlotMsg.msg"
   DEPENDENCIES std_msgs geometry_msgs sensor_msgs nav_msgs
   )
 # uncomment the following section in order to fill in

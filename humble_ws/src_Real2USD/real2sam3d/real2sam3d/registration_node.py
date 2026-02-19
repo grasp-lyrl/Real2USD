@@ -59,45 +59,56 @@ class RegistrationNode(Node):
         self.cluster_colors = {}  # Store colors for each cluster
 
     def callback_src_targ(self, msg):
-        points_src = np.asarray(
-            point_cloud2.read_points_list(
-                msg.src_pc, field_names=("x", "y", "z"), skip_nans=True
+        try:
+            points_src = np.asarray(
+                point_cloud2.read_points_list(
+                    msg.src_pc, field_names=("x", "y", "z"), skip_nans=True
+                )
             )
-        )
-        points_targ = np.asarray(
-            point_cloud2.read_points_list(
-                msg.targ_pc, field_names=("x", "y", "z"), skip_nans=True
+            points_targ = np.asarray(
+                point_cloud2.read_points_list(
+                    msg.targ_pc, field_names=("x", "y", "z"), skip_nans=True
+                )
             )
-        )
+        except Exception as e:
+            self.get_logger().warn(f"Failed to read point clouds: {e}")
+            return
         usd_url = msg.data_path
         trackId = msg.id
 
-        if len(points_src) != 0 and len(points_targ) != 0:
+        if len(points_src) == 0 or len(points_targ) == 0:
+            return
+        try:
             t, quatXYZW, points_transformed = self.get_pose(points_src, points_targ)
-            if points_transformed is not None:
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            self.get_logger().warn(f"Registration failed for {usd_url}: {e}")
+            return
+        if points_transformed is not None:
+            try:
                 self.pub_odom_pc_seg.publish(
                     point_cloud2.create_cloud_xyz32(
                         header=Header(frame_id="odom"), points=np.asarray(points_transformed)
                     )
                 )
-
-            if t is not None and quatXYZW is not None:
-                # print(quatXYZW)
-                # publish data_path, id, and pose as a single message
-                msg = UsdStringIdPoseMsg()
-                msg.header = Header(frame_id="odom")
-                msg.data_path = usd_url
-                msg.id = trackId
-                pose = Pose()
-                pose.position.x = t[0]
-                pose.position.y = t[1]
-                pose.position.z = t[2]
-                pose.orientation.w = quatXYZW[3]
-                pose.orientation.x = quatXYZW[0]
-                pose.orientation.y = quatXYZW[1]
-                pose.orientation.z = quatXYZW[2]
-                msg.pose = pose
-                self.pub_pose.publish(msg)
+            except Exception:
+                pass
+        if t is not None and quatXYZW is not None:
+            pose_msg = UsdStringIdPoseMsg()
+            pose_msg.header = Header(frame_id="odom")
+            pose_msg.data_path = usd_url
+            pose_msg.id = trackId
+            pose = Pose()
+            pose.position.x = t[0]
+            pose.position.y = t[1]
+            pose.position.z = t[2]
+            pose.orientation.w = quatXYZW[3]
+            pose.orientation.x = quatXYZW[0]
+            pose.orientation.y = quatXYZW[1]
+            pose.orientation.z = quatXYZW[2]
+            pose_msg.pose = pose
+            self.pub_pose.publish(pose_msg)
 
     def preprocess_point_cloud(self, pcd, voxel_size, skip_downsample=False):
         # Minimal logging for preprocessing
@@ -242,8 +253,10 @@ class RegistrationNode(Node):
             src_down_orig, source_fpfh_orig = self.preprocess_point_cloud(src, voxel_size=voxel_size, skip_downsample=skip_downsample_src)
             target_down, target_fpfh = self.preprocess_point_cloud(target, voxel_size=voxel_size)
 
-            # Skip registration if source cloud is too small after preprocessing
-            if len(src_down_orig.points) < 30:
+            # Skip registration if source or target too small after preprocessing (avoids FGR/ICP errors)
+            n_src_down = len(np.asarray(src_down_orig.points))
+            n_targ_down = len(np.asarray(target_down.points))
+            if n_src_down < 30 or n_targ_down < 30:
                 # self.get_logger().warn(f"Skipping registration for cluster {cluster_id}: source cloud too small after downsampling ({len(src_down_orig.points)} points)")
                 continue
 
@@ -265,9 +278,12 @@ class RegistrationNode(Node):
                 trans_init[:3, 3] = target_center
                 trans_init[:3, :3] = np.eye(3)
 
-                # Skip FGR for very small clusters
-                if len(cluster_points) < 30:
-                    # self.get_logger().warn(f"Cluster {cluster_id} too small for FGR, using direct ICP")
+                # Skip FGR when too few points (avoids Open3D "low must be < high" in tuple sampling)
+                n_src_down = len(np.asarray(src_down.points))
+                n_targ_down = len(np.asarray(target_down.points))
+                maximum_tuple_count = min(500, n_src_down // 2, n_targ_down // 2)
+                # FGR requires maximum_tuple_count >= 1; Open3D fails with low=0, high=0 otherwise
+                if maximum_tuple_count < 1 or n_src_down < 30 or n_targ_down < 30:
                     distance_threshold = 0.02
                 else:
                     try:
@@ -277,9 +293,8 @@ class RegistrationNode(Node):
                                 maximum_correspondence_distance=voxel_size * 0.5,
                                 iteration_number=64,
                                 tuple_scale=0.95,
-                                maximum_tuple_count=500))
+                                maximum_tuple_count=maximum_tuple_count))
                         trans_init = result.transformation
-                        # Only log FGR success if needed
                         distance_threshold = 0.03
                     except Exception as e:
                         self.get_logger().warn(f"FGR failed for cluster {cluster_id}: {str(e)}")

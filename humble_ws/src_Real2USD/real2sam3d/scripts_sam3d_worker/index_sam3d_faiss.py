@@ -75,19 +75,22 @@ def _save_indexed_job(state_path: Path, job_id: str) -> None:
 
 
 def _completed_job_dirs(output_dir: Path):
-    """Yield (job_path, object_path) for each completed job (pose + object.ply or object.usd)."""
+    """Yield (job_path, object_path) for each completed job (pose + object.glb, .usd, or .ply). Prefer GLB."""
     if not output_dir.exists():
         return
     for job_path in output_dir.iterdir():
         if not job_path.is_dir():
             continue
         pose_path = job_path / "pose.json"
-        object_ply = job_path / "object.ply"
-        object_usd = job_path / "object.usd"
         if not pose_path.exists():
             continue
         object_path = None
-        if object_usd.exists():
+        object_glb = job_path / "object.glb"
+        object_usd = job_path / "object.usd"
+        object_ply = job_path / "object.ply"
+        if object_glb.exists():
+            object_path = str(object_glb.resolve())
+        elif object_usd.exists():
             object_path = str(object_usd.resolve())
         elif object_ply.exists():
             object_path = str(object_ply.resolve())
@@ -147,14 +150,22 @@ def index_pending_jobs(
 
 def main():
     parser = argparse.ArgumentParser(description="FAISS indexer for SAM3D output")
-    parser.add_argument("--queue-dir", type=str, default="/data/sam3d_queue", help="Queue base directory")
-    parser.add_argument("--index-path", type=str, default="/data/sam3d_faiss", help="Directory for index; outputs go in <path>/faiss/")
+    parser.add_argument("--queue-dir", type=str, default="/data/sam3d_queue", help="Queue directory (run dir); ignored if --use-current-run")
+    parser.add_argument("--index-path", type=str, default="/data/sam3d_faiss", help="Directory for index; outputs go in <path>/faiss/; ignored if --use-current-run")
+    parser.add_argument("--use-current-run", action="store_true", help="Use queue_dir and index_path from current_run.json (written by ros2 launch)")
     parser.add_argument("--watch-interval", type=float, default=5.0, help="Seconds between scans when watching")
     parser.add_argument("--once", action="store_true", help="Index once and exit")
     args = parser.parse_args()
 
-    queue_dir = Path(args.queue_dir).resolve()
-    index_path_arg = Path(args.index_path).resolve()
+    try:
+        from current_run import resolve_queue_and_index
+        queue_dir, index_path_resolved = resolve_queue_and_index(args.use_current_run, args.queue_dir, args.index_path)
+        index_path_arg = index_path_resolved if index_path_resolved is not None else Path(args.index_path).resolve()
+    except ImportError:
+        queue_dir = Path(args.queue_dir).resolve()
+        index_path_arg = Path(args.index_path).resolve()
+        if args.use_current_run:
+            print("Warning: current_run module not found; using --queue-dir and --index-path.", file=sys.stderr)
     faiss_dir, index_base, state_path = _faiss_dir_and_paths(index_path_arg)
     output_dir = queue_dir / "output"
 

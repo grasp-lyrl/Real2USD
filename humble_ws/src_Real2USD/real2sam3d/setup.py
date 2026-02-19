@@ -30,10 +30,13 @@ setup(
         "console_scripts": [
             "lidar_cam_node = real2sam3d.lidar_cam_node:main",
             "registration_node = real2sam3d.registration_node:main",
-            "usd_buffer_node = real2sam3d.usd_buffer_node:main",
+            # "usd_buffer_node = real2sam3d.usd_buffer_node:main",
             "navigator_llm_node = real2sam3d.navigator_llm_node:main",
             "sam3d_job_writer_node = real2sam3d.sam3d_job_writer_node:main",
             "sam3d_injector_node = real2sam3d.sam3d_injector_node:main",
+            "sam3d_glb_registration_bridge_node = real2sam3d.sam3d_glb_registration_bridge_node:main",
+            "sam3d_retrieval_node = real2sam3d.sam3d_retrieval_node:main",
+            "simple_scene_buffer_node = real2sam3d.simple_scene_buffer_node:main",
         ],
     },
 )

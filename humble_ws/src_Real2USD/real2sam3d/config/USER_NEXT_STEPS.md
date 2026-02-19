@@ -12,6 +12,10 @@
 
 ---
 
+**Quick run guide:** See **config/RUN_PIPELINE.md** for step-by-step commands (which terminal: Docker vs host conda) and **`--use-current-run`** so worker/indexer read paths from `current_run.json` and you don’t set paths manually.
+
+---
+
 ## 1. Confirm the pipeline without SAM3D (dry-run, inside Docker)
 
 Run the full path (job writer → worker → injector) **without** the SAM3D conda env by using the worker in **dry-run** mode inside the container.
@@ -95,6 +99,10 @@ Run the full path (job writer → worker → injector) **without** the SAM3D con
 | FAISS indexer | On host (CLIP/FAISS env): `python index_sam3d_faiss.py --queue-dir /data/sam3d_queue --index-path /data/sam3d_faiss` (or `--once`). |
 | Multi-view render | Optional: `python render_sam3d_views.py --queue-dir /data/sam3d_queue --once` (needs open3d). Indexer then uses `views/*.png` when present. |
 | Dry-run (no conda) | Inside Docker: `ros2 launch real2sam3d real2sam3d.launch.py run_sam3d_worker:=true`. |
+| Phase 3 retrieval | **sam3d_injector_node** publishes **slot ready** on `/usd/SlotReady` (job_id, track_id, candidate_data_path). **sam3d_retrieval_node** loads the slot's crop image (`output/<job_id>/rgb.png`), queries the SAM3D FAISS index (CLIP), and publishes the **best object** for that slot on `/usd/Sam3dObjectForSlot`. If FAISS is empty or unavailable, the candidate (newly generated) object is used. |
+| No-FAISS mode | To run without FAISS/retrieval: **no_faiss_mode:=true**. The retrieval node is not started and the injector publishes `/usd/Sam3dObjectForSlot` directly with the candidate object, so the bridge and registration run as usual. Use when you don't have a FAISS index or want to skip CLIP lookup. |
+| Registration (ICP) | **sam3d_glb_registration_bridge_node** subscribes to `/usd/Sam3dObjectForSlot` (job_id, track_id, data_path). It loads source geometry from `data_path` and **target segment PC from the slot job** (`output/<job_id>/` or `input_processed/<job_id>/`), publishes `/usd/StringIdSrcTarg`. **registration_node** runs FGR+ICP and publishes the **final** pose on `/usd/StringIdPose` (used by usd_buffer_node and overlay). Disable bridge with `glb_registration_bridge:=false` if not needed. |
+| Simple scene buffer | Optional: **simple_scene_buffer_node** subscribes to `/usd/StringIdPose` and writes a single **scene_graph.json** (id, data_path, position, orientation per object) and a **joint scene.glb** (all objects merged at their poses). Enable with `simple_scene_buffer:=true`. Outputs go to the same directory as the rest of the pipeline (queue/run dir, e.g. `sam3d_queue/run_YYYYMMDD_HHMMSS/`). Set `output_dir` param to override. Requires **trimesh** for GLB export. |
 | Dedup | Job writer skips same object within 60 s (track_id) or 0.5 m (label+position). Set `dedup_track_id_sec:=0` and `dedup_position_m:=0` to disable. |
 | Tests | Inside Docker after build: `python3 -m pytest src_Real2USD/real2sam3d/test/test_sam3d_*.py -v`. |
 

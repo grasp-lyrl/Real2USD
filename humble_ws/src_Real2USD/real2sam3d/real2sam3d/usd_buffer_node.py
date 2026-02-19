@@ -12,6 +12,7 @@ from custom_message.msg import UsdStringIdPoseMsg, UsdBufferPoseMsg
 import struct
 import json
 import os
+from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
@@ -375,9 +376,83 @@ class USDBufferNode(Node):
             self.get_logger().error(f"Error creating convex hull for {usd_path}: {e}")
             return None, None, None, (world_center, world_extents)
 
+    def _load_glb_ply_data(self, mesh_path):
+        """Load vertices from GLB or PLY (e.g. SAM3D output). Returns same dict as _load_usd_data or None."""
+        path = Path(mesh_path)
+        if not path.exists():
+            return None
+        suf = path.suffix.lower()
+        vertices = None
+        if suf == ".glb":
+            try:
+                import trimesh
+                scene = trimesh.load(str(path), process=False)
+                if isinstance(scene, trimesh.Scene):
+                    meshes = [g for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)]
+                elif isinstance(scene, trimesh.Trimesh):
+                    meshes = [scene]
+                else:
+                    meshes = []
+                if meshes:
+                    verts = np.vstack([np.asarray(m.vertices, dtype=np.float64) for m in meshes if len(m.vertices) > 0])
+                    if len(verts) > 0:
+                        vertices = verts
+            except Exception as e:
+                self.get_logger().warn(f"Could not load GLB {mesh_path}: {e}")
+        elif suf == ".ply":
+            try:
+                import open3d as o3d
+                pcd = o3d.io.read_point_cloud(str(path))
+                if pcd.has_points() and len(pcd.points) > 0:
+                    vertices = np.asarray(pcd.points, dtype=np.float64)
+                else:
+                    mesh = o3d.io.read_triangle_mesh(str(path))
+                    if mesh.has_vertices() and len(mesh.vertices) > 0:
+                        vertices = np.asarray(mesh.vertices, dtype=np.float64)
+            except Exception:
+                pass
+            if vertices is None:
+                try:
+                    from plyfile import PlyData
+                    ply = PlyData.read(str(path))
+                    for el in ply.elements:
+                        if not hasattr(el.data, "dtype") or el.data.dtype.names is None:
+                            continue
+                        names = set(el.data.dtype.names)
+                        if "x" in names and "y" in names and "z" in names:
+                            pts = np.stack([
+                                np.asarray(el.data["x"], dtype=np.float64),
+                                np.asarray(el.data["y"], dtype=np.float64),
+                                np.asarray(el.data["z"], dtype=np.float64),
+                            ], axis=1)
+                            valid = np.isfinite(pts).all(axis=1)
+                            if np.any(valid):
+                                vertices = pts[valid]
+                                break
+                except Exception as e:
+                    self.get_logger().warn(f"Could not load PLY {mesh_path}: {e}")
+        if vertices is None or len(vertices) == 0:
+            return None
+        min_bounds = np.min(vertices, axis=0)
+        max_bounds = np.max(vertices, axis=0)
+        local_center = (min_bounds + max_bounds) / 2.0
+        local_extents = (max_bounds - min_bounds) / 2.0
+        return {
+            'vertices': vertices,
+            'local_center': local_center,
+            'local_extents': local_extents
+        }
+
     def _load_usd_data(self, usd_path):
-        """Load USD data and compute local bounds"""
-        stage = Usd.Stage.Open(usd_path)
+        """Load mesh data and compute local bounds. Supports USD, GLB, and PLY (e.g. SAM3D object.glb)."""
+        path_lower = usd_path.lower()
+        if path_lower.endswith('.glb') or path_lower.endswith('.ply'):
+            return self._load_glb_ply_data(usd_path)
+        try:
+            stage = Usd.Stage.Open(usd_path)
+        except Exception as e:
+            self.get_logger().warn(f"Could not open USD stage at {usd_path}: {e}")
+            return None
         if not stage:
             self.get_logger().error(f"Could not open USD stage at {usd_path}")
             return None

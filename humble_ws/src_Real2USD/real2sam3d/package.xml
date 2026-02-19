@@ -10,6 +10,7 @@
   <!-- depend are packages that are reuqred during build (c++) and execution -->
   <!-- exec_depend is only for packages only needed at runtime, e.g. python-->
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>custom_message</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>example_interfaces</exec_depend>
   <exec_depend>ros2launch</exec_depend>

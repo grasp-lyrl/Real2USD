@@ -185,13 +185,15 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
     with open(out_path / "pose.json", "w") as f:
         json.dump(pose, f, indent=2)
 
-    # Copy input crop to output so result dir is self-contained (for FAISS indexer / multi-view)
-    try:
-        src_rgb = job_path / "rgb.png"
-        if src_rgb.exists():
-            shutil.copy2(str(src_rgb), str(out_path / "rgb.png"))
-    except OSError as e:
-        print(f"[WARN] Could not copy rgb.png to output: {e}", file=sys.stderr)
+    # Copy input crop and registration data to output so result dir is self-contained
+    # (for FAISS indexer / multi-view and for segment-PC-based registration)
+    for name in ("rgb.png", "depth.npy", "mask.png", "meta.json"):
+        try:
+            src = job_path / name
+            if src.exists():
+                shutil.copy2(str(src), str(out_path / name))
+        except OSError as e:
+            print(f"[WARN] Could not copy {name} to output: {e}", file=sys.stderr)
 
     outputs = "pose.json + object.ply"
     if object_glb_path.exists():
@@ -202,17 +204,24 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
 
 def main():
     parser = argparse.ArgumentParser(description="SAM3D worker: process jobs from queue_dir/input")
-    parser.add_argument("--queue-dir", type=str, default="/data/sam3d_queue", help="Base queue directory")
+    parser.add_argument("--queue-dir", type=str, default="/data/sam3d_queue", help="Queue directory (or run dir when use_run_subdir); ignored if --use-current-run")
+    parser.add_argument("--use-current-run", action="store_true", help="Use queue_dir from current_run.json (written by ros2 launch; no need to pass paths)")
     parser.add_argument("--sam3d-repo", type=str, default=None, help="Path to sam-3d-objects repo (required for real inference; has notebook/ and checkpoints/)")
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
     parser.add_argument("--dry-run", action="store_true", help="Only validate job and write pose (no SAM3D)")
     args = parser.parse_args()
 
+    try:
+        from current_run import resolve_queue_and_index
+        queue_dir, _ = resolve_queue_and_index(args.use_current_run, args.queue_dir, None)
+    except ImportError:
+        queue_dir = Path(args.queue_dir).resolve()
+        if args.use_current_run:
+            print("Warning: current_run module not found; using --queue-dir.", file=sys.stderr)
+
     sam3d_repo = Path(args.sam3d_repo).resolve() if args.sam3d_repo else None
     if not args.dry_run and sam3d_repo is None:
         print("Warning: --sam3d-repo not set; real inference will fail. Use --dry-run to test without SAM3D.", file=sys.stderr)
-
-    queue_dir = Path(args.queue_dir).resolve()
     input_dir = queue_dir / "input"
     output_dir = queue_dir / "output"
     processed_dir = queue_dir / "input_processed"

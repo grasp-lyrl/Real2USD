@@ -1,12 +1,12 @@
 """
-SAM3D injector node: watches queue_dir/output for new job results (pose.json +
-object.ply or object.usd), publishes UsdStringIdPoseMsg on /usd/StringIdPose so
-usd_buffer_node and downstream see generated objects. Run via ros2 launch.
+SAM3D slot node (formerly injector): watches queue_dir/output for new job results.
 
-Does NOT import or call SAM3D — only ROS and stdlib (json, pathlib). It just
-reads files on disk and publishes; works without SAM3D installed. The worker
-(when run with --dry-run) writes placeholder object.ply + pose.json, which the
-injector picks up the same way as real SAM3D output.
+- Normal (FAISS) mode: publishes SlotReadyMsg so the retrieval node picks the best object,
+  then retrieval publishes Sam3dObjectForSlotMsg; bridge runs registration.
+- No-FAISS mode (publish_object_for_slot=true): publishes Sam3dObjectForSlotMsg directly
+  with the candidate object so the bridge runs registration without the retrieval node.
+
+Does NOT import or call SAM3D — only ROS and stdlib (json, pathlib).
 """
 
 import json
@@ -16,7 +16,10 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Pose
 from std_msgs.msg import Header
-from custom_message.msg import UsdStringIdPoseMsg
+from custom_message.msg import SlotReadyMsg, Sam3dObjectForSlotMsg
+
+TOPIC_SLOT_READY = "/usd/SlotReady"
+TOPIC_OBJECT_FOR_SLOT = "/usd/Sam3dObjectForSlot"
 
 
 class Sam3dInjectorNode(Node):
@@ -25,22 +28,27 @@ class Sam3dInjectorNode(Node):
 
         self.declare_parameter("queue_dir", "/data/sam3d_queue")
         self.declare_parameter("watch_interval_sec", 1.0)
+        self.declare_parameter("publish_object_for_slot", False)  # no-FAISS: publish directly to bridge
 
         self.queue_dir = Path(self.get_parameter("queue_dir").value)
         self.watch_interval_sec = self.get_parameter("watch_interval_sec").value
+        p = self.get_parameter("publish_object_for_slot").value
+        self.publish_object_for_slot = p is True or (isinstance(p, str) and p.lower() == "true")
         self.output_dir = self.queue_dir / "output"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.pub = self.create_publisher(
-            UsdStringIdPoseMsg,
-            "/usd/StringIdPose",
-            10,
-        )
+        self.pub_slot_ready = self.create_publisher(SlotReadyMsg, TOPIC_SLOT_READY, 10)
+        self.pub_object_for_slot = self.create_publisher(Sam3dObjectForSlotMsg, TOPIC_OBJECT_FOR_SLOT, 10)
         self._published_job_ids = set()
         self._timer = self.create_timer(self.watch_interval_sec, self._check_output_dir)
-        self.get_logger().info(
-            f"SAM3D injector: watching {self.output_dir}, publishing to /usd/StringIdPose"
-        )
+        if self.publish_object_for_slot:
+            self.get_logger().info(
+                f"SAM3D slot node (no-FAISS): watching {self.output_dir}, publishing to {TOPIC_OBJECT_FOR_SLOT} (candidate → bridge → registration)"
+            )
+        else:
+            self.get_logger().info(
+                f"SAM3D slot node: watching {self.output_dir}, publishing to {TOPIC_SLOT_READY} (retrieval picks best object → bridge → registration)"
+            )
 
     def _check_output_dir(self):
         if not self.output_dir.exists():
@@ -53,8 +61,11 @@ class Sam3dInjectorNode(Node):
             object_usd = job_path / "object.usd"
             if not pose_path.exists():
                 continue
+            object_glb = job_path / "object.glb"
             data_path = None
-            if object_usd.exists():
+            if object_glb.exists():
+                data_path = str(object_glb.resolve())
+            elif object_usd.exists():
                 data_path = str(object_usd.resolve())
             elif object_ply.exists():
                 data_path = str(object_ply.resolve())
@@ -66,29 +77,40 @@ class Sam3dInjectorNode(Node):
             except (json.JSONDecodeError, OSError) as e:
                 self.get_logger().warn(f"Invalid pose.json in {job_path}: {e}")
                 continue
-            position = pose_data.get("position", [0.0, 0.0, 0.0])
-            orientation = pose_data.get("orientation", [0.0, 0.0, 0.0, 1.0])
             track_id = pose_data.get("track_id", 0)
             if isinstance(track_id, float):
                 track_id = int(track_id)
 
-            msg = UsdStringIdPoseMsg()
-            msg.header = Header()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.header.frame_id = "odom"
-            msg.data_path = data_path
-            msg.id = track_id
-            msg.pose = Pose()
-            msg.pose.position.x = float(position[0])
-            msg.pose.position.y = float(position[1])
-            msg.pose.position.z = float(position[2])
-            msg.pose.orientation.x = float(orientation[0])
-            msg.pose.orientation.y = float(orientation[1])
-            msg.pose.orientation.z = float(orientation[2])
-            msg.pose.orientation.w = float(orientation[3])
-            self.pub.publish(msg)
+            if self.publish_object_for_slot:
+                # No-FAISS mode: publish object-for-slot directly so bridge runs registration
+                out = Sam3dObjectForSlotMsg()
+                out.header = Header()
+                out.header.stamp = self.get_clock().now().to_msg()
+                out.header.frame_id = "odom"
+                out.job_id = job_path.name
+                out.id = track_id
+                out.data_path = data_path
+                out.pose = Pose()
+                out.pose.position.x = 0.0
+                out.pose.position.y = 0.0
+                out.pose.position.z = 0.0
+                out.pose.orientation.x = 0.0
+                out.pose.orientation.y = 0.0
+                out.pose.orientation.z = 0.0
+                out.pose.orientation.w = 1.0
+                self.pub_object_for_slot.publish(out)
+                self.get_logger().info(f"Object for slot (no-FAISS): job_id={job_path.name} track_id={track_id} data_path={data_path}")
+            else:
+                msg = SlotReadyMsg()
+                msg.header = Header()
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.header.frame_id = "odom"
+                msg.job_id = job_path.name
+                msg.track_id = track_id
+                msg.candidate_data_path = data_path
+                self.pub_slot_ready.publish(msg)
+                self.get_logger().info(f"Slot ready: job_id={job_path.name} track_id={track_id} candidate={data_path}")
             self._published_job_ids.add(job_path.name)
-            self.get_logger().info(f"Injected generated object: {data_path} (track_id={track_id})")
 
 
 def main():

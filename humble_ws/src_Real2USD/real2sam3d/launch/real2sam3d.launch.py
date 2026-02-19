@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -6,12 +7,12 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction, SetLaunchConfiguration
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, TextSubstitution
+from launch.substitutions import LaunchConfiguration, TextSubstitution, PythonExpression
 from launch_ros.actions import Node
 
 
 def _create_run_dir_and_set_queue(context, *args, **kwargs):
-    """Create a per-run subdir under sam3d_queue_dir and set sam3d_queue_dir to it."""
+    """Create a per-run subdir under sam3d_queue_dir, write current_run.json, and set sam3d_queue_dir."""
     base = context.perform_substitution(LaunchConfiguration('sam3d_queue_dir'))
     use_subdir = context.perform_substitution(LaunchConfiguration('use_run_subdir')).lower() == 'true'
     if not use_subdir:
@@ -21,7 +22,26 @@ def _create_run_dir_and_set_queue(context, *args, **kwargs):
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / 'input').mkdir(exist_ok=True)
     (run_dir / 'output').mkdir(exist_ok=True)
-    return [SetLaunchConfiguration('sam3d_queue_dir', TextSubstitution(text=str(run_dir)))]
+    # FAISS index for this run: indexer and retrieval use <run_dir>/faiss/ (same convention as index_sam3d_faiss)
+    run_dir_resolved = str(run_dir.resolve())
+    current_run = {
+        "queue_dir": run_dir_resolved,
+        "base_dir": str(Path(base).resolve()),
+        "run_name": run_name,
+        "faiss_index_path": run_dir_resolved,
+        "created_at": datetime.now().isoformat(),
+    }
+    json_path = Path(base) / "current_run.json"
+    try:
+        with open(json_path, "w") as f:
+            json.dump(current_run, f, indent=2)
+    except Exception as e:
+        print(f"[WARN] Could not write {json_path}: {e}", file=__import__("sys").stderr)
+    # Point sam3d_queue_dir and faiss_index_path at this run (index lives at <run_dir>/faiss/)
+    return [
+        SetLaunchConfiguration('sam3d_queue_dir', TextSubstitution(text=run_dir_resolved)),
+        SetLaunchConfiguration('faiss_index_path', TextSubstitution(text=run_dir_resolved)),
+    ]
 
 
 def generate_launch_description():
@@ -29,9 +49,14 @@ def generate_launch_description():
     with_rviz2 = LaunchConfiguration('rviz2', default='true')
     with_sam3d_job_writer = LaunchConfiguration('sam3d_job_writer', default='true')
     with_sam3d_injector = LaunchConfiguration('sam3d_injector', default='true')
+    with_glb_registration_bridge = LaunchConfiguration('glb_registration_bridge', default='true')
+    with_sam3d_retrieval = LaunchConfiguration('sam3d_retrieval', default='true')
+    with_simple_scene_buffer = LaunchConfiguration('simple_scene_buffer', default='true')
+    no_faiss_mode = LaunchConfiguration('no_faiss_mode', default='false')
     run_sam3d_worker = LaunchConfiguration('run_sam3d_worker', default='false')
     use_run_subdir = LaunchConfiguration('use_run_subdir', default='true')
     sam3d_queue_dir = LaunchConfiguration('sam3d_queue_dir', default='/data/sam3d_queue')
+    faiss_index_path = LaunchConfiguration('faiss_index_path', default='/data/sam3d_faiss')
 
     pkg_share = get_package_share_directory('real2sam3d')
     rviz_config = "real2usd_conf.rviz"
@@ -42,15 +67,25 @@ def generate_launch_description():
         DeclareLaunchArgument('sam3d_job_writer', default_value='true',
                              description='Run SAM3D job writer (writes CropImgDepth to disk)'),
         DeclareLaunchArgument('sam3d_injector', default_value='true',
-                             description='Run SAM3D injector (publishes worker results to /usd/StringIdPose)'),
+                             description='Run SAM3D slot node (publishes /usd/SlotReady; retrieval picks best object)'),
+        DeclareLaunchArgument('sam3d_retrieval', default_value='true',
+                             description='Run SAM3D retrieval node (FAISS+CLIP; publishes best object for each slot to bridge)'),
+        DeclareLaunchArgument('no_faiss_mode', default_value='false',
+                             description='No-FAISS mode: skip retrieval and have injector publish object-for-slot directly (set true when sam3d_retrieval:=false)'),
+        DeclareLaunchArgument('glb_registration_bridge', default_value='true',
+                             description='Run GLB→registration bridge (subscribes to /usd/Sam3dObjectForSlot, publishes src+targ for ICP)'),
         DeclareLaunchArgument('run_sam3d_worker', default_value='false',
                              description='Run SAM3D worker in this launch (uses --dry-run; for real SAM3D run worker in separate terminal with conda)'),
         DeclareLaunchArgument('use_run_subdir', default_value='true',
                              description='Create a new run subdir per launch (e.g. sam3d_queue/run_YYYYMMDD_HHMMSS) so each run has its own input/output'),
         DeclareLaunchArgument('sam3d_queue_dir', default_value='/data/sam3d_queue',
                              description='Base queue directory; if use_run_subdir=true, a run_<timestamp> subdir is created here'),
+        DeclareLaunchArgument('faiss_index_path', default_value='/data/sam3d_faiss',
+                             description='FAISS index base path (index at <path>/faiss/). When use_run_subdir=true (default), overridden to run_dir so index is <run_dir>/faiss/.'),
+        DeclareLaunchArgument('simple_scene_buffer', default_value='true',
+                             description='Run simple scene buffer node (writes scene_graph.json + scene.glb from /usd/StringIdPose)'),
         OpaqueFunction(function=_create_run_dir_and_set_queue),
-        # Pipeline: lidar_cam -> job_writer -> [worker] -> injector -> usd_buffer
+        # Pipeline: lidar_cam -> job_writer -> [worker] -> injector (SlotReady) -> retrieval (ObjectForSlot) -> bridge -> registration -> usd_buffer
         Node(
             package='real2sam3d',
             executable='lidar_cam_node',
@@ -59,9 +94,15 @@ def generate_launch_description():
             package='real2sam3d',
             executable='registration_node',
         ),
+        # Node(
+        #     package='real2sam3d',
+        #     executable='usd_buffer_node',
+        # ),
         Node(
             package='real2sam3d',
-            executable='usd_buffer_node',
+            executable='simple_scene_buffer_node',
+            condition=IfCondition(with_simple_scene_buffer),
+            parameters=[{'output_dir': sam3d_queue_dir}],
         ),
         Node(
             package='real2sam3d',
@@ -73,7 +114,21 @@ def generate_launch_description():
             package='real2sam3d',
             executable='sam3d_injector_node',
             condition=IfCondition(with_sam3d_injector),
-            parameters=[{'queue_dir': sam3d_queue_dir}],
+            parameters=[{'queue_dir': sam3d_queue_dir, 'publish_object_for_slot': no_faiss_mode}],
+        ),
+        Node(
+            package='real2sam3d',
+            executable='sam3d_retrieval_node',
+            condition=IfCondition(
+                PythonExpression(["'", with_sam3d_retrieval, "' == 'true' and '", no_faiss_mode, "' == 'false'"])
+            ),
+            parameters=[{'queue_dir': sam3d_queue_dir, 'faiss_index_path': faiss_index_path}],
+        ),
+        Node(
+            package='real2sam3d',
+            executable='sam3d_glb_registration_bridge_node',
+            condition=IfCondition(with_glb_registration_bridge),
+            parameters=[{'queue_dir': sam3d_queue_dir, 'world_point_cloud_topic': '/point_cloud2'}],
         ),
         # Optional: run worker in same launch (run_sam3d_worker:=true; sam3d_worker_dry_run:=true to test without conda)
         ExecuteProcess(

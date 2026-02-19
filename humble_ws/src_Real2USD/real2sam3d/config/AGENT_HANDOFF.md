@@ -19,7 +19,7 @@
 | User steps | `config/USER_NEXT_STEPS.md` | Pipeline in Docker only; worker on host (conda); queue dir mount |
 | Launch | `launch/real2sam3d.launch.py` | lidar_cam, registration, usd_buffer; optional job_writer, injector, run_sam3d_worker (dry-run); per-run dir `run_YYYYMMDD_HHMMSS` |
 | Job writer | `real2sam3d/sam3d_job_writer_node.py` | Subscribes `/usd/CropImgDepth`, writes jobs to `queue_dir/input/<job_id>/`. Dedup via `Sam3dDedupState` (track_id + position+label). |
-| Injector | `real2sam3d/sam3d_injector_node.py` | Watches `queue_dir/output/`, publishes `UsdStringIdPoseMsg` on `/usd/StringIdPose` |
+| Injector | `real2sam3d/sam3d_injector_node.py` | Watches `queue_dir/output/`, publishes `UsdStringIdPoseMsg` (pose at origin) on `/usd/StringIdPoseAtOrigin`; final pose comes from registration_node on `/usd/StringIdPose` |
 | Worker | `scripts_sam3d_worker/run_sam3d_worker.py` | Reads `input/`, runs SAM3D or `--dry-run` (writes pose.json + placeholder object.ply) |
 | Track ID helper | `scripts_r2s3d/track_id_utils.py` | `track_ids_from_boxes_id()` — no ultralytics dep; used by segment_cls |
 | Tests | `test/test_sam3d_*.py`, `test/README_TESTS.md` | Job writer, worker, track_id + dedup (`Sam3dDedupState`). Run **inside Docker** after build. |

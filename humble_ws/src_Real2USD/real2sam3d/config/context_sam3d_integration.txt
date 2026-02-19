@@ -11,8 +11,11 @@ The Real2USD pipeline currently maps environments by segmenting objects (YOLOE) 
 - lidar_cam_node: Subscribes to /camera/image_raw, /point_cloud2, /camera/camera_info, /odom. Runs YOLOE segmentation (segment_cls), projects lidar to depth, publishes one CropImgDepthMsg per detected object on /usd/CropImgDepth.
 - retrieval_node: Subscribes to /usd/CropImgDepth. Runs CLIP embedding + FAISS search; optionally Gemini for best match. Publishes UsdStringIdPCMsg (data_path, id, pc) on /usd/StringIdPC when a match is found. Currently returns without publishing when no label match or no URLs.
 - isaac_lidar_node_preprocessed: Subscribes to /usd/StringIdPC. Loads preprocessed point cloud for the USD, publishes UsdStringIdSrcTargMsg (src_pc from USD, targ_pc from segment) on /usd/StringIdSrcTarg.
-- registration_node: Subscribes to /usd/StringIdSrcTarg. Runs FGR+ICP to align source to target; publishes UsdStringIdPoseMsg (data_path, id, pose) on /usd/StringIdPose.
-- usd_buffer_node: Subscribes to /usd/StringIdPose and /global_lidar_points. Clusters objects, matches to point cloud, publishes UsdBufferPoseMsg; periodically saves matched buffer to disk.
+- sam3d_injector_node (slot node): When new job results appear in output/, publishes SlotReadyMsg on /usd/SlotReady (job_id, track_id, candidate_data_path). Does not publish to the bridge directly.
+- sam3d_retrieval_node (Phase 3): Subscribes to /usd/SlotReady. Loads crop image from output/<job_id>/rgb.png, queries SAM3D FAISS index (CLIP embeddings of object views). Publishes Sam3dObjectForSlotMsg on /usd/Sam3dObjectForSlot with the best-matching object (data_path) for that slot; if FAISS is empty or fails, uses candidate_data_path. Search is by CLIP image similarity only (no text label).
+- sam3d_glb_registration_bridge_node: Subscribes to /usd/Sam3dObjectForSlot (job_id, track_id, data_path) and /point_cloud2. Loads source from data_path (GLB/PLY); loads target segment PC from the slot job dir (output/<job_id>/ or input_processed/<job_id>/). Publishes UsdStringIdSrcTargMsg on /usd/StringIdSrcTarg. Enables ICP-based registration for SAM3D-generated objects.
+- registration_node: Subscribes to /usd/StringIdSrcTarg. Runs FGR+ICP to align source to target; publishes UsdStringIdPoseMsg (data_path, id, pose) on /usd/StringIdPose — this is the final pose in the world used by usd_buffer_node and overlay.
+- usd_buffer_node: Subscribes to /usd/StringIdPose (final poses only) and /global_lidar_points. Clusters objects, matches to point cloud, publishes UsdBufferPoseMsg; periodically saves matched buffer to disk.
 
 real2sam3d launch currently omits retrieval_node and isaac_lidar_node (base pipeline without CLIP). For hybrid integration we will add retrieval (or a hybrid retrieval node) and a path that triggers SAM3D when CLIP confidence is below threshold.
 
@@ -24,9 +27,9 @@ BASIC COMPONENTS (to confirm SAM3D can run in the pipeline):
 RUNNING THE FULL PIPELINE (ROS2 LAUNCH):
 - The main pipeline is started with ros2 launch (tests remain pytest). Single entry point:
   ros2 launch real2sam3d real2sam3d.launch.py
-- Launch runs: lidar_cam_node, registration_node, usd_buffer_node; optionally sam3d_job_writer_node, sam3d_injector_node; optionally the SAM3D worker process (run_sam3d_worker:=true). Flow: lidar_cam -> job_writer -> [worker] -> injector -> usd_buffer. Injector watches queue_dir/output and publishes UsdStringIdPoseMsg so usd_buffer_node receives generated objects.
+- Launch runs: lidar_cam_node, registration_node, usd_buffer_node; optionally sam3d_job_writer_node, sam3d_injector_node, sam3d_retrieval_node; optionally the SAM3D worker process (run_sam3d_worker:=true). Flow: lidar_cam -> job_writer -> [worker] -> injector (/usd/SlotReady) -> retrieval (FAISS, /usd/Sam3dObjectForSlot) -> bridge -> /usd/StringIdSrcTarg -> registration_node -> /usd/StringIdPose (final) -> usd_buffer_node.
 - Launch args: sam3d_queue_dir (base path, default /data/sam3d_queue), use_run_subdir (default true: create a new run_YYYYMMDD_HHMMSS subdir per launch so each run has its own input/output), sam3d_job_writer, sam3d_injector, run_sam3d_worker. Set run_sam3d_worker:=true to run the worker in the same launch. Set use_run_subdir:=false to use the base dir as a single shared queue.
-- For real SAM3D inference (separate conda env), run the worker in another terminal/container and keep injector in the launch so results are published to /usd/StringIdPose. User checklist: config/USER_NEXT_STEPS.md.
+- For real SAM3D inference (separate conda env), run the worker in another terminal/container and keep injector in the launch so new objects are published to /usd/StringIdPoseAtOrigin and registration publishes the final pose to /usd/StringIdPose. User checklist: config/USER_NEXT_STEPS.md.
 
 BUILD PLAN AND TESTS:
 - Methodical build plan: config/SAM3D_BUILD_PLAN.md (phases 0–6, deliverables, test mapping).
@@ -52,7 +55,7 @@ BUILD PLAN AND TESTS:
 - Output: 3D Mesh (.glb) or Gaussian Splat (.ply).
 - Sampling Rate: Offline processing (~0.02 Hz per image frame).
 - Package requirements are non-trivial (conda env, PyTorch/CUDA, pytorch3d, Kaolin, etc.). SAM3D runs on the host in a conda env "sam3d-objects" (repo sam-3d-objects, kept outside Real2USD). The ROS2 pipeline in Docker does not import SAM3D.
-- Disk-based handoff: The ROS2 side (in Docker) writes jobs to a shared directory (e.g. host path mounted as /data/sam3d_queue/input/). Each job is a folder: rgb.png, mask.png, depth.npy, meta.json. A worker process on the host (sam3d-objects conda env) reads input/, runs SAM3D, writes output/ (e.g. object.usd, pose.json). The "generated-USD injector" node in Docker watches output/ and publishes UsdStringIdPoseMsg so usd_buffer_node and overlay work unchanged.
+- Disk-based handoff: The ROS2 side (in Docker) writes jobs to a shared directory (e.g. host path mounted as /data/sam3d_queue/input/). Each job is a folder: rgb.png, mask.png, depth.npy, meta.json. A worker process on the host (sam3d-objects conda env) reads input/, runs SAM3D, writes output/ (e.g. object.glb, pose.json). The injector in Docker watches output/ and publishes to /usd/StringIdPoseAtOrigin; the registration bridge and registration_node produce the final pose on /usd/StringIdPose for usd_buffer_node and overlay.
 
 5. PIPELINE LOGIC (CODING GOALS)
 Implement a "Hybrid Decision Module":
