@@ -1,16 +1,17 @@
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import PointCloud2
-from sensor_msgs_py import point_cloud2
-from std_msgs.msg import Header
-from geometry_msgs.msg import Pose
+import traceback
+
 import numpy as np
 import open3d as o3d
+import rclpy
+from rclpy.node import Node
 from scipy.spatial.transform import Rotation as R
-from custom_message.msg import UsdStringIdPoseMsg, UsdStringIdSrcTargMsg
-from ipdb import set_trace as st
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs_py import point_cloud2
 from sklearn.cluster import DBSCAN
-import random
+
+from custom_message.msg import UsdStringIdPoseMsg, UsdStringIdSrcTargMsg
+from geometry_msgs.msg import Pose
+from std_msgs.msg import Header
 
 
 class RegistrationNode(Node):
@@ -60,36 +61,54 @@ class RegistrationNode(Node):
 
     def callback_src_targ(self, msg):
         try:
-            points_src = np.asarray(
-                point_cloud2.read_points_list(
-                    msg.src_pc, field_names=("x", "y", "z"), skip_nans=True
-                )
+            # Writable copy: ROS PointCloud2 buffer is read-only; Open3D may write to arrays.
+            # Vectorized: structured array from list, then column_stack + copy (no Python loop over points).
+            pts_src = point_cloud2.read_points_list(
+                msg.src_pc, field_names=("x", "y", "z"), skip_nans=True
             )
-            points_targ = np.asarray(
-                point_cloud2.read_points_list(
-                    msg.targ_pc, field_names=("x", "y", "z"), skip_nans=True
-                )
+            pts_targ = point_cloud2.read_points_list(
+                msg.targ_pc, field_names=("x", "y", "z"), skip_nans=True
             )
+            _xyz_dtype = [("x", np.float64), ("y", np.float64), ("z", np.float64)]
+            arr_src = np.array(pts_src, dtype=_xyz_dtype)
+            arr_targ = np.array(pts_targ, dtype=_xyz_dtype)
+            points_src = np.column_stack((arr_src["x"], arr_src["y"], arr_src["z"])).copy()
+            points_targ = np.column_stack((arr_targ["x"], arr_targ["y"], arr_targ["z"])).copy()
+            # Force writable C-contiguous (ROS/Open3D can hand back read-only views)
+            points_src = np.require(points_src, dtype=np.float64, requirements=["C_CONTIGUOUS", "OWNDATA", "W"])
+            points_targ = np.require(points_targ, dtype=np.float64, requirements=["C_CONTIGUOUS", "OWNDATA", "W"])
         except Exception as e:
             self.get_logger().warn(f"Failed to read point clouds: {e}")
+            self.get_logger().warn(f"Traceback:\n{traceback.format_exc()}")
             return
         usd_url = msg.data_path
         trackId = msg.id
 
         if len(points_src) == 0 or len(points_targ) == 0:
             return
+        # Use initial pose from SAM3D+go2 when provided (global target; ICP from this init)
+        initial_pose = getattr(msg, "initial_pose", None)
+        use_initial = (
+            initial_pose is not None
+            and (abs(initial_pose.position.x) > 1e-9 or abs(initial_pose.position.y) > 1e-9 or abs(initial_pose.position.z) > 1e-9)
+        )
         try:
-            t, quatXYZW, points_transformed = self.get_pose(points_src, points_targ)
+            t, quatXYZW, points_transformed = self.get_pose(
+                points_src, points_targ, initial_pose=initial_pose if use_initial else None
+            )
         except KeyboardInterrupt:
             raise
         except Exception as e:
             self.get_logger().warn(f"Registration failed for {usd_url}: {e}")
+            tb = traceback.format_exc()
+            self.get_logger().warn(f"Traceback:\n{tb}")
             return
         if points_transformed is not None:
             try:
                 self.pub_odom_pc_seg.publish(
                     point_cloud2.create_cloud_xyz32(
-                        header=Header(frame_id="odom"), points=np.asarray(points_transformed)
+                        header=Header(frame_id="odom"),
+                        points=np.asarray(points_transformed, dtype=np.float32).copy(),
                     )
                 )
             except Exception:
@@ -212,7 +231,57 @@ class RegistrationNode(Node):
         )
         self.pub_clusters.publish(msg)
 
-    def get_pose(self, points_src, points_targ, render=False):
+    def _get_pose_from_initial(self, points_src, points_targ, initial_pose):
+        """Register source to full target using initial pose (from SAM3D+go2) as trans_init. No clustering."""
+        p = initial_pose.position
+        q = initial_pose.orientation
+        trans_init = np.eye(4)
+        trans_init[:3, :3] = R.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+        trans_init[:3, 3] = [p.x, p.y, p.z]
+
+        src = o3d.geometry.PointCloud()
+        src.points = o3d.utility.Vector3dVector(np.asarray(points_src, dtype=np.float64).copy())
+        target = o3d.geometry.PointCloud()
+        target.points = o3d.utility.Vector3dVector(np.asarray(points_targ, dtype=np.float64).copy())
+
+        voxel_size = 0.01
+        skip_src = len(points_src) < 30
+        src_down, _ = self.preprocess_point_cloud(src, voxel_size=voxel_size, skip_downsample=skip_src)
+        target_down, _ = self.preprocess_point_cloud(target, voxel_size=voxel_size)
+        n_src = len(np.asarray(src_down.points))
+        n_targ = len(np.asarray(target_down.points))
+        if n_src < 30 or n_targ < 30:
+            self.get_logger().warn("Initial-pose registration: too few points after preprocessing; returning initial pose")
+            return np.array([p.x, p.y, p.z]), np.array([q.x, q.y, q.z, q.w]), None
+
+        distance_threshold = 0.03
+        icp_result = o3d.pipelines.registration.registration_icp(
+            src_down, target_down, distance_threshold, trans_init,
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50),
+        )
+        # Robustness (design §4): if fitness very low, fall back to publishing initial_pose
+        min_fitness = 0.1
+        if icp_result.fitness < min_fitness:
+            self.get_logger().warn(
+                f"Initial-pose registration: low fitness {icp_result.fitness:.3f} < {min_fitness}; using initial pose as result"
+            )
+            return np.array([p.x, p.y, p.z]), np.array([q.x, q.y, q.z, q.w]), None
+        T = np.asarray(icp_result.transformation, dtype=np.float64).copy()
+        translation = T[0:3, 3].copy()
+        quat = R.from_matrix(T[0:3, 0:3].copy()).as_quat()  # x,y,z,w (scipy needs writable buffer)
+        src_copy = o3d.geometry.PointCloud()
+        src_copy.points = src_down.points
+        src_copy.transform(T)
+        points_transformed = np.asarray(src_copy.points, dtype=np.float64).copy()
+        self.get_logger().info(f"Initial-pose registration: fitness={icp_result.fitness:.3f}, translation={translation}")
+        return translation, quat, points_transformed
+
+    def get_pose(self, points_src, points_targ, render=False, initial_pose=None):
+        # Single registration from initial pose (SAM3D+go2) to full target (e.g. global PC)
+        if initial_pose is not None:
+            return self._get_pose_from_initial(points_src, points_targ, initial_pose)
+
         cluster_labels = self.cluster_target_points(points_targ)
         unique_clusters = np.unique(cluster_labels)
         
@@ -228,19 +297,18 @@ class RegistrationNode(Node):
             if cluster_id == -1:  # Skip noise points
                 continue
                 
-            # Get points for this cluster
+            # Get points for this cluster (copy so Open3D gets writable buffer)
             cluster_mask = cluster_labels == cluster_id
-            cluster_points = points_targ[cluster_mask]
-            
+            cluster_points = np.asarray(points_targ[cluster_mask], dtype=np.float64).copy()
+
             if len(cluster_points) < self.min_samples:
                 # Only warn if skipping due to too few points
                 # self.get_logger().warn(f"Skipping cluster {cluster_id} - too few points: {len(cluster_points)}")
                 continue
                 
-            # Create point clouds
+            # Create point clouds (ensure writable arrays for Open3D)
             src = o3d.geometry.PointCloud()
-            src.points = o3d.utility.Vector3dVector(points_src)
-            
+            src.points = o3d.utility.Vector3dVector(np.asarray(points_src, dtype=np.float64).copy())
             target = o3d.geometry.PointCloud()
             target.points = o3d.utility.Vector3dVector(cluster_points)
             
@@ -270,7 +338,9 @@ class RegistrationNode(Node):
                     [0, 0, 1]
                 ])
                 src_down = o3d.geometry.PointCloud()
-                src_down.points = o3d.utility.Vector3dVector(np.dot(np.asarray(src_down_orig.points), rot_matrix.T))
+                src_down.points = o3d.utility.Vector3dVector(
+                    np.dot(np.asarray(src_down_orig.points, dtype=np.float64).copy(), rot_matrix.T)
+                )
                 source_fpfh = source_fpfh_orig  # FPFH is rotation invariant
 
                 # Initial transformation (translation only)
@@ -310,7 +380,7 @@ class RegistrationNode(Node):
                 # Check if this is the best result so far
                 if icp_result.fitness > best_fitness:
                     best_fitness = icp_result.fitness
-                    rotation = np.array(icp_result.transformation[0:3, 0:3])
+                    rotation = np.asarray(icp_result.transformation[0:3, 0:3], dtype=np.float64).copy()
                     yaw_final = np.arctan2(rotation[1,0], rotation[0,0]) + yaw  # Add initial yaw
                     matrix = np.array([
                         [np.cos(yaw_final), -np.sin(yaw_final), 0],
@@ -318,18 +388,18 @@ class RegistrationNode(Node):
                         [0, 0, 1]
                     ])
                     quaternion = R.from_matrix(matrix).as_quat()
-                    translation = np.array(icp_result.transformation[0:3, 3])
+                    translation = np.asarray(icp_result.transformation[0:3, 3], dtype=np.float64).copy()
 
                     # Create transformation matrix
                     transformation = np.eye(4)
                     transformation[0:3,3] = translation
                     transformation[0:3,0:3] = matrix
 
-                    # Transform source points for visualization
+                    # Transform source points for visualization (copy so downstream gets writable buffer)
                     src_copy = o3d.geometry.PointCloud()
                     src_copy.points = src_down.points
                     src_copy.transform(transformation)
-                    best_points_transformed = np.asarray(src_copy.points)
+                    best_points_transformed = np.asarray(src_copy.points, dtype=np.float64).copy()
                     best_translation = translation
                     best_quaternion = quaternion
                     best_transformation = transformation

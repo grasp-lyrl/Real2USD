@@ -10,7 +10,7 @@ Requires: numpy, plyfile (pip install plyfile).
 """
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -94,6 +94,51 @@ def transform_vertices_camera_to_world_local(
         world_centroid = np.mean(verts_world, axis=0)
     verts_local = verts_world - np.asarray(world_centroid, dtype=np.float64)
     return verts_local, world_centroid
+
+
+# Unitree Go2 front camera (demo_go2 convention): world-to-camera rotation and camera position in world when robot at identity
+GO2_R_WORLD_TO_CAM = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=np.float64)
+GO2_T_WORLD_TO_CAMERA = np.array([0.285, 0.0, 0.01], dtype=np.float64)
+
+
+def initial_pose_from_sam3d_output(output: Dict[str, Any], odom: dict) -> Optional[Tuple[List[float], List[float]]]:
+    """
+    Compute object pose in odom frame from SAM3D output (translation, rotation in camera/pointmap frame) and robot odom.
+    Matches demo_go2 transform: camera -> world -> odom.
+    Returns (position [x,y,z], orientation [qx,qy,qz,qw]) or None if output missing required keys.
+    """
+    if "translation" not in output or "rotation" not in output:
+        return None
+    trans = output["translation"]
+    rot = output["rotation"]
+    if hasattr(trans, "cpu"):
+        trans = np.asarray(trans.cpu().numpy(), dtype=np.float64).ravel()[:3]
+    else:
+        trans = np.asarray(trans, dtype=np.float64).ravel()[:3]
+    if len(trans) < 3:
+        return None
+    T = build_world_T_camera(
+        odom,
+        R_world_to_cam=GO2_R_WORLD_TO_CAM,
+        t_world_to_camera=GO2_T_WORLD_TO_CAMERA.tolist(),
+    )
+    p_cam_h = np.array([trans[0], trans[1], trans[2], 1.0], dtype=np.float64)
+    position_odom = (T @ p_cam_h)[:3]
+
+    if hasattr(rot, "cpu"):
+        q = np.asarray(rot.cpu().numpy(), dtype=np.float64).ravel()
+    else:
+        q = np.asarray(rot, dtype=np.float64).ravel()
+    if len(q) < 4:
+        return None
+    # PyTorch3D / SAM3D use w,x,y,z; _quat_to_rotation_matrix expects [qx,qy,qz,qw]
+    w, x, y, z = float(q[0]), float(q[1]), float(q[2]), float(q[3])
+    R_obj_cam = _quat_to_rotation_matrix([x, y, z, w])
+    R_cam_to_odom = T[:3, :3]
+    R_obj_odom = R_cam_to_odom @ R_obj_cam
+    from scipy.spatial.transform import Rotation as R_scipy
+    quat_odom = R_scipy.from_matrix(R_obj_odom).as_quat()  # x,y,z,w
+    return (position_odom.tolist(), quat_odom.tolist())
 
 
 def _get_element_names(ply) -> List[str]:

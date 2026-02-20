@@ -44,8 +44,9 @@ def resolve_queue_and_index(use_current_run: bool, queue_dir_arg: str, index_pat
         return q, idx
     data = load_current_run()
     if not data:
-        print("Error: --use-current-run set but current_run.json not found. Start the pipeline (ros2 launch) first so it creates the run dir and writes current_run.json.", file=__import__("sys").stderr)
+        print("Error: current_run.json not found. Start the pipeline (ros2 launch) first so it creates the run dir and writes current_run.json.", file=__import__("sys").stderr)
         print(f"  Looked at: {get_current_run_path()}", file=__import__("sys").stderr)
+        print("  Use --no-current-run and pass --queue-dir (and --index-path for indexer) to run without current run.", file=__import__("sys").stderr)
         __import__("sys").exit(1)
     q = Path(data["queue_dir"]).resolve()
     idx = Path(data["faiss_index_path"]).resolve() if data.get("faiss_index_path") else None

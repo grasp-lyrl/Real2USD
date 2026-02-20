@@ -150,22 +150,23 @@ def index_pending_jobs(
 
 def main():
     parser = argparse.ArgumentParser(description="FAISS indexer for SAM3D output")
-    parser.add_argument("--queue-dir", type=str, default="/data/sam3d_queue", help="Queue directory (run dir); ignored if --use-current-run")
-    parser.add_argument("--index-path", type=str, default="/data/sam3d_faiss", help="Directory for index; outputs go in <path>/faiss/; ignored if --use-current-run")
-    parser.add_argument("--use-current-run", action="store_true", help="Use queue_dir and index_path from current_run.json (written by ros2 launch)")
+    parser.add_argument("--queue-dir", type=str, default="/data/sam3d_queue", help="Queue directory (used only with --no-current-run)")
+    parser.add_argument("--index-path", type=str, default="/data/sam3d_faiss", help="Index base path (used only with --no-current-run)")
+    parser.add_argument("--no-current-run", action="store_true", help="Do not use current_run.json; use --queue-dir and --index-path explicitly")
     parser.add_argument("--watch-interval", type=float, default=5.0, help="Seconds between scans when watching")
     parser.add_argument("--once", action="store_true", help="Index once and exit")
     args = parser.parse_args()
 
+    use_current_run = not args.no_current_run
     try:
         from current_run import resolve_queue_and_index
-        queue_dir, index_path_resolved = resolve_queue_and_index(args.use_current_run, args.queue_dir, args.index_path)
+        queue_dir, index_path_resolved = resolve_queue_and_index(use_current_run, args.queue_dir, args.index_path)
         index_path_arg = index_path_resolved if index_path_resolved is not None else Path(args.index_path).resolve()
     except ImportError:
         queue_dir = Path(args.queue_dir).resolve()
         index_path_arg = Path(args.index_path).resolve()
-        if args.use_current_run:
-            print("Warning: current_run module not found; using --queue-dir and --index-path.", file=sys.stderr)
+        if use_current_run:
+            print("Warning: current_run module not found; using --queue-dir and --index-path. Use --no-current-run to silence.", file=sys.stderr)
     faiss_dir, index_base, state_path = _faiss_dir_and_paths(index_path_arg)
     output_dir = queue_dir / "output"
 

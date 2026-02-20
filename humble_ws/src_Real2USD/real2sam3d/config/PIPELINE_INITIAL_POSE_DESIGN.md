@@ -12,7 +12,7 @@
 | Step | Current | Proposed |
 |------|--------|----------|
 | Initial pose | None; registration uses cluster centroid from target | SAM3D scale/rotation/translation + robot odom → object pose in world; use as init for ICP |
-| Registration target | Segment PC from job (depth+mask+meta) or fallback world PC | **Global accumulated lidar** when initial pose is available (segment optional) |
+| Registration target | Segment PC from job or world PC fallback | **Default: global** accumulated lidar; registration starts from **initial pose** (SAM3D+go2). Set `registration_target:=segment` for segment-based experiments. |
 | Retrieval | FAISS on crop image → best path; slot = job_id + track_id | Unchanged conceptually; verify FAISS index and logging |
 
 ## 1. SAM3D initial pose (worker + convention)
@@ -29,6 +29,8 @@
 - Reuse or mirror logic from **ply_frame_utils** (`build_world_T_camera`, transform_vertices_camera_to_world_local) and demo_go2’s `transform_glb_to_world` so the same math lives in the worker (or a shared helper).
 
 **Output:** `output/<job_id>/pose.json` contains `initial_position` and `initial_orientation` (object in world) for the bridge/registration node.
+
+**Note:** Initial pose uses SAM3D `translation` (object center in camera frame) and `rotation`; `scale` affects exported geometry but is not used for the pose (center = translation when local centroid is origin).
 
 ## 2. Bridge: target = global point cloud when initial pose present
 
@@ -71,9 +73,8 @@ Decision: **Bridge** reads `output/<job_id>/pose.json` and sets `UsdStringIdSrcT
 
 - **Concept:** Slot = track_id + job_id; retrieval runs on slot’s crop image, returns best object path (FAISS or candidate). Initial pose is tied to the **slot** (from SAM3D+robot), not to the chosen object.
 - **Checks:** Ensure indexer runs so `faiss/` has entries; ensure retrieval node uses correct `faiss_index_path` (run dir). We already added logging: “FAISS best match same as candidate”, “using segment PC” vs “using world PC”.
-- **Optional:** Add a small doc or launch note: “For cross-slot retrieval, run indexer so current run’s faiss is populated; for cross-run retrieval, point index at a larger asset set.”
-
-No code change required for retrieval logic beyond verification; optional: expose `faiss_index_path` and indexer path in RUN_PIPELINE.md.
+- **Optional:** Add a small doc or launch note: “For cross-slot retrieval, run indexer so current run’s faiss is populated; for cross-run retrieval, point index at a larger asset set.” — **Done:** RUN_PIPELINE.md §8.1 (retrieval verification) and §4 (FAISS indexer) describe indexer and current run; scripts default to current run.
+- No code change required for retrieval logic beyond verification.
 
 ## 6. End-to-end flow (proposed)
 
@@ -85,16 +86,16 @@ No code change required for retrieval logic beyond verification; optional: expos
 6. **Registration** uses initial_pose as trans_init, registers source to **global** target, publishes **StringIdPose**.
 7. **Simple buffer** aggregates → scene_graph.json + scene.glb.
 
-## 7. Implementation order
+## 7. Implementation order (done)
 
-1. **Worker:** Compute and write initial pose (SAM3D + odom) in pose.json (demo_go2 convention).
-2. **UsdStringIdSrcTargMsg:** Add `geometry_msgs/Pose initial_pose`.
-3. **Bridge:** Read initial pose from job dir; when present, use `/global_lidar_points` as target and set `initial_pose`; otherwise keep current target logic.
-4. **Registration:** If `initial_pose` set, use it as trans_init and register to full target (no clustering); else keep current behavior.
-5. **Docs/config:** Update RUN_PIPELINE or USER_NEXT_STEPS with “initial pose + global registration” and retrieval/FAISS notes.
+1. **Worker:** Compute and write initial pose (SAM3D + odom) in pose.json (demo_go2 convention). — **Done:** `ply_frame_utils.initial_pose_from_sam3d_output`, worker writes `initial_position` / `initial_orientation`.
+2. **UsdStringIdSrcTargMsg:** Add `geometry_msgs/Pose initial_pose`. — **Done.**
+3. **Bridge:** Read initial pose from job dir; when present, use `/global_lidar_points` as target and set `initial_pose`; otherwise keep current target logic. — **Done:** default `registration_target=global`, `world_point_cloud_topic=/global_lidar_points`; bridge reads pose.json and sets `initial_pose`.
+4. **Registration:** If `initial_pose` set, use it as trans_init and register to full target (no clustering); else keep current behavior. — **Done:** `_get_pose_from_initial`; fallback to publishing initial_pose when ICP fitness < 0.1.
+5. **Docs/config:** Update RUN_PIPELINE or USER_NEXT_STEPS with “initial pose + global registration” and retrieval/FAISS notes. — **Done:** RUN_PIPELINE §8.2, §8.3; USER_NEXT_STEPS quick run guide.
 
-## 8. Open points
+## 8. Resolved / parameters
 
-- **init_odom:** demo_go2 uses `init_odom` to zero xy; we may want the same for “first frame as origin” or keep global odom. Worker can write pose in same frame as `/odom` (no init subtraction) unless we standardize an “init_odom” in meta.
-- **Segment PC:** Keep segment-based registration as fallback when initial pose is missing (e.g. old jobs or dry-run).
-- **FAISS:** If index is empty or small, “best match” will often be the candidate; that’s expected until index is populated.
+- **init_odom:** Worker has **`--use-init-odom`**. When set, the first job’s odom is written to `queue_dir/init_odom.json`; all jobs’ pose.json position/orientation are expressed relative to that frame (position = odom − init, orientation = relative quat). Use for “first frame as origin” style.
+- **Segment vs global target:** Bridge has **`registration_target`** parameter: **`global`** (default) = use accumulated world point cloud (`/global_lidar_points`) and initial pose from SAM3D+go2; **`segment`** = target from job dir (depth+mask+meta), with fallback to world PC if segment unavailable. Use `segment` for A/B experiments.
+- **FAISS:** Best match will often be the candidate until the index is populated; that’s expected. Run the indexer so the run’s `faiss/` has entries for retrieval to return different objects.

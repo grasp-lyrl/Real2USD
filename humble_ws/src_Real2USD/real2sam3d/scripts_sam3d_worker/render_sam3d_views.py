@@ -410,8 +410,8 @@ def render_job_dir(job_dir: Path, num_views: int = 8, size: int = 256) -> bool:
 def main():
     parser = argparse.ArgumentParser(description="Render multi-view images from SAM3D object.ply")
     parser.add_argument("--job-dir", type=str, default=None, help="Single output job directory to render")
-    parser.add_argument("--queue-dir", type=str, default=None, help="Queue/run dir; scan output/ for jobs without views")
-    parser.add_argument("--use-current-run", action="store_true", help="Use queue_dir from current_run.json (written by ros2 launch)")
+    parser.add_argument("--queue-dir", type=str, default=None, help="Queue/run dir (used only with --no-current-run)")
+    parser.add_argument("--no-current-run", action="store_true", help="Do not use current_run.json; use --queue-dir explicitly")
     parser.add_argument("--num-views", type=int, default=8, help="Number of azimuth views")
     parser.add_argument("--size", type=int, default=256, help="View image size (width and height)")
     parser.add_argument("--watch-interval", type=float, default=10.0, help="Seconds between scans when watching")
@@ -432,19 +432,20 @@ def main():
         render_job_dir(job_dir, num_views=args.num_views, size=args.size)
         return
 
-    if args.use_current_run:
+    use_current_run = not args.no_current_run
+    if use_current_run:
         try:
             from current_run import resolve_queue_and_index
             queue_dir, _ = resolve_queue_and_index(True, args.queue_dir or "/data/sam3d_queue", None)
         except ImportError:
             if not args.queue_dir:
-                print("Error: --use-current-run set but current_run module not found. Use --queue-dir.", file=sys.stderr)
+                print("Error: current_run module not found. Use --no-current-run and --queue-dir.", file=sys.stderr)
                 sys.exit(1)
             queue_dir = Path(args.queue_dir).resolve()
     elif args.queue_dir:
         queue_dir = Path(args.queue_dir).resolve()
     else:
-        print("Error: Provide --job-dir, --queue-dir, or --use-current-run.", file=sys.stderr)
+        print("Error: Provide --job-dir or --queue-dir (or run without --no-current-run to use current_run.json).", file=sys.stderr)
         sys.exit(1)
     output_dir = queue_dir / "output"
     if not output_dir.exists():

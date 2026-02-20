@@ -6,7 +6,6 @@ generated) object. Bridge subscribes to Sam3dObjectForSlot and runs registration
 """
 
 import asyncio
-import sys
 from pathlib import Path
 
 import cv2
@@ -17,23 +16,16 @@ from geometry_msgs.msg import Pose
 from std_msgs.msg import Header
 from custom_message.msg import SlotReadyMsg, Sam3dObjectForSlotMsg
 
-# CLIPUSDSearch from real2usd (same as index_sam3d_faiss and real2usd retrieval_node)
-_script_dir = Path(__file__).resolve().parent
-_repo_src = _script_dir.parents[1]  # real2sam3d -> src_Real2USD
-_scripts_r2u = _repo_src / "real2usd" / "scripts_r2u"
-if _scripts_r2u.is_dir() and str(_scripts_r2u) not in sys.path:
-    sys.path.insert(0, str(_scripts_r2u))
-
 TOPIC_OBJECT_FOR_SLOT = "/usd/Sam3dObjectForSlot"
 
 
 def _get_clip_search(faiss_index_path: str):
     """Lazy load CLIPUSDSearch and load index. Index layout matches index_sam3d_faiss: <path>/faiss/index.faiss."""
     try:
-        from clipusdsearch_cls import CLIPUSDSearch
+        from real2sam3d.clip_faiss import CLIPUSDSearch
     except ImportError as e:
         raise RuntimeError(
-            "CLIPUSDSearch not found. Add real2usd/scripts_r2u to PYTHONPATH. CLIP/FAISS required."
+            "CLIPUSDSearch not found (real2sam3d.clip_faiss). Install torch, clip, faiss, opencv-python, Pillow, tqdm."
         ) from e
     search = CLIPUSDSearch()
     p = Path(faiss_index_path).resolve()
@@ -58,6 +50,8 @@ class Sam3dRetrievalNode(Node):
         self.faiss_index_path = self.get_parameter("faiss_index_path").value
 
         self._clip_search = None  # lazy init on first slot
+        self._faiss_failure_reason = None  # set when FAISS load fails, for per-slot warning
+        self._faiss_index_mtime = 0.0  # mtime when we loaded index; reload if file is newer
 
         self.sub = self.create_subscription(
             SlotReadyMsg,
@@ -79,10 +73,29 @@ class Sam3dRetrievalNode(Node):
             try:
                 self._clip_search = _get_clip_search(self.faiss_index_path)
                 n = len(self._clip_search.usd_paths) if self._clip_search.index is not None else 0
-                self.get_logger().info(f"Loaded FAISS index: {n} object entries")
+                faiss_file = Path(self.faiss_index_path).resolve() / "faiss" / "index.faiss"
+                self._faiss_index_mtime = faiss_file.stat().st_mtime if faiss_file.exists() else 0.0
+                self.get_logger().info(f"Loaded FAISS index: {n} entries (will reload if index file is updated)")
             except Exception as e:
-                self.get_logger().error(f"Failed to load FAISS index: {e}")
+                self._faiss_failure_reason = str(e)
+                expected = Path(self.faiss_index_path).resolve() / "faiss" / "index.faiss"
+                self.get_logger().warn(
+                    f"FAISS not available: {e}. Expected index at {expected}. Using candidate for all slots (normal when CLIP/FAISS not in this env, e.g. Docker)."
+                )
                 self._clip_search = "failed"
+            return
+        # Reload index if the indexer wrote a newer version (so we pick up newly indexed jobs)
+        faiss_file = Path(self.faiss_index_path).resolve() / "faiss" / "index.faiss"
+        if faiss_file.exists():
+            try:
+                mtime = faiss_file.stat().st_mtime
+                if mtime > self._faiss_index_mtime:
+                    self._clip_search = _get_clip_search(self.faiss_index_path)
+                    self._faiss_index_mtime = mtime
+                    n = len(self._clip_search.usd_paths) if self._clip_search.index is not None else 0
+                    self.get_logger().info(f"Reloaded FAISS index: {n} entries")
+            except Exception:
+                pass
 
     def _on_slot_ready(self, msg: SlotReadyMsg):
         job_id = msg.job_id
@@ -105,8 +118,9 @@ class Sam3dRetrievalNode(Node):
 
         self._ensure_clip_search()
         if self._clip_search == "failed":
+            reason = f" ({self._faiss_failure_reason})" if self._faiss_failure_reason else ""
             self.get_logger().warn(
-                f"[retrieval] job_id={job_id}: FAISS load failed; using candidate"
+                f"[retrieval] job_id={job_id}: FAISS load failed{reason}; using candidate"
             )
             self._publish_object_for_slot(msg.header, job_id, track_id, candidate_data_path)
             return
@@ -127,22 +141,27 @@ class Sam3dRetrievalNode(Node):
                     f"[retrieval] job_id={job_id}: FAISS index empty ({len(self._clip_search.usd_paths) if self._clip_search != 'failed' else 0} entries); using candidate"
                 )
             else:
-                urls, scores, _, _ = asyncio.run(
+                urls, scores, top_indices, _, _ = asyncio.run(
                     self._clip_search.call_search_post_api("", [embedding], limit=1, retrieval_mode="cosine")
                 )
+                n_index = len(self._clip_search.usd_paths) if self._clip_search.index is not None else 0
                 if urls and len(urls) > 0:
                     best_data_path = urls[0]
                     score = float(scores[0]) if scores else 0.0
+                    top_idx = top_indices[0] if top_indices else -1
+                    self.get_logger().info(
+                        f"[retrieval] job_id={job_id}: FAISS top index={top_idx} of {n_index} (score={score:.3f}) -> {Path(best_data_path).name}"
+                    )
                     same_as_candidate = (
                         Path(best_data_path).resolve() == Path(candidate_data_path).resolve()
                     )
                     if same_as_candidate:
                         self.get_logger().info(
-                            f"[retrieval] job_id={job_id} track_id={track_id}: FAISS best match is same as candidate (score={score:.3f}) — index may only have this run's objects"
+                            f"[retrieval] job_id={job_id} track_id={track_id}: best match is same as candidate — index may have only one entry or candidate is truly best"
                         )
                     else:
                         self.get_logger().info(
-                            f"[retrieval] job_id={job_id}: FAISS best match {Path(best_data_path).name} (score={score:.3f}) diff from candidate"
+                            f"[retrieval] job_id={job_id}: using object from index (diff from candidate)"
                         )
                 else:
                     best_data_path = candidate_data_path

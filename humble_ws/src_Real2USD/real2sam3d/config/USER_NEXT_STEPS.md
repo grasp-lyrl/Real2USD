@@ -12,7 +12,7 @@
 
 ---
 
-**Quick run guide:** See **config/RUN_PIPELINE.md** for step-by-step commands (which terminal: Docker vs host conda) and **`--use-current-run`** so worker/indexer read paths from `current_run.json` and you don’t set paths manually.
+**Quick run guide:** See **config/RUN_PIPELINE.md** for step-by-step commands (which terminal: Docker vs host conda). Scripts **default to current run** (they read paths from `current_run.json`); use **`--no-current-run`** when you need to pass paths explicitly.
 
 ---
 

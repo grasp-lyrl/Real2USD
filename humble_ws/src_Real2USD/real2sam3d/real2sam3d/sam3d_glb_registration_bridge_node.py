@@ -223,14 +223,19 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         super().__init__("sam3d_glb_registration_bridge_node")
 
         self.declare_parameter("queue_dir", "/data/sam3d_queue")
-        self.declare_parameter("world_point_cloud_topic", "/point_cloud2")
+        self.declare_parameter("world_point_cloud_topic", "/global_lidar_points")
         self.declare_parameter("max_src_points", 50000)
         self.declare_parameter("debounce_sec", 30.0)
+        # "global" = accumulated world point cloud + initial pose from SAM3D+go2 (default); "segment" = target from job dir
+        self.declare_parameter("registration_target", "global")
 
         self.queue_dir = Path(self.get_parameter("queue_dir").value)
         self.world_pc_topic = self.get_parameter("world_point_cloud_topic").value
         self.max_src_points = self.get_parameter("max_src_points").value
         self.debounce_sec = self.get_parameter("debounce_sec").value
+        self.registration_target = (self.get_parameter("registration_target").value or "global").strip().lower()
+        if self.registration_target not in ("segment", "global"):
+            self.registration_target = "global"
 
         self._latest_world_pc: Optional[PointCloud2] = None
         self._last_sent: dict = {}  # (job_id, track_id) -> timestamp
@@ -256,7 +261,7 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         )
 
         self.get_logger().info(
-            f"SAM3D GLB registration bridge: subscribe {object_for_slot_topic} (job_id→targ PC); world PC from {self.world_pc_topic}"
+            f"SAM3D GLB registration bridge: subscribe {object_for_slot_topic}; target={self.registration_target}, world PC from {self.world_pc_topic}"
         )
 
     def _on_world_pc(self, msg: PointCloud2) -> None:
@@ -285,33 +290,40 @@ class Sam3dGlbRegistrationBridgeNode(Node):
             )
             return
 
-        # Target segment PC from slot job dir (job_id) — must match the image/slot for correct pose
+        # Target: segment from job dir or global point cloud (parameter for experiments)
         job_dir = self.queue_dir / "output" / job_id
         targ_pc_msg = None
-        points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(job_dir)
-        if points_targ is None:
-            alt_job_dir = self.queue_dir / "input_processed" / job_id
-            if alt_job_dir.exists():
-                points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(alt_job_dir)
-        if points_targ is not None and len(points_targ) >= 30:
-            targ_pc_msg = point_cloud2.create_cloud_xyz32(
-                header=Header(frame_id="odom"),
-                points=points_targ.astype(np.float32),
-            )
-            targ_pc_msg.header.stamp = now.to_msg()
-            self.get_logger().info(
-                f"[registration target] job_id={job_id} id={track_id}: using segment PC from job dir ({len(points_targ)} pts) — correct association"
-            )
-        if targ_pc_msg is None:
+        if self.registration_target == "global":
             if self._latest_world_pc is None:
-                self.get_logger().warn(
-                    f"[registration target] job_id={job_id}: no segment ({segment_reason}) and no world PC; skip"
-                )
+                self.get_logger().warn(f"[registration target] job_id={job_id}: registration_target=global but no world PC; skip")
                 return
-            self.get_logger().warn(
-                f"[registration target] job_id={job_id} id={track_id}: segment unavailable ({segment_reason}); using world PC — poses may congregate"
-            )
             targ_pc_msg = self._latest_world_pc
+            self.get_logger().info(f"[registration target] job_id={job_id} id={track_id}: using global PC (param)")
+        else:
+            points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(job_dir)
+            if points_targ is None:
+                alt_job_dir = self.queue_dir / "input_processed" / job_id
+                if alt_job_dir.exists():
+                    points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(alt_job_dir)
+            if points_targ is not None and len(points_targ) >= 30:
+                targ_pc_msg = point_cloud2.create_cloud_xyz32(
+                    header=Header(frame_id="odom"),
+                    points=points_targ.astype(np.float32),
+                )
+                targ_pc_msg.header.stamp = now.to_msg()
+                self.get_logger().info(
+                    f"[registration target] job_id={job_id} id={track_id}: using segment PC from job dir ({len(points_targ)} pts)"
+                )
+            if targ_pc_msg is None:
+                if self._latest_world_pc is None:
+                    self.get_logger().warn(
+                        f"[registration target] job_id={job_id}: no segment ({segment_reason}) and no world PC; skip"
+                    )
+                    return
+                self.get_logger().warn(
+                    f"[registration target] job_id={job_id} id={track_id}: segment unavailable ({segment_reason}); fallback world PC"
+                )
+                targ_pc_msg = self._latest_world_pc
 
         src_msg = point_cloud2.create_cloud_xyz32(
             header=Header(frame_id="odom"),
@@ -326,6 +338,24 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         reg_msg.id = track_id
         reg_msg.src_pc = src_msg
         reg_msg.targ_pc = targ_pc_msg
+        # Initial pose from SAM3D + go2 (worker writes to pose.json) so registration starts from this
+        pose_path = job_dir / "pose.json"
+        if pose_path.exists():
+            try:
+                with open(pose_path) as f:
+                    pose_data = json.load(f)
+                ip = pose_data.get("initial_position")
+                io = pose_data.get("initial_orientation")
+                if ip and io and len(ip) >= 3 and len(io) >= 4:
+                    reg_msg.initial_pose.position.x = float(ip[0])
+                    reg_msg.initial_pose.position.y = float(ip[1])
+                    reg_msg.initial_pose.position.z = float(ip[2])
+                    reg_msg.initial_pose.orientation.x = float(io[0])
+                    reg_msg.initial_pose.orientation.y = float(io[1])
+                    reg_msg.initial_pose.orientation.z = float(io[2])
+                    reg_msg.initial_pose.orientation.w = float(io[3])
+            except (OSError, json.JSONDecodeError, TypeError):
+                pass
         self.pub_src_targ.publish(reg_msg)
         self._last_sent[key] = now
         self.get_logger().info(

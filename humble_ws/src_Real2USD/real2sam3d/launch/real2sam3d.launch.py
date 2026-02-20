@@ -128,7 +128,7 @@ def generate_launch_description():
             package='real2sam3d',
             executable='sam3d_glb_registration_bridge_node',
             condition=IfCondition(with_glb_registration_bridge),
-            parameters=[{'queue_dir': sam3d_queue_dir, 'world_point_cloud_topic': '/point_cloud2'}],
+            parameters=[{'queue_dir': sam3d_queue_dir, 'world_point_cloud_topic': '/global_lidar_points'}],
         ),
         # Optional: run worker in same launch (run_sam3d_worker:=true; sam3d_worker_dry_run:=true to test without conda)
         ExecuteProcess(

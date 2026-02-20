@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
+
 # Allow importing ply_frame_utils when run from any cwd (e.g. share/real2sam3d/scripts_sam3d_worker/)
 _script_dir = Path(__file__).resolve().parent
 if str(_script_dir) not in sys.path:
@@ -100,7 +102,34 @@ def run_sam3d_inference(rgb, mask, meta, sam3d_repo: Path = None, config_path: s
     return output
 
 
-def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo: Path = None) -> bool:
+def _apply_init_odom(odom: dict, queue_dir: Path) -> tuple:
+    """Load or create init_odom.json; return (position, orientation) relative to init frame. Uses scipy R."""
+    from scipy.spatial.transform import Rotation as R
+    init_path = queue_dir / "init_odom.json"
+    t = np.array(odom["position"], dtype=np.float64)
+    q = np.array(odom["orientation"], dtype=np.float64)  # x,y,z,w
+    if not init_path.exists():
+        init_odom = {"position": t.tolist(), "orientation": q.tolist()}
+        try:
+            with open(init_path, "w") as f:
+                json.dump(init_odom, f, indent=2)
+            print(f"[init_odom] Wrote {init_path} from first job", file=sys.stderr)
+        except OSError as e:
+            print(f"[WARN] Could not write init_odom.json: {e}", file=sys.stderr)
+        return list(t), list(q)
+    with open(init_path) as f:
+        init = json.load(f)
+    t_init = np.array(init["position"], dtype=np.float64)
+    q_init = np.array(init["orientation"], dtype=np.float64)
+    position_rel = (t - t_init).tolist()
+    R_init = R.from_quat(q_init)
+    R_odom = R.from_quat(q)
+    R_rel = R_init.inv() * R_odom
+    orientation_rel = list(R_rel.as_quat())  # x,y,z,w
+    return position_rel, orientation_rel
+
+
+def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo: Path = None, queue_dir: Path = None, use_init_odom: bool = False) -> bool:
     """Process a single job directory. Returns True on success."""
     job_id = job_path.name
     out_path = output_dir / job_id
@@ -112,10 +141,13 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
         print(f"[ERROR] {e}", file=sys.stderr)
         return False
 
-    # Pose: keep robot/camera pose when image was retrieved (from odom); useful for later (e.g. registration).
+    # Pose: robot/camera pose from odom; optionally relative to first frame (init_odom).
     odom = meta["odometry"]
-    position = list(odom["position"])
-    orientation = list(odom["orientation"])  # qx, qy, qz, qw
+    if use_init_odom and queue_dir is not None:
+        position, orientation = _apply_init_odom(odom, queue_dir)
+    else:
+        position = list(odom["position"])
+        orientation = list(odom["orientation"])  # qx, qy, qz, qw
 
     if dry_run:
         pose = {
@@ -182,6 +214,15 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
         "track_id": meta.get("track_id"),
         "label": meta.get("label"),
     }
+    # Initial pose from SAM3D + go2 odom for registration (global target + ICP from this init)
+    try:
+        from ply_frame_utils import initial_pose_from_sam3d_output
+        init_pose = initial_pose_from_sam3d_output(output, odom)
+        if init_pose is not None:
+            pose["initial_position"] = init_pose[0]
+            pose["initial_orientation"] = init_pose[1]
+    except Exception as e:
+        print(f"[WARN] Could not compute initial pose for {job_id}: {e}", file=sys.stderr)
     with open(out_path / "pose.json", "w") as f:
         json.dump(pose, f, indent=2)
 
@@ -204,20 +245,22 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
 
 def main():
     parser = argparse.ArgumentParser(description="SAM3D worker: process jobs from queue_dir/input")
-    parser.add_argument("--queue-dir", type=str, default="/data/sam3d_queue", help="Queue directory (or run dir when use_run_subdir); ignored if --use-current-run")
-    parser.add_argument("--use-current-run", action="store_true", help="Use queue_dir from current_run.json (written by ros2 launch; no need to pass paths)")
+    parser.add_argument("--queue-dir", type=str, default="/data/sam3d_queue", help="Queue directory (used only with --no-current-run)")
+    parser.add_argument("--no-current-run", action="store_true", help="Do not use current_run.json; use --queue-dir (and paths) explicitly")
     parser.add_argument("--sam3d-repo", type=str, default=None, help="Path to sam-3d-objects repo (required for real inference; has notebook/ and checkpoints/)")
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
     parser.add_argument("--dry-run", action="store_true", help="Only validate job and write pose (no SAM3D)")
+    parser.add_argument("--use-init-odom", action="store_true", help="Express poses relative to first job's odom (write init_odom.json; position/orientation in pose.json become relative)")
     args = parser.parse_args()
 
+    use_current_run = not args.no_current_run
     try:
         from current_run import resolve_queue_and_index
-        queue_dir, _ = resolve_queue_and_index(args.use_current_run, args.queue_dir, None)
+        queue_dir, _ = resolve_queue_and_index(use_current_run, args.queue_dir, None)
     except ImportError:
         queue_dir = Path(args.queue_dir).resolve()
-        if args.use_current_run:
-            print("Warning: current_run module not found; using --queue-dir.", file=sys.stderr)
+        if use_current_run:
+            print("Warning: current_run module not found; using --queue-dir. Use --no-current-run to silence.", file=sys.stderr)
 
     sam3d_repo = Path(args.sam3d_repo).resolve() if args.sam3d_repo else None
     if not args.dry_run and sam3d_repo is None:
@@ -247,7 +290,10 @@ def main():
 
         job_path = jobs[0]
         print(f"Processing job: {job_path.name} ...", file=sys.stderr)
-        success = process_one_job(job_path, output_dir, args.dry_run, sam3d_repo=sam3d_repo)
+        success = process_one_job(
+            job_path, output_dir, args.dry_run, sam3d_repo=sam3d_repo,
+            queue_dir=queue_dir, use_init_odom=args.use_init_odom,
+        )
         if success and args.once:
             _move_to_processed(job_path, processed_dir)
             sys.exit(0)
