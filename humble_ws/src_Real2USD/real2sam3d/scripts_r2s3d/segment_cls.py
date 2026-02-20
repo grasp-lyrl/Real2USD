@@ -4,6 +4,23 @@ import os
 os.environ['YOLO_VERBOSE'] = 'False'
 import cv2
 import time
+import torch
+
+# Use CPU if no GPU or if GPU has unsupported CUDA capability (e.g. RTX 5090 sm_120)
+def _infer_device():
+    if not torch.cuda.is_available():
+        return "cpu"
+    try:
+        cap = torch.cuda.get_device_capability()
+        # PyTorch pre-built binaries typically support up to sm_90; newer GPUs (e.g. sm_120) need a custom build
+        if cap[0] > 9:
+            return "cpu"
+    except Exception:
+        return "cpu"
+    return "cuda"
+
+_SEG_DEVICE = _infer_device()
+
 from ultralytics import SAM, FastSAM, YOLO, YOLOE
 from ultralytics import settings
 
@@ -27,6 +44,7 @@ class Segmentation:
             self.model = SAM(model_path)
         else:
             self.model = YOLOE(model_path)
+        self.model.to(_SEG_DEVICE)
 
         self.classes = ["a round table", "a church bench", "power outlet", "chair", "door", "a desk", "a sofa", "barstool", "file cabinet", "cocktail table", "side table", "elevator door"] #, "canopy bed", "office desk"]
         self.classes_usd = ["Table", "Chair", "Misc", "Chair", "Misc", "Table", "Chair", "Chair", "Storage", "Table", "Table", "Misc"]#, "Table", "Table"]

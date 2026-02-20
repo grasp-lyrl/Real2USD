@@ -273,6 +273,105 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
+    - Alpha: 1
+      Class: rviz_default_plugins/PointCloud2
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Global lidar (world)
+      Size (m): 0.02
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /global_lidar_points
+      Value: true
+    - Alpha: 0.9
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 0; 0
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Debug reg source (object PC)
+      Size (m): 0.03
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /debug/registration/src_pc
+      Value: true
+    - Alpha: 0.7
+      Class: rviz_default_plugins/PointCloud2
+      Color: 0; 255; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Debug reg target (scene PC)
+      Size (m): 0.02
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /debug/registration/targ_pc
+      Value: true
+    - Alpha: 1
+      Class: rviz_default_plugins/PointCloud2
+      Color Transformer: RGB8
+      Decay Time: 0
+      Enabled: false
+      Name: Registration clusters
+      Size (m): 0.025
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /registration/clusters
+      Value: true
+    - Alpha: 1
+      Class: rviz_default_plugins/PointCloud2
+      Color Transformer: RGB8
+      Decay Time: 0
+      Enabled: true
+      Name: Registration best match
+      Size (m): 0.03
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /registration/best_match
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Debug segment last crop
+      Topic:
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /debug/segment/last_crop
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Debug job_writer last crop
+      Topic:
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /debug/job_writer/last_crop
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Pipeline profile timeline
+      Topic:
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /pipeline/profile_timeline
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

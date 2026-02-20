@@ -52,6 +52,7 @@ def generate_launch_description():
     with_glb_registration_bridge = LaunchConfiguration('glb_registration_bridge', default='true')
     with_sam3d_retrieval = LaunchConfiguration('sam3d_retrieval', default='true')
     with_simple_scene_buffer = LaunchConfiguration('simple_scene_buffer', default='true')
+    with_pipeline_profiler = LaunchConfiguration('pipeline_profiler', default='true')
     no_faiss_mode = LaunchConfiguration('no_faiss_mode', default='false')
     run_sam3d_worker = LaunchConfiguration('run_sam3d_worker', default='false')
     use_run_subdir = LaunchConfiguration('use_run_subdir', default='true')
@@ -59,7 +60,7 @@ def generate_launch_description():
     faiss_index_path = LaunchConfiguration('faiss_index_path', default='/data/sam3d_faiss')
 
     pkg_share = get_package_share_directory('real2sam3d')
-    rviz_config = "real2usd_conf.rviz"
+    rviz_config = "real2sam3d_conf.rviz"
     worker_script = os.path.join(pkg_share, 'scripts_sam3d_worker', 'run_sam3d_worker.py')
 
     ld = LaunchDescription([
@@ -84,6 +85,8 @@ def generate_launch_description():
                              description='FAISS index base path (index at <path>/faiss/). When use_run_subdir=true (default), overridden to run_dir so index is <run_dir>/faiss/.'),
         DeclareLaunchArgument('simple_scene_buffer', default_value='true',
                              description='Run simple scene buffer node (writes scene_graph.json + scene.glb from /usd/StringIdPose)'),
+        DeclareLaunchArgument('pipeline_profiler', default_value='true',
+                             description='Run pipeline profiler and SAM3D profiler (timeline + sam3d_worker/inference latency)'),
         OpaqueFunction(function=_create_run_dir_and_set_queue),
         # Pipeline: lidar_cam -> job_writer -> [worker] -> injector (SlotReady) -> retrieval (ObjectForSlot) -> bridge -> registration -> usd_buffer
         Node(
@@ -103,6 +106,16 @@ def generate_launch_description():
             executable='simple_scene_buffer_node',
             condition=IfCondition(with_simple_scene_buffer),
             parameters=[{'output_dir': sam3d_queue_dir}],
+        ),
+        Node(
+            package='real2sam3d',
+            executable='pipeline_profiler_node',
+            condition=IfCondition(with_pipeline_profiler),
+        ),
+        Node(
+            package='real2sam3d',
+            executable='sam3d_profiler_node',
+            condition=IfCondition(with_pipeline_profiler),
         ),
         Node(
             package='real2sam3d',

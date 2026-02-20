@@ -22,8 +22,9 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
-from custom_message.msg import CropImgDepthMsg
+from custom_message.msg import CropImgDepthMsg, PipelineStepTiming, Sam3dJobEnqueued
 from cv_bridge import CvBridge
+from sensor_msgs.msg import Image
 
 
 def write_sam3d_job(
@@ -155,6 +156,10 @@ class Sam3dJobWriterNode(Node):
             self.callback,
             10,
         )
+        self.pub_debug_last_crop = self.create_publisher(Image, "/debug/job_writer/last_crop", 10)
+        self.pub_timing = self.create_publisher(PipelineStepTiming, "/pipeline/timings", 10)
+        self.pub_job_enqueued = self.create_publisher(Sam3dJobEnqueued, "/sam3d/job_enqueued", 10)
+        self._timing_sequence = 0
         self.get_logger().info(
             f"SAM3D job writer: queue_dir={self.queue_dir}, write_every_n={self.write_every_n}, enable={self.enable}, "
             f"dedup_track_id_sec={self.dedup_track_id_sec}, dedup_position_m={self.dedup_position_m}"
@@ -186,6 +191,7 @@ class Sam3dJobWriterNode(Node):
         job_id = f"{track_id}_{msg.header.stamp.sec}_{msg.header.stamp.nanosec}_{uuid.uuid4().hex[:8]}"
         job_path = self.input_dir / job_id
 
+        t_start = time.perf_counter()
         try:
             rgb = self.bridge.imgmsg_to_cv2(msg.rgb_image, desired_encoding="bgr8")
             depth_full = self.bridge.imgmsg_to_cv2(msg.depth_image, desired_encoding="16UC1")
@@ -220,6 +226,22 @@ class Sam3dJobWriterNode(Node):
             write_sam3d_job(rgb, depth_full, seg_pts, meta, job_path, crop_bbox=crop_bbox)
             self._record_written(track_id, label, position)
             self.get_logger().info(f"Wrote SAM3D job: {job_path}")
+            duration_ms = (time.perf_counter() - t_start) * 1000.0
+            timing_msg = PipelineStepTiming()
+            timing_msg.header.stamp = self.get_clock().now().to_msg()
+            timing_msg.header.frame_id = "map"
+            timing_msg.node_name = "sam3d_job_writer_node"
+            timing_msg.step_name = "write_job"
+            timing_msg.duration_ms = duration_ms
+            timing_msg.sequence_id = self._timing_sequence
+            self._timing_sequence += 1
+            self.pub_timing.publish(timing_msg)
+            enq = Sam3dJobEnqueued()
+            enq.header.stamp = self.get_clock().now().to_msg()
+            enq.header.frame_id = "map"
+            enq.job_id = job_id
+            self.pub_job_enqueued.publish(enq)
+            self.pub_debug_last_crop.publish(msg.rgb_image)
         except Exception as e:
             self.get_logger().error(f"Failed to write SAM3D job {job_id}: {e}")
 

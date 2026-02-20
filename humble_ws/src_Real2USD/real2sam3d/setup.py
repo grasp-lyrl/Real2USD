@@ -37,6 +37,8 @@ setup(
             "sam3d_glb_registration_bridge_node = real2sam3d.sam3d_glb_registration_bridge_node:main",
             "sam3d_retrieval_node = real2sam3d.sam3d_retrieval_node:main",
             "simple_scene_buffer_node = real2sam3d.simple_scene_buffer_node:main",
+            "pipeline_profiler_node = real2sam3d.pipeline_profiler_node:main",
+            "sam3d_profiler_node = real2sam3d.sam3d_profiler_node:main",
         ],
     },
 )

@@ -102,34 +102,15 @@ def run_sam3d_inference(rgb, mask, meta, sam3d_repo: Path = None, config_path: s
     return output
 
 
-def _apply_init_odom(odom: dict, queue_dir: Path) -> tuple:
-    """Load or create init_odom.json; return (position, orientation) relative to init frame. Uses scipy R."""
-    from scipy.spatial.transform import Rotation as R
-    init_path = queue_dir / "init_odom.json"
-    t = np.array(odom["position"], dtype=np.float64)
-    q = np.array(odom["orientation"], dtype=np.float64)  # x,y,z,w
-    if not init_path.exists():
-        init_odom = {"position": t.tolist(), "orientation": q.tolist()}
-        try:
-            with open(init_path, "w") as f:
-                json.dump(init_odom, f, indent=2)
-            print(f"[init_odom] Wrote {init_path} from first job", file=sys.stderr)
-        except OSError as e:
-            print(f"[WARN] Could not write init_odom.json: {e}", file=sys.stderr)
-        return list(t), list(q)
-    with open(init_path) as f:
-        init = json.load(f)
-    t_init = np.array(init["position"], dtype=np.float64)
-    q_init = np.array(init["orientation"], dtype=np.float64)
-    position_rel = (t - t_init).tolist()
-    R_init = R.from_quat(q_init)
-    R_odom = R.from_quat(q)
-    R_rel = R_init.inv() * R_odom
-    orientation_rel = list(R_rel.as_quat())  # x,y,z,w
-    return position_rel, orientation_rel
-
-
-def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo: Path = None, queue_dir: Path = None, use_init_odom: bool = False) -> bool:
+def process_one_job(
+    job_path: Path,
+    output_dir: Path,
+    dry_run: bool,
+    sam3d_repo: Path = None,
+    queue_dir: Path = None,
+    use_init_odom: bool = False,
+    write_demo_go2_compare: bool = False,
+) -> bool:
     """Process a single job directory. Returns True on success."""
     job_id = job_path.name
     out_path = output_dir / job_id
@@ -141,21 +122,22 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
         print(f"[ERROR] {e}", file=sys.stderr)
         return False
 
-    # Pose: robot/camera pose from odom; optionally relative to first frame (init_odom).
+    # Pose: persist raw odom from the job. Injector applies init_odom normalization.
     odom = meta["odometry"]
-    if use_init_odom and queue_dir is not None:
-        position, orientation = _apply_init_odom(odom, queue_dir)
-    else:
-        position = list(odom["position"])
-        orientation = list(odom["orientation"])  # qx, qy, qz, qw
+    if use_init_odom:
+        print(
+            "[WARN] --use-init-odom is deprecated in worker; init_odom is applied by injector.",
+            file=sys.stderr,
+        )
 
     if dry_run:
         pose = {
-            "position": position,
-            "orientation": orientation,
+            "frame": "sam3d_raw",
             "job_id": job_id,
             "track_id": meta.get("track_id"),
             "label": meta.get("label"),
+            "go2_odom_position": list(odom["position"]),
+            "go2_odom_orientation": list(odom["orientation"]),
         }
         with open(out_path / "pose.json", "w") as f:
             json.dump(pose, f, indent=2)
@@ -188,41 +170,201 @@ def process_one_job(job_path: Path, output_dir: Path, dry_run: bool, sam3d_repo:
         object_ply_path.write_text("# no gs in output (keys: {})\n".format(list(output.keys()) if isinstance(output, dict) else type(output).__name__))
         print(f"[WARN] SAM3D output had no 'gs'; wrote placeholder object.ply for {job_id}. Keys: {list(output.keys()) if isinstance(output, dict) else 'N/A'}", file=sys.stderr)
 
-    # Export GLB centered at origin, Z-up world frame (SAM3D/glTF use Y-up).
+    # Export GLB: vanilla (raw SAM3D mesh, no frame conversion). Transform is done per-slot in sam3d_injector_node.
     if "glb" in output:
         try:
-            import numpy as np
-            from ply_frame_utils import vertices_y_up_to_z_up
             glb_mesh = output["glb"]
             if hasattr(glb_mesh, "vertices") and hasattr(glb_mesh, "export"):
                 verts = np.asarray(glb_mesh.vertices, dtype=np.float64)
-                centroid = np.mean(verts, axis=0)
-                verts_local = verts - centroid
-                verts_local = vertices_y_up_to_z_up(verts_local)
-                glb_mesh.vertices = verts_local
+                glb_mesh.vertices = verts
+                if hasattr(glb_mesh, "volume") and glb_mesh.volume < 0:
+                    glb_mesh.invert()
                 glb_mesh.export(str(object_glb_path))
-                print(f"[OK] Wrote object.glb (origin, Z-up)", file=sys.stderr)
+                print(f"[OK] Wrote object.glb (vanilla SAM3D)", file=sys.stderr)
             else:
                 print(f"[WARN] output['glb'] is not a trimesh (no vertices/export); skipping GLB.", file=sys.stderr)
         except Exception as e:
             print(f"[WARN] Could not export object.glb: {e}", file=sys.stderr)
 
+    # pose.json: raw data for injector to transform. frame=sam3d_raw; injector writes z_up_odom + initial_* after transform.
     pose = {
-        "position": position,
-        "orientation": orientation,
+        "frame": "sam3d_raw",
         "job_id": job_id,
         "track_id": meta.get("track_id"),
         "label": meta.get("label"),
+        "go2_odom_position": list(odom["position"]),
+        "go2_odom_orientation": list(odom["orientation"]),
     }
-    # Initial pose from SAM3D + go2 odom for registration (global target + ICP from this init)
-    try:
-        from ply_frame_utils import initial_pose_from_sam3d_output
-        init_pose = initial_pose_from_sam3d_output(output, odom)
-        if init_pose is not None:
-            pose["initial_position"] = init_pose[0]
-            pose["initial_orientation"] = init_pose[1]
-    except Exception as e:
-        print(f"[WARN] Could not compute initial pose for {job_id}: {e}", file=sys.stderr)
+    # Save SAM3D transform inputs so injector can run our frame conversion (demo_go2-style) per slot.
+    scale = output.get("scale")
+    rot = output.get("rotation")
+    trans = output.get("translation")
+    if scale is not None and rot is not None and trans is not None:
+        try:
+            if getattr(scale, "shape", None) and scale.shape[0] == 1:
+                scale = scale[0]
+        except (IndexError, TypeError):
+            pass
+        try:
+            if getattr(trans, "shape", None) and trans.shape[0] == 1:
+                trans = trans[0]
+        except (IndexError, TypeError):
+            pass
+        try:
+            rot = getattr(rot, "squeeze", lambda: rot)()
+        except Exception:
+            pass
+        if hasattr(scale, "cpu"):
+            scale = np.asarray(scale.cpu().numpy(), dtype=np.float64).ravel()
+        else:
+            scale = np.asarray(scale, dtype=np.float64).ravel()
+        if hasattr(rot, "cpu"):
+            rot = np.asarray(rot.cpu().numpy(), dtype=np.float64).ravel()
+        else:
+            rot = np.asarray(rot, dtype=np.float64).ravel()
+        if hasattr(trans, "cpu"):
+            trans = np.asarray(trans.cpu().numpy(), dtype=np.float64).ravel()
+        else:
+            trans = np.asarray(trans, dtype=np.float64).ravel()
+        pose["sam3d_scale"] = scale.tolist() if hasattr(scale, "tolist") else list(scale)
+        pose["sam3d_rotation"] = rot.tolist() if hasattr(rot, "tolist") else list(rot)  # w,x,y,z
+        pose["sam3d_translation"] = trans.tolist() if hasattr(trans, "tolist") else list(trans)[:3]
+
+        # Optional worker-side demo_go2 parity export for debugging:
+        # Write per-job GLBs transformed with the same row-vector chain as demo_go2.py
+        # so we can compare against injector/object_odom.glb without running demo_go2 separately.
+        if write_demo_go2_compare and "glb" in output and hasattr(output["glb"], "vertices"):
+            try:
+                from ply_frame_utils import (
+                    GO2_R_WORLD_TO_CAM,
+                    GO2_T_WORLD_TO_CAMERA,
+                    R_FLIP_Z,
+                    R_PYTORCH3D_TO_CAM,
+                    R_YUP_TO_ZUP,
+                    demo_go2_build_T_raw_to_odom,
+                    demo_go2_transform_vertices_to_odom,
+                )
+                init_odom = None
+                if queue_dir is not None:
+                    init_path = queue_dir / "init_odom.json"
+                    if init_path.exists():
+                        with open(init_path) as f:
+                            init_odom = json.load(f)
+
+                # IMPORTANT: reload from disk object.glb and flatten node transforms so the
+                # compare path uses the same effective raw geometry as injector.
+                import trimesh
+                loaded = trimesh.load(str(object_glb_path), process=False)
+                raw_mesh = None
+                if isinstance(loaded, trimesh.Scene):
+                    # merge flattened geometries to one mesh for deterministic compare
+                    flat = []
+                    for node_name in loaded.graph.nodes_geometry:
+                        try:
+                            node_tf, geom_name = loaded.graph[node_name]
+                            geom = loaded.geometry.get(geom_name)
+                            if isinstance(geom, trimesh.Trimesh):
+                                g = geom.copy()
+                                g.apply_transform(np.asarray(node_tf, dtype=np.float64))
+                                flat.append(g)
+                        except Exception:
+                            continue
+                    if flat:
+                        raw_mesh = trimesh.util.concatenate(flat)
+                elif isinstance(loaded, trimesh.Trimesh):
+                    raw_mesh = loaded
+                if raw_mesh is None:
+                    raise RuntimeError("Could not load object.glb geometry for demo-go2 compare")
+
+                raw_verts = np.asarray(raw_mesh.vertices, dtype=np.float64)
+                verts_cam, verts_odom = demo_go2_transform_vertices_to_odom(
+                    raw_verts,
+                    scale=scale,
+                    rotation_quat_wxyz=rot,
+                    translation=trans,
+                    odom=odom,
+                    init_odom=init_odom,
+                )
+
+                mesh_cam = raw_mesh.copy()
+                mesh_cam.vertices = verts_cam
+                if hasattr(mesh_cam, "volume") and mesh_cam.volume < 0:
+                    mesh_cam.invert()
+                cam_out = out_path / "object_demo_go2_cam.glb"
+                mesh_cam.export(str(cam_out))
+
+                mesh_odom = raw_mesh.copy()
+                mesh_odom.vertices = verts_odom
+                if hasattr(mesh_odom, "volume") and mesh_odom.volume < 0:
+                    mesh_odom.invert()
+                odom_out = out_path / "object_demo_go2_odom.glb"
+                mesh_odom.export(str(odom_out))
+
+                # Build apples-to-apples numeric debug payload with the same structure
+                # as injector transform_debug.json so we can diff the two directly.
+                T_raw_to_odom = demo_go2_build_T_raw_to_odom(
+                    scale=scale,
+                    rotation_quat_wxyz=rot,
+                    translation=trans,
+                    odom=odom,
+                    init_odom=init_odom,
+                )
+                basis = np.array(
+                    [
+                        [0.0, 0.0, 0.0],
+                        [1.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float64,
+                )
+                basis_cam, basis_odom_direct = demo_go2_transform_vertices_to_odom(
+                    basis,
+                    scale=scale,
+                    rotation_quat_wxyz=rot,
+                    translation=trans,
+                    odom=odom,
+                    init_odom=init_odom,
+                )
+                ones = np.ones((basis.shape[0], 1), dtype=np.float64)
+                basis_h = np.hstack([basis, ones])
+                basis_odom_matrix = (T_raw_to_odom @ basis_h.T).T[:, :3]
+
+                compare = {
+                    "centroid": np.asarray(mesh_odom.centroid).tolist(),
+                    "aabb_bounds": np.asarray(mesh_odom.bounds).tolist(),
+                    "init_odom_position": init_odom.get("position") if isinstance(init_odom, dict) else None,
+                    "constants": {
+                        "R_flip_z": np.asarray(R_FLIP_Z, dtype=np.float64).tolist(),
+                        "R_yup_to_zup": np.asarray(R_YUP_TO_ZUP, dtype=np.float64).tolist(),
+                        "R_pytorch3d_to_cam": np.asarray(R_PYTORCH3D_TO_CAM, dtype=np.float64).tolist(),
+                        "R_world_to_cam": np.asarray(GO2_R_WORLD_TO_CAM, dtype=np.float64).tolist(),
+                        "t_world_to_camera": np.asarray(GO2_T_WORLD_TO_CAMERA, dtype=np.float64).tolist(),
+                    },
+                    "inputs": {
+                        "odom_position": list(odom["position"]),
+                        "odom_orientation": list(odom["orientation"]),
+                        "init_odom_position": init_odom.get("position") if isinstance(init_odom, dict) else None,
+                        "sam3d_scale": np.asarray(scale, dtype=np.float64).tolist(),
+                        "sam3d_rotation_wxyz": np.asarray(rot, dtype=np.float64).tolist(),
+                        "sam3d_translation": np.asarray(trans, dtype=np.float64).tolist(),
+                    },
+                    "matrices": {
+                        "T_raw_to_odom": np.asarray(T_raw_to_odom, dtype=np.float64).tolist(),
+                    },
+                    "basis_test": {
+                        "raw_basis_points": basis.tolist(),
+                        "cam_direct_chain": np.asarray(basis_cam, dtype=np.float64).tolist(),
+                        "odom_direct_chain": np.asarray(basis_odom_direct, dtype=np.float64).tolist(),
+                        "odom_matrix_chain": np.asarray(basis_odom_matrix, dtype=np.float64).tolist(),
+                        "odom_direct_minus_matrix": np.asarray(basis_odom_direct - basis_odom_matrix, dtype=np.float64).tolist(),
+                    },
+                }
+                with open(out_path / "demo_go2_compare.json", "w") as f:
+                    json.dump(compare, f, indent=2)
+                print(f"[OK] Wrote demo-go2 compare GLBs: {cam_out.name}, {odom_out.name}", file=sys.stderr)
+            except Exception as e:
+                print(f"[WARN] Could not write demo-go2 compare GLBs: {e}", file=sys.stderr)
     with open(out_path / "pose.json", "w") as f:
         json.dump(pose, f, indent=2)
 
@@ -250,7 +392,8 @@ def main():
     parser.add_argument("--sam3d-repo", type=str, default=None, help="Path to sam-3d-objects repo (required for real inference; has notebook/ and checkpoints/)")
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
     parser.add_argument("--dry-run", action="store_true", help="Only validate job and write pose (no SAM3D)")
-    parser.add_argument("--use-init-odom", action="store_true", help="Express poses relative to first job's odom (write init_odom.json; position/orientation in pose.json become relative)")
+    parser.add_argument("--use-init-odom", action="store_true", help="Deprecated: kept for compatibility; injector now applies init_odom normalization")
+    parser.add_argument("--write-demo-go2-compare", action="store_true", help="Also write object_demo_go2_cam.glb/object_demo_go2_odom.glb + demo_go2_compare.json per job for transform parity checks")
     args = parser.parse_args()
 
     use_current_run = not args.no_current_run
@@ -293,6 +436,7 @@ def main():
         success = process_one_job(
             job_path, output_dir, args.dry_run, sam3d_repo=sam3d_repo,
             queue_dir=queue_dir, use_init_odom=args.use_init_odom,
+            write_demo_go2_compare=args.write_demo_go2_compare,
         )
         if success and args.once:
             _move_to_processed(job_path, processed_dir)

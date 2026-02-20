@@ -88,4 +88,4 @@ def test_process_one_job_dry_run_writes_output():
             pose = json.load(f)
         assert pose["track_id"] == 7
         assert pose["label"] == "Chair"
-        assert "position" in pose and "orientation" in pose
+        assert "go2_odom_position" in pose and "go2_odom_orientation" in pose

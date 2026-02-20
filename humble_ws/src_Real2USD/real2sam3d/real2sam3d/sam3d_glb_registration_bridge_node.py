@@ -30,7 +30,7 @@ from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 
-from custom_message.msg import Sam3dObjectForSlotMsg, UsdStringIdSrcTargMsg
+from custom_message.msg import PipelineStepTiming, Sam3dObjectForSlotMsg, UsdStringIdSrcTargMsg
 from geometry_msgs.msg import Pose
 
 # Same as retrieval_node / lidar_cam_node (Unitree Go2 front camera in odom body)
@@ -259,6 +259,10 @@ class Sam3dGlbRegistrationBridgeNode(Node):
             "/usd/StringIdSrcTarg",
             10,
         )
+        self.pub_debug_src = self.create_publisher(PointCloud2, "/debug/registration/src_pc", 10)
+        self.pub_debug_targ = self.create_publisher(PointCloud2, "/debug/registration/targ_pc", 10)
+        self.pub_timing = self.create_publisher(PipelineStepTiming, "/pipeline/timings", 10)
+        self._timing_sequence = 0
 
         self.get_logger().info(
             f"SAM3D GLB registration bridge: subscribe {object_for_slot_topic}; target={self.registration_target}, world PC from {self.world_pc_topic}"
@@ -283,6 +287,7 @@ class Sam3dGlbRegistrationBridgeNode(Node):
             elapsed = (now - self._last_sent[key]).nanoseconds * 1e-9
             if elapsed < self.debounce_sec:
                 return
+        t_start = self.get_clock().now()
         points_src = load_object_points(data_path, max_points=self.max_src_points)
         if points_src is None or len(points_src) < 30:
             self.get_logger().warn(
@@ -338,6 +343,18 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         reg_msg.id = track_id
         reg_msg.src_pc = src_msg
         reg_msg.targ_pc = targ_pc_msg
+        self.pub_debug_src.publish(src_msg)
+        self.pub_debug_targ.publish(targ_pc_msg)
+        t_elapsed = (self.get_clock().now() - t_start).nanoseconds * 1e-6
+        timing_msg = PipelineStepTiming()
+        timing_msg.header.stamp = now.to_msg()
+        timing_msg.header.frame_id = "map"
+        timing_msg.node_name = "sam3d_glb_registration_bridge_node"
+        timing_msg.step_name = "build_src_targ"
+        timing_msg.duration_ms = t_elapsed
+        timing_msg.sequence_id = self._timing_sequence
+        self._timing_sequence += 1
+        self.pub_timing.publish(timing_msg)
         # Initial pose from SAM3D + go2 (worker writes to pose.json) so registration starts from this
         pose_path = job_dir / "pose.json"
         if pose_path.exists():

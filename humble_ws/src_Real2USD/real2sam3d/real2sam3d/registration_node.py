@@ -9,7 +9,7 @@ from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from sklearn.cluster import DBSCAN
 
-from custom_message.msg import UsdStringIdPoseMsg, UsdStringIdSrcTargMsg
+from custom_message.msg import PipelineStepTiming, UsdStringIdPoseMsg, UsdStringIdSrcTargMsg
 from geometry_msgs.msg import Pose
 from std_msgs.msg import Header
 
@@ -30,7 +30,11 @@ class RegistrationNode(Node):
         # Debug visualization publishers
         self.pub_clusters = self.create_publisher(PointCloud2, "/registration/clusters", 10)
         self.pub_best_match = self.create_publisher(PointCloud2, "/registration/best_match", 10)
-        
+        self.pub_debug_src = self.create_publisher(PointCloud2, "/debug/registration/source_pc", 10)
+        self.pub_debug_targ = self.create_publisher(PointCloud2, "/debug/registration/target_pc", 10)
+        self.pub_timing = self.create_publisher(PipelineStepTiming, "/pipeline/timings", 10)
+        self._timing_sequence = 0
+
         # Debug visualization parameters
         self.debug_visualization = True  # Set to False to disable debug visualization
 
@@ -86,6 +90,16 @@ class RegistrationNode(Node):
 
         if len(points_src) == 0 or len(points_targ) == 0:
             return
+        try:
+            self.pub_debug_src.publish(
+                point_cloud2.create_cloud_xyz32(header=Header(frame_id="odom"), points=points_src.astype(np.float32))
+            )
+            self.pub_debug_targ.publish(
+                point_cloud2.create_cloud_xyz32(header=Header(frame_id="odom"), points=points_targ.astype(np.float32))
+            )
+        except Exception:
+            pass
+        t_start = self.get_clock().now()
         # Use initial pose from SAM3D+go2 when provided (global target; ICP from this init)
         initial_pose = getattr(msg, "initial_pose", None)
         use_initial = (
@@ -103,6 +117,16 @@ class RegistrationNode(Node):
             tb = traceback.format_exc()
             self.get_logger().warn(f"Traceback:\n{tb}")
             return
+        t_elapsed = (self.get_clock().now() - t_start).nanoseconds * 1e-6
+        timing_msg = PipelineStepTiming()
+        timing_msg.header.stamp = self.get_clock().now().to_msg()
+        timing_msg.header.frame_id = "odom"
+        timing_msg.node_name = "registration_node"
+        timing_msg.step_name = "get_pose"
+        timing_msg.duration_ms = t_elapsed
+        timing_msg.sequence_id = self._timing_sequence
+        self._timing_sequence += 1
+        self.pub_timing.publish(timing_msg)
         if points_transformed is not None:
             try:
                 self.pub_odom_pc_seg.publish(

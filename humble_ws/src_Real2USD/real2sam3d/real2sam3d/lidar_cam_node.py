@@ -5,7 +5,7 @@ from sensor_msgs_py import point_cloud2
 from go2_interfaces.msg import Go2State, IMU
 from nav_msgs.msg import Odometry
 # from custom_message.msg import UsdStringIdPCMsg
-from custom_message.msg import CropImgDepthMsg
+from custom_message.msg import CropImgDepthMsg, PipelineStepTiming
 from std_msgs.msg import Header, Int64
 import cv2
 from cv_bridge import CvBridge
@@ -14,9 +14,9 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 import open3d as o3d
 
-from scripts_r2u.segment_cls import Segmentation
-from scripts_r2u.utils import ProjectionUtils
-from scripts_r2u.utils import PointCloudBuffer
+from scripts_r2s3d.segment_cls import Segmentation
+from scripts_r2s3d.utils import ProjectionUtils
+from scripts_r2s3d.utils import PointCloudBuffer
 
 from ipdb import set_trace as st
 
@@ -47,6 +47,9 @@ class LidarDriverNode(Node):
         self.depth_pub = self.create_publisher(Image, "/depth_image/lidar", 10)
         self.rgbd_pub = self.create_publisher(Image, "/depth_image/rgbd", 10)
         self.color_pc_pub = self.create_publisher(PointCloud2, "/segment/pointcloud_color", 10)
+        self.pub_debug_last_crop = self.create_publisher(Image, "/debug/segment/last_crop", 10)
+        self.pub_timing = self.create_publisher(PipelineStepTiming, "/pipeline/timings", 10)
+        self._timing_sequence = 0
 
         # prompted model
         model_path = "models/yoloe-11l-seg.pt"
@@ -74,6 +77,7 @@ class LidarDriverNode(Node):
         """Extract the points from the PointCloud2 message
         return (N,3) array of lidar points from buffer
         """
+        t_frame_start = time.perf_counter()
         lidar_pts = np.asarray(
             point_cloud2.read_points_list(
                 msg, field_names=("x", "y", "z"), skip_nans=True
@@ -82,9 +86,8 @@ class LidarDriverNode(Node):
         # add points to buffer
         self.points.add_points(lidar_pts)
 
-
-        if lidar_pts.shape[0] > 0 and self.cam_info is not None and self.rgb_image is not None and self.odom_info["t"] is not None:    
-            # Process the lidar points into 2D camera frame and publish the depth image       
+        if lidar_pts.shape[0] > 0 and self.cam_info is not None and self.rgb_image is not None and self.odom_info["t"] is not None:
+            # Process the lidar points into 2D camera frame and publish the depth image
             depth_image, depth_color, mask = self.projection.lidar2depth(lidar_pts, self.cam_info, self.odom_info)
             depth_msg = self.bridge.cv2_to_imgmsg(depth_image, encoding="16UC1")
             # msg.header.stamp = lidar_msg.header.stamp
@@ -103,7 +106,10 @@ class LidarDriverNode(Node):
             self.color_pc_pub.publish(color_pc_msg)
 
             # Segment the image and publish the segmentation output and tracks
+            t_seg_start = time.perf_counter()
             result, _, imgs_crop, box_pts, mask_pts, track_ids, labels, labels_usd = self.segment.crop_img_w_bbox(self.rgb_image, conf=0.5, iou=0.2)
+            seg_duration_ms = (time.perf_counter() - t_seg_start) * 1000.0
+            self._publish_timing("lidar_cam_node", "segment", seg_duration_ms)
             # publish annotated segmented image
             img_result_msg = self.bridge.cv2_to_imgmsg(result, encoding="bgr8")
             self.get_logger().info(f"labels: {labels}")
@@ -166,6 +172,23 @@ class LidarDriverNode(Node):
                 
                 # Publish the message
                 self.crop_rgb_depth_pub.publish(crop_msg)
+            if imgs_crop:
+                self.pub_debug_last_crop.publish(
+                    self.bridge.cv2_to_imgmsg(imgs_crop[-1], encoding="bgr8")
+                )
+            frame_duration_ms = (time.perf_counter() - t_frame_start) * 1000.0
+            self._publish_timing("lidar_cam_node", "frame_total", frame_duration_ms)
+
+    def _publish_timing(self, node_name: str, step_name: str, duration_ms: float):
+        msg = PipelineStepTiming()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "odom"
+        msg.node_name = node_name
+        msg.step_name = step_name
+        msg.duration_ms = duration_ms
+        msg.sequence_id = self._timing_sequence
+        self._timing_sequence += 1
+        self.pub_timing.publish(msg)
 
     def rgb_listener_callback(self, msg):
         image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")

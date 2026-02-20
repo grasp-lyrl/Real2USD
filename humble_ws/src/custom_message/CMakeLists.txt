@@ -33,6 +33,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/UsdBufferPoseMsg.msg"
   "msg/SlotReadyMsg.msg"
   "msg/Sam3dObjectForSlotMsg.msg"
+  "msg/Sam3dJobEnqueued.msg"
+  "msg/PipelineStepTiming.msg"
   DEPENDENCIES std_msgs geometry_msgs sensor_msgs nav_msgs
   )
 # uncomment the following section in order to fill in
