@@ -5,11 +5,12 @@ writes results to queue_dir/output/<job_id>/.
 
 Run on the host in the sam3d-objects conda env (see config/USER_NEXT_STEPS.md):
   conda activate sam3d-objects
-  python run_sam3d_worker.py --queue-dir /data/sam3d_queue --sam3d-repo /path/to/sam-3d-objects [--once] [--dry-run]
+  python run_sam3d_worker.py --queue-dir /data/sam3d_queue --sam3d-repo /path/to/sam-3d-objects [--once] [--dry-run] [--use-depth]
 
 --sam3d-repo: path to the sam-3d-objects repo clone (required for real inference; has notebook/inference.py and checkpoints/).
 --once: process one job and exit (for testing).
 --dry-run: only validate job and write dummy pose.json (no SAM3D dependency).
+--use-depth: pass depth to SAM3D inference when available (ablation: omit for no pointmap/depth; data is always saved).
 """
 
 import argparse
@@ -54,10 +55,21 @@ def load_job(job_path: Path):
     return rgb, mask, depth, meta
 
 
-def run_sam3d_inference(rgb, mask, meta, sam3d_repo: Path = None, config_path: str = None):
+def run_sam3d_inference(
+    rgb,
+    mask,
+    meta,
+    depth=None,
+    use_depth: bool = False,
+    sam3d_repo: Path = None,
+    config_path: str = None,
+):
     """
     Call SAM3D-Objects inference. Requires sam3d-objects env and repo path (--sam3d-repo).
     Returns dict with 'gs' (gaussian splat) or 'mesh' etc. for export.
+
+    When use_depth is True and depth is not None, depth is passed as pointmap= to the inference call.
+    Data is always saved in the job/output; this flag only controls whether SAM3D uses it.
     """
     repo = sam3d_repo or (Path(__file__).resolve().parents[2] / "sam-3d-objects")
     repo = Path(repo).resolve()
@@ -98,7 +110,11 @@ def run_sam3d_inference(rgb, mask, meta, sam3d_repo: Path = None, config_path: s
         cv2.imwrite(str(mask_path), mask)
         image = load_image(str(img_path))
         mask_loaded = load_single_mask(str(mask_dir), index=0)
-        output = inference(image, mask_loaded, seed=42)
+        if use_depth and depth is not None:
+            # pointmap_mode: pass pointmap so SAM3D uses depth; otherwise image+mask only
+            output = inference(image, mask_loaded, seed=42, pointmap=depth)
+        else:
+            output = inference(image, mask_loaded, seed=42)
     return output
 
 
@@ -151,7 +167,12 @@ def process_one_job(
         return True
 
     try:
-        output = run_sam3d_inference(rgb, mask, meta, sam3d_repo=sam3d_repo)
+        output = run_sam3d_inference(
+            rgb, mask, meta,
+            depth=depth,
+            use_depth=use_depth,
+            sam3d_repo=sam3d_repo,
+        )
     except Exception as e:
         print(f"[ERROR] SAM3D inference failed for {job_id}: {e}", file=sys.stderr)
         return False

@@ -29,6 +29,7 @@ setup(
         entry_points={
         "console_scripts": [
             "lidar_cam_node = real2sam3d.lidar_cam_node:main",
+            "realsense_cam_node = real2sam3d.realsense_cam_node:main",
             "registration_node = real2sam3d.registration_node:main",
             # "usd_buffer_node = real2sam3d.usd_buffer_node:main",
             "navigator_llm_node = real2sam3d.navigator_llm_node:main",

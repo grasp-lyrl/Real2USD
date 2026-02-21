@@ -18,8 +18,6 @@ from scripts_r2s3d.segment_cls import Segmentation
 from scripts_r2s3d.utils import ProjectionUtils
 from scripts_r2s3d.utils import PointCloudBuffer
 
-from ipdb import set_trace as st
-
 """
 The idea is that lidar is the rate limiter so we use the lidar callback as the main driver callback.
 

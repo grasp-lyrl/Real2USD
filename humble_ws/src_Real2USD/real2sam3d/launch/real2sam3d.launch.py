@@ -87,11 +87,19 @@ def generate_launch_description():
                              description='Run simple scene buffer node (writes scene_graph.json + scene.glb from /usd/StringIdPose)'),
         DeclareLaunchArgument('pipeline_profiler', default_value='true',
                              description='Run pipeline profiler and SAM3D profiler (timeline + sam3d_worker/inference latency)'),
+        DeclareLaunchArgument('use_realsense_cam', default_value='false',
+                             description='Use realsense_cam_node instead of lidar_cam_node (RealSense topics: aligned_depth, color, camera_info, /utlidar/robot_pose)'),
         OpaqueFunction(function=_create_run_dir_and_set_queue),
-        # Pipeline: lidar_cam -> job_writer -> [worker] -> injector (SlotReady) -> retrieval (ObjectForSlot) -> bridge -> registration -> usd_buffer
+        # Pipeline: [lidar_cam_node | realsense_cam_node] -> job_writer -> ... -> registration -> scene buffer
         Node(
             package='real2sam3d',
             executable='lidar_cam_node',
+            condition=IfCondition(PythonExpression(["'", LaunchConfiguration('use_realsense_cam'), "' != 'true'"])),
+        ),
+        Node(
+            package='real2sam3d',
+            executable='realsense_cam_node',
+            condition=IfCondition(LaunchConfiguration('use_realsense_cam')),
         ),
         Node(
             package='real2sam3d',
