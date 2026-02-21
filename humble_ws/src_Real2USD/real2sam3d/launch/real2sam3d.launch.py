@@ -44,6 +44,40 @@ def _create_run_dir_and_set_queue(context, *args, **kwargs):
     ]
 
 
+def _write_run_config(context, *args, **kwargs):
+    """Write launch arguments to run_config.json in the run directory so each experiment is self-described."""
+    run_dir = context.perform_substitution(LaunchConfiguration('sam3d_queue_dir'))
+    run_path = Path(run_dir)
+    run_path.mkdir(parents=True, exist_ok=True)
+    launch_args = {
+        "use_realsense_cam": context.perform_substitution(LaunchConfiguration('use_realsense_cam')),
+        "sam3d_retrieval": context.perform_substitution(LaunchConfiguration('sam3d_retrieval')),
+        "no_faiss_mode": context.perform_substitution(LaunchConfiguration('no_faiss_mode')),
+        "glb_registration_bridge": context.perform_substitution(LaunchConfiguration('glb_registration_bridge')),
+        "sam3d_job_writer": context.perform_substitution(LaunchConfiguration('sam3d_job_writer')),
+        "sam3d_injector": context.perform_substitution(LaunchConfiguration('sam3d_injector')),
+        "simple_scene_buffer": context.perform_substitution(LaunchConfiguration('simple_scene_buffer')),
+        "pipeline_profiler": context.perform_substitution(LaunchConfiguration('pipeline_profiler')),
+        "use_run_subdir": context.perform_substitution(LaunchConfiguration('use_run_subdir')),
+        "run_sam3d_worker": context.perform_substitution(LaunchConfiguration('run_sam3d_worker')),
+        "rviz2": context.perform_substitution(LaunchConfiguration('rviz2')),
+        "faiss_index_path": context.perform_substitution(LaunchConfiguration('faiss_index_path')),
+        "use_init_odom": context.perform_substitution(LaunchConfiguration('use_init_odom')),
+    }
+    config = {
+        "run_dir": run_dir,
+        "launch": launch_args,
+        "created_at": datetime.now().isoformat(),
+    }
+    config_path = run_path / "run_config.json"
+    try:
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"[WARN] Could not write {config_path}: {e}", file=__import__("sys").stderr)
+    return []
+
+
 def generate_launch_description():
 
     with_rviz2 = LaunchConfiguration('rviz2', default='true')
@@ -89,7 +123,10 @@ def generate_launch_description():
                              description='Run pipeline profiler and SAM3D profiler (timeline + sam3d_worker/inference latency)'),
         DeclareLaunchArgument('use_realsense_cam', default_value='false',
                              description='Use realsense_cam_node instead of lidar_cam_node (RealSense topics: aligned_depth, color, camera_info, /utlidar/robot_pose)'),
+        DeclareLaunchArgument('use_init_odom', default_value='false',
+                             description='Injector: normalize poses by first-frame odom (init_odom). Set true to match demo_go2 / compare; default false uses raw odom.'),
         OpaqueFunction(function=_create_run_dir_and_set_queue),
+        OpaqueFunction(function=_write_run_config),
         # Pipeline: [lidar_cam_node | realsense_cam_node] -> job_writer -> ... -> registration -> scene buffer
         Node(
             package='real2sam3d',
@@ -119,6 +156,7 @@ def generate_launch_description():
             package='real2sam3d',
             executable='pipeline_profiler_node',
             condition=IfCondition(with_pipeline_profiler),
+            parameters=[{'timing_log_dir': sam3d_queue_dir}],
         ),
         Node(
             package='real2sam3d',
@@ -135,7 +173,7 @@ def generate_launch_description():
             package='real2sam3d',
             executable='sam3d_injector_node',
             condition=IfCondition(with_sam3d_injector),
-            parameters=[{'queue_dir': sam3d_queue_dir, 'publish_object_for_slot': no_faiss_mode}],
+            parameters=[{'queue_dir': sam3d_queue_dir, 'publish_object_for_slot': no_faiss_mode, 'use_init_odom': LaunchConfiguration('use_init_odom', default='false')}],
         ),
         Node(
             package='real2sam3d',

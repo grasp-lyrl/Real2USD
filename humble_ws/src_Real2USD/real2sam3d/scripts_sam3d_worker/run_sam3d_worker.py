@@ -27,6 +27,38 @@ _script_dir = Path(__file__).resolve().parent
 if str(_script_dir) not in sys.path:
     sys.path.insert(0, str(_script_dir))
 
+RUN_CONFIG_JSON = "run_config.json"
+
+
+def _save_worker_args_to_run_config(queue_dir: Path, args: argparse.Namespace) -> None:
+    """Merge worker arguments into run_config.json in the run directory (same file launch writes)."""
+    config_path = queue_dir / RUN_CONFIG_JSON
+    config = {}
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    sam3d_repo_val = getattr(args, "sam3d_repo", None)
+    worker_args = {
+        "use_depth": getattr(args, "use_depth", False),
+        "queue_dir": str(queue_dir.resolve()),
+        "no_current_run": getattr(args, "no_current_run", False),
+        "sam3d_repo": str(Path(sam3d_repo_val).resolve()) if sam3d_repo_val else None,
+        "once": getattr(args, "once", False),
+        "dry_run": getattr(args, "dry_run", False),
+        "use_init_odom": getattr(args, "use_init_odom", False),
+        "write_demo_go2_compare": getattr(args, "write_demo_go2_compare", False),
+    }
+    config["worker"] = worker_args
+    config["worker_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+    except OSError as e:
+        print(f"[WARN] Could not write {config_path}: {e}", file=sys.stderr)
+
 
 def _move_to_processed(job_path: Path, processed_dir: Path) -> None:
     """Move a completed job from input/ to input_processed/ so we don't reprocess it."""
@@ -126,6 +158,7 @@ def process_one_job(
     queue_dir: Path = None,
     use_init_odom: bool = False,
     write_demo_go2_compare: bool = False,
+    use_depth: bool = False,
 ) -> bool:
     """Process a single job directory. Returns True on success."""
     job_id = job_path.name
@@ -415,6 +448,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Only validate job and write pose (no SAM3D)")
     parser.add_argument("--use-init-odom", action="store_true", help="Deprecated: kept for compatibility; injector now applies init_odom normalization")
     parser.add_argument("--write-demo-go2-compare", action="store_true", help="Also write object_demo_go2_cam.glb/object_demo_go2_odom.glb + demo_go2_compare.json per job for transform parity checks")
+    parser.add_argument("--use-depth", action="store_true", dest="use_depth", help="Pass depth to SAM3D inference as pointmap (ablation: omit for no pointmap; data is always saved)")
     args = parser.parse_args()
 
     use_current_run = not args.no_current_run
@@ -436,6 +470,7 @@ def main():
     processed_dir.mkdir(parents=True, exist_ok=True)
     print(f"Queue dir: {queue_dir}", file=sys.stderr)
     print(f"Output dir: {output_dir}", file=sys.stderr)
+    _save_worker_args_to_run_config(queue_dir, args)
 
     if not input_dir.exists():
         print(f"Input dir does not exist: {input_dir}", file=sys.stderr)
@@ -458,6 +493,7 @@ def main():
             job_path, output_dir, args.dry_run, sam3d_repo=sam3d_repo,
             queue_dir=queue_dir, use_init_odom=args.use_init_odom,
             write_demo_go2_compare=args.write_demo_go2_compare,
+            use_depth=args.use_depth,
         )
         if success and args.once:
             _move_to_processed(job_path, processed_dir)

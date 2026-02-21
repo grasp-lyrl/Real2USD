@@ -36,6 +36,13 @@ Notes:
 - Keep queue path shared between host and container (commonly `/data/sam3d_queue`).
 - Launch writes `current_run.json`. Worker/indexer/render scripts use this by default.
 - Use `no_faiss_mode:=true` to bypass retrieval and use candidate object directly.
+- **init_odom:** Default is **off** (`use_init_odom:=false`). The injector uses raw odom; no first-frame normalization. Set `use_init_odom:=true` to normalize poses by first-frame odom (demo_go2-style) when you want to compare or match that behavior.
+- **Run config (experiment arguments):** Each run directory gets `run_config.json` with:
+  - **launch:** all launch arguments (e.g. `use_realsense_cam`, `sam3d_retrieval`, `no_faiss_mode`, `glb_registration_bridge`, `pipeline_profiler`, …) so you know how the pipeline was started.
+  - **worker:** written when you run `run_sam3d_worker.py` against this run dir (e.g. `use_depth`, `dry_run`, `sam3d_repo`, `once`, …). One file per experiment with both launch and worker args.
+- **Profiler timing logs:** With `pipeline_profiler:=true` (default), the pipeline profiler writes timing data into the **run directory** so you can report inference times across pipeline variations (ablations). Each run dir gets:
+  - `timing_events.csv`: one row per event (`stamp_sec`, `node_name`, `step_name`, `duration_ms`).
+  - `timing_summary.json`: per (node, step) stats: `count`, `mean_ms`, `std_ms`, `min_ms`, `max_ms` (e.g. `sam3d_worker` / `inference` for SAM3D latency). Use these files for tables and comparison across sensor, pointmap, retrieval, registration settings.
 
 ## 3) Run worker (host conda)
 

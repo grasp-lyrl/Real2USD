@@ -3,7 +3,7 @@ SAM3D injector: watches queue_dir/output for new job results.
 
 - Per slot: if pose.json has frame=sam3d_raw, runs demo_go2-style transform (ply_frame_utils)
   and writes only transforms to pose.json (cam_to_odom_*, transform_odom_from_raw, initial_*).
-  object.glb is not modified. Poses are normalized by init_odom (first-step-relative, like demo_go2).
+  object.glb is not modified. Poses can be normalized by init_odom when use_init_odom=true (first-step-relative, like demo_go2); when false, raw odom is used.
 - FAISS mode: publishes SlotReadyMsg -> retrieval -> Sam3dObjectForSlotMsg -> bridge.
 - No-FAISS mode (publish_object_for_slot=true): publishes Sam3dObjectForSlotMsg directly.
 """
@@ -36,18 +36,21 @@ class Sam3dInjectorNode(Node):
         self.declare_parameter("queue_dir", "/data/sam3d_queue")
         self.declare_parameter("watch_interval_sec", 1.0)
         self.declare_parameter("publish_object_for_slot", False)
+        self.declare_parameter("use_init_odom", False)
 
         self.queue_dir = Path(self.get_parameter("queue_dir").value)
         self.watch_interval_sec = self.get_parameter("watch_interval_sec").value
         p = self.get_parameter("publish_object_for_slot").value
         self.publish_object_for_slot = p is True or (isinstance(p, str) and p.lower() == "true")
+        p_init = self.get_parameter("use_init_odom").value
+        self.use_init_odom = p_init is True or (isinstance(p_init, str) and p_init.lower() == "true")
         self.output_dir = self.queue_dir / "output"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.pub_slot_ready = self.create_publisher(SlotReadyMsg, TOPIC_SLOT_READY, 10)
         self.pub_object_for_slot = self.create_publisher(Sam3dObjectForSlotMsg, TOPIC_OBJECT_FOR_SLOT, 10)
         self._published_job_ids = set()
-        self._init_odom = None
+        self._init_odom = None  # only set when use_init_odom=true
         self._timer = self.create_timer(self.watch_interval_sec, self._check_output_dir)
 
         if self.publish_object_for_slot:
@@ -58,6 +61,7 @@ class Sam3dInjectorNode(Node):
             self.get_logger().info(
                 f"SAM3D injector: watching {self.output_dir}, publishing to {TOPIC_SLOT_READY}"
             )
+        self.get_logger().info("use_init_odom=%s (set use_init_odom:=true to normalize poses by first-frame odom)" % self.use_init_odom)
 
     def _ensure_init_odom(self, job_path: Path):
         """Load init_odom from queue_dir/init_odom.json or create from first job (demo_go2-style frame)."""
@@ -226,7 +230,7 @@ class Sam3dInjectorNode(Node):
                         scale=np.asarray(scale, dtype=np.float64),
                     )
                     verts_cam = verts_pointmap @ R_pytorch3d_to_cam
-                    verts_new = transform_glb_to_world(verts_cam, odom, init_odom=self._init_odom)
+                    verts_new = transform_glb_to_world(verts_cam, odom, init_odom=self._init_odom if self.use_init_odom else None)
                 else:
                     # Fallback to matrix path
                     ones = np.ones((verts.shape[0], 1), dtype=np.float64)
