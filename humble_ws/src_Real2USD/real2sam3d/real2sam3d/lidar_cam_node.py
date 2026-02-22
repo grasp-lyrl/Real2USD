@@ -27,6 +27,8 @@ The messages are based on go2_ros2_sdk repo which subscribes to webrtc topics fr
 class LidarDriverNode(Node):
     def __init__(self):
         super().__init__("lidar_driver_node")
+        self.declare_parameter("use_yolo_pf", False)
+        use_yolo_pf = self.get_parameter("use_yolo_pf").value
 
         # subscribers
         self.sub_rgb = self.create_subscription(Image, "/camera/image_raw", self.rgb_listener_callback, 10)
@@ -49,11 +51,9 @@ class LidarDriverNode(Node):
         self.pub_timing = self.create_publisher(PipelineStepTiming, "/pipeline/timings", 10)
         self._timing_sequence = 0
 
-        # prompted model
-        model_path = "models/yoloe-11l-seg.pt"
-        # prompt free model
-        # model_path = "models/yoloe-11l-seg-pf.pt"
+        model_path = "models/yoloe-11l-seg-pf.pt" if use_yolo_pf else "models/yoloe-11l-seg.pt"
         self.segment = Segmentation(model_path)
+        self.get_logger().info(f"Segmentation model: {model_path} (use_yolo_pf={use_yolo_pf})")
 
         # Unitree Go2 front camera extrinsics to odom body frame
         self.T_cam_in_odom = np.array([0.285, 0., 0.01])

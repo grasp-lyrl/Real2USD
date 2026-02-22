@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import torch
 
 # Allow importing ply_frame_utils when run from any cwd (e.g. share/real2sam3d/scripts_sam3d_worker/)
 _script_dir = Path(__file__).resolve().parent
@@ -87,6 +88,33 @@ def load_job(job_path: Path):
     return rgb, mask, depth, meta
 
 
+def depth_to_pointmap(depth_image: np.ndarray, cam_info: dict, crop_bbox=None):
+    """
+    Convert depth image (H,W) to pointmap (H,W,3) in PyTorch3D convention using camera intrinsics.
+    Matches demo_go2.py: https://github.com/christopher-hsu/sam-3d-objects/blob/main/demo_go2.py
+    depth_image: in meters, may be cropped (then crop_bbox [x_min, y_min, x_max, y_max] is required).
+    cam_info: dict with "K" or "k" (9 values, row-major 3x3).
+    """
+    K = np.array(cam_info.get("K") or cam_info.get("k"), dtype=np.float64).reshape(3, 3)
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+    height, width = depth_image.shape
+    u = np.arange(width, dtype=np.float64)
+    v = np.arange(height, dtype=np.float64)
+    uu, vv = np.meshgrid(u, v)
+    if crop_bbox is not None and len(crop_bbox) >= 4:
+        x_min, y_min = int(crop_bbox[0]), int(crop_bbox[1])
+        uu = uu + x_min
+        vv = vv + y_min
+    Z = np.asarray(depth_image, dtype=np.float64)
+    Z[Z <= 0] = np.nan
+    X = (uu - cx) * Z / fx
+    Y = (vv - cy) * Z / fy
+    # PyTorch3D: +x right, +y UP, +z forward => stack(-X, -Y, Z) from image coords
+    pointmap = np.stack((-X, -Y, Z), axis=-1)
+    return pointmap
+
+
 def run_sam3d_inference(
     rgb,
     mask,
@@ -143,8 +171,20 @@ def run_sam3d_inference(
         image = load_image(str(img_path))
         mask_loaded = load_single_mask(str(mask_dir), index=0)
         if use_depth and depth is not None:
-            # pointmap_mode: pass pointmap so SAM3D uses depth; otherwise image+mask only
-            output = inference(image, mask_loaded, seed=42, pointmap=depth)
+            # pointmap must be (H,W,3) XYZ in PyTorch3D convention (see demo_go2 depth_to_pointmap)
+            cam_info = meta.get("camera_info") or {}
+            k_flat = cam_info.get("K") or cam_info.get("k")
+            if k_flat is not None and len(k_flat) == 9:
+                crop_bbox = meta.get("crop_bbox")
+                pointmap_np = depth_to_pointmap(depth, cam_info, crop_bbox=crop_bbox)
+                pointmap = torch.from_numpy(pointmap_np.astype(np.float32)).float()
+                output = inference(image, mask_loaded, seed=42, pointmap=pointmap)
+            else:
+                print(
+                    "[WARN] --use-depth set but meta has no camera_info.K (9 values); running without pointmap",
+                    file=sys.stderr,
+                )
+                output = inference(image, mask_loaded, seed=42)
         else:
             output = inference(image, mask_loaded, seed=42)
     return output

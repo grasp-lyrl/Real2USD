@@ -149,6 +149,7 @@ class RegistrationNode(Node):
             pose_msg.header = Header(frame_id="odom")
             pose_msg.data_path = usd_url
             pose_msg.id = trackId
+            pose_msg.job_id = getattr(msg, "job_id", "") or ""
             pose = Pose()
             pose.position.x = t[0]
             pose.position.y = t[1]

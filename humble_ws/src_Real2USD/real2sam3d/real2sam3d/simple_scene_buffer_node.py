@@ -149,7 +149,8 @@ def _scan_sam3d_only_scene(output_dir: Path):
         if T_raw is None and (not ip or not io or len(ip) < 3 or len(io) < 4):
             continue
         job_id = pose.get("job_id", job_dir.name)
-        yield (job_id, str(glb_path.resolve()), ip or [], io or [], T_raw)
+        label = pose.get("label")
+        yield (job_id, str(glb_path.resolve()), ip or [], io or [], T_raw, label)
 
 
 class SimpleSceneBufferNode(Node):
@@ -212,21 +213,51 @@ class SimpleSceneBufferNode(Node):
             "data_path": msg.data_path,
             "position": position,
             "orientation": orientation,
+            "job_id": getattr(msg, "job_id", "") or "",
         }
 
     def _write_scene(self):
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
         # 1) Registration-based scene graph JSON + joint GLB
-        # One entry per slot: object (from retrieval) + refined pose (from registration). No extra transform.
+        # One entry per slot: object (from retrieval) + refined pose (from registration). Include YOLO label and retrieved_object_label when retrieval swapped.
         scene_list = []
+        out_output = self._output_dir / "output"
         for obj_id, data in self._buffer.items():
-            scene_list.append({
+            job_id = data.get("job_id") or ""
+            data_path = data["data_path"]
+            label = None
+            retrieved_object_label = None
+            if job_id and out_output.exists():
+                slot_pose_path = out_output / job_id / "pose.json"
+                if slot_pose_path.exists():
+                    try:
+                        with open(slot_pose_path) as f:
+                            slot_pose = json.load(f)
+                        label = slot_pose.get("label")
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                object_job_dir = Path(data_path).parent
+                if object_job_dir.name != job_id:
+                    obj_pose_path = object_job_dir / "pose.json"
+                    if obj_pose_path.exists():
+                        try:
+                            with open(obj_pose_path) as f:
+                                obj_pose = json.load(f)
+                            retrieved_object_label = obj_pose.get("label")
+                        except (OSError, json.JSONDecodeError):
+                            pass
+            entry = {
                 "id": obj_id,
-                "data_path": data["data_path"],
+                "data_path": data_path,
                 "position": data["position"],
                 "orientation": data["orientation"],
-            })
+            }
+            if label is not None:
+                entry["label"] = label
+            if retrieved_object_label is not None:
+                entry["retrieved_object_label"] = retrieved_object_label
+            scene_list.append(entry)
         json_path = self._output_dir / self._scene_json_name
         try:
             with open(json_path, "w") as f:
@@ -255,7 +286,12 @@ class SimpleSceneBufferNode(Node):
         if self._write_sam3d_only:
             sam3d_list = list(_scan_sam3d_only_scene(self._output_dir))
             if sam3d_list:
-                objs = [{"id": oid, "data_path": dp, "position": pos, "orientation": quat, "transform_odom_from_raw": T_raw} for oid, dp, pos, quat, T_raw in sam3d_list]
+                objs = []
+                for oid, dp, pos, quat, T_raw, label in sam3d_list:
+                    obj = {"id": oid, "data_path": dp, "position": pos, "orientation": quat, "transform_odom_from_raw": T_raw}
+                    if label is not None:
+                        obj["label"] = label
+                    objs.append(obj)
                 json_sam3d = self._output_dir / self._scene_json_sam3d_only
                 try:
                     with open(json_sam3d, "w") as f:
@@ -270,7 +306,7 @@ class SimpleSceneBufferNode(Node):
                     self.get_logger().warn("Failed to write SAM3D-only GLB %s: %s" % (glb_sam3d, e))
                 # 2b) Per-slot: object_odom.glb (vanilla + transform_odom_from_raw) for each slot
                 if self._write_per_slot_glb:
-                    for oid, dp, pos, quat, T_raw in sam3d_list:
+                    for oid, dp, pos, quat, T_raw, _label in sam3d_list:
                         if T_raw is None:
                             continue
                         job_dir = Path(dp).parent

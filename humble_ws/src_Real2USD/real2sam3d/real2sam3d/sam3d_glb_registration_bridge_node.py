@@ -354,6 +354,7 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         reg_msg.header.frame_id = "odom"
         reg_msg.data_path = data_path
         reg_msg.id = track_id
+        reg_msg.job_id = job_id
         reg_msg.src_pc = src_msg
         reg_msg.targ_pc = targ_pc_msg
         self.pub_debug_src.publish(src_msg)

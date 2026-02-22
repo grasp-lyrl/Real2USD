@@ -38,6 +38,7 @@ pip install ultralytics
 class Segmentation:
     def __init__(self, model_path):
         model_name = os.path.basename(model_path)
+        self._use_prompt_free = model_name.endswith("-pf.pt")
         if model_name.startswith("FastSAM"):
             self.model = FastSAM(model_path)
         elif model_name.startswith("sam2.1"):
@@ -51,7 +52,9 @@ class Segmentation:
 
         self.track_id_counter = 999  # Counter for generating unique IDs
 
-        self.model.set_classes(self.classes, self.model.get_text_pe(self.classes))
+        # Prompt-free (-pf) models should use native class predictions.
+        if not self._use_prompt_free and hasattr(self.model, "set_classes"):
+            self.model.set_classes(self.classes, self.model.get_text_pe(self.classes))
 
     @staticmethod
     def track_ids_from_boxes_id(boxes_id, num_boxes):
@@ -107,8 +110,13 @@ class Segmentation:
             # Try to get class indices and names
             try:
                 class_indices = result.boxes.cls.cpu().numpy()
-                class_names = [self.classes[int(idx)] for idx in class_indices]
-                class_names_usd = [self.classes_usd[int(idx)] for idx in class_indices]
+                if self._use_prompt_free:
+                    names = result.names if hasattr(result, "names") else {}
+                    class_names = [str(names.get(int(idx), int(idx))).replace(" ", "_") for idx in class_indices]
+                    class_names_usd = class_names
+                else:
+                    class_names = [self.classes[int(idx)] for idx in class_indices]
+                    class_names_usd = [self.classes_usd[int(idx)] for idx in class_indices]
             except:
                 # If no class indices, assign "" to all detections
                 class_names = [""] * len(box_xyxy)
@@ -207,7 +215,6 @@ class Segmentation:
 if __name__ == "__main__":
     # model_path = "models/yoloe-11l-seg.pt"
     model_path = "models/yoloe-11l-seg-pf.pt"
-    # if using prompt free, pf, you need to comment out .set_classes() in line 36
     sam = Segmentation(model_path)
     image_path = (
         "/data/tests/test5.png"

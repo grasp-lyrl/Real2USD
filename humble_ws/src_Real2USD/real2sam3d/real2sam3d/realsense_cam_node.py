@@ -40,12 +40,14 @@ class RealsenseCamNode(Node):
         self.declare_parameter("camera_info_topic", "/camera/camera/color/camera_info")
         self.declare_parameter("odom_topic", "/utlidar/robot_pose")
         self.declare_parameter("camera_position_in_odom", [0.285, 0.0, 0.01])  # same default as Go2
+        self.declare_parameter("use_yolo_pf", False)
 
         depth_topic = self.get_parameter("depth_topic").value
         image_topic = self.get_parameter("image_topic").value
         camera_info_topic = self.get_parameter("camera_info_topic").value
         odom_topic = self.get_parameter("odom_topic").value
         T_cam = self.get_parameter("camera_position_in_odom").value
+        use_yolo_pf = self.get_parameter("use_yolo_pf").value
         self.T_cam_in_odom = np.array(T_cam, dtype=np.float64)
 
         self.sub_depth = self.create_subscription(Image, depth_topic, self.depth_callback, 10)
@@ -63,7 +65,7 @@ class RealsenseCamNode(Node):
         self.pub_timing = self.create_publisher(PipelineStepTiming, "/pipeline/timings", 10)
         self._timing_sequence = 0
 
-        model_path = "models/yoloe-11l-seg.pt"
+        model_path = "models/yoloe-11l-seg-pf.pt" if use_yolo_pf else "models/yoloe-11l-seg.pt"
         self.segment = Segmentation(model_path)
         self.projection = ProjectionUtils(T=self.T_cam_in_odom)
         self.bridge = CvBridge()
@@ -79,6 +81,7 @@ class RealsenseCamNode(Node):
             "realsense_cam_node: depth=%s image=%s odom=%s"
             % (depth_topic, image_topic, odom_topic)
         )
+        self.get_logger().info(f"Segmentation model: {model_path} (use_yolo_pf={use_yolo_pf})")
 
     def rgb_callback(self, msg):
         image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")

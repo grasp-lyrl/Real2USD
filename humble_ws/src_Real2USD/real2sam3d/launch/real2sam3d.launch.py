@@ -60,6 +60,7 @@ def _write_run_config(context, *args, **kwargs):
         "pipeline_profiler": context.perform_substitution(LaunchConfiguration('pipeline_profiler')),
         "use_run_subdir": context.perform_substitution(LaunchConfiguration('use_run_subdir')),
         "run_sam3d_worker": context.perform_substitution(LaunchConfiguration('run_sam3d_worker')),
+        "use_yolo_pf": context.perform_substitution(LaunchConfiguration('use_yolo_pf')),
         "rviz2": context.perform_substitution(LaunchConfiguration('rviz2')),
         "faiss_index_path": context.perform_substitution(LaunchConfiguration('faiss_index_path')),
         "use_init_odom": context.perform_substitution(LaunchConfiguration('use_init_odom')),
@@ -90,6 +91,7 @@ def generate_launch_description():
     with_pipeline_profiler = LaunchConfiguration('pipeline_profiler', default='true')
     no_faiss_mode = LaunchConfiguration('no_faiss_mode', default='false')
     run_sam3d_worker = LaunchConfiguration('run_sam3d_worker', default='false')
+    use_yolo_pf = LaunchConfiguration('use_yolo_pf', default='false')
     use_run_subdir = LaunchConfiguration('use_run_subdir', default='true')
     sam3d_queue_dir = LaunchConfiguration('sam3d_queue_dir', default='/data/sam3d_queue')
     faiss_index_path = LaunchConfiguration('faiss_index_path', default='/data/sam3d_faiss')
@@ -112,6 +114,8 @@ def generate_launch_description():
                              description='Run GLB→registration bridge (subscribes to /usd/Sam3dObjectForSlot, publishes src+targ for ICP)'),
         DeclareLaunchArgument('run_sam3d_worker', default_value='false',
                              description='Run SAM3D worker in this launch (uses --dry-run; for real SAM3D run worker in separate terminal with conda)'),
+        DeclareLaunchArgument('use_yolo_pf', default_value='false',
+                             description='Use prompt-free YOLOE segmentation weights (models/yoloe-11l-seg-pf.pt). Default false uses prompted model.'),
         DeclareLaunchArgument('use_run_subdir', default_value='true',
                              description='Create a new run subdir per launch (e.g. sam3d_queue/run_YYYYMMDD_HHMMSS) so each run has its own input/output'),
         DeclareLaunchArgument('sam3d_queue_dir', default_value='/data/sam3d_queue',
@@ -135,11 +139,13 @@ def generate_launch_description():
             package='real2sam3d',
             executable='lidar_cam_node',
             condition=IfCondition(PythonExpression(["'", LaunchConfiguration('use_realsense_cam'), "' != 'true'"])),
+            parameters=[{'use_yolo_pf': use_yolo_pf}],
         ),
         Node(
             package='real2sam3d',
             executable='realsense_cam_node',
             condition=IfCondition(LaunchConfiguration('use_realsense_cam')),
+            parameters=[{'use_yolo_pf': use_yolo_pf}],
         ),
         Node(
             package='real2sam3d',

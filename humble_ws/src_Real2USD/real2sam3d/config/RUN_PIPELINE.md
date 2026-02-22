@@ -43,6 +43,7 @@ Notes:
 - Keep queue path shared between host and container (commonly `/data/sam3d_queue`).
 - Launch writes `current_run.json`. Worker/indexer/render scripts use this by default.
 - Use `no_faiss_mode:=true` to bypass retrieval and use candidate object directly.
+- Segmentation model: default is prompted YOLOE (`models/yoloe-11l-seg.pt`). Set `use_yolo_pf:=true` to use prompt-free weights (`models/yoloe-11l-seg-pf.pt`), matching `demo_go2.py` style.
 - **init_odom:** Default is **off** (`use_init_odom:=false`). The injector uses raw odom; no first-frame normalization. Set `use_init_odom:=true` to normalize poses by first-frame odom (demo_go2-style) when you want to compare or match that behavior.
 - **Run config (experiment arguments):** Each run directory gets `run_config.json` with:
   - **launch:** all launch arguments (e.g. `use_realsense_cam`, `sam3d_retrieval`, `no_faiss_mode`, `glb_registration_bridge`, `pipeline_profiler`, …) so you know how the pipeline was started.
