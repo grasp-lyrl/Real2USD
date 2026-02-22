@@ -1,0 +1,22 @@
+{
+  "preprocess": {
+    "voxel_size_m": 0.05,
+    "max_points": 100000
+  },
+  "overlap_metrics": {
+    "nn_distance_cap_m": 2.0
+  },
+  "icp": {
+    "enabled": true,
+    "max_iterations": 30,
+    "max_correspondence_m": 0.5,
+    "min_correspondences": 500,
+    "convergence_translation_m": 0.001,
+    "convergence_rotation_deg": 0.1
+  },
+  "acceptance": {
+    "require_improvement": true,
+    "max_p95_after_m": 0.25,
+    "min_p95_improvement_m": 0.02
+  }
+}

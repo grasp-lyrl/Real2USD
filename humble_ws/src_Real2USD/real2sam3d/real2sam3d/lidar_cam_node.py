@@ -31,8 +31,15 @@ class LidarDriverNode(Node):
         super().__init__("lidar_driver_node")
         self.declare_parameter("use_yolo_pf", False)
         self.declare_parameter("enable_pre_sam3d_quality_filter", False)
+        self.declare_parameter("save_full_pointcloud", True)
+        self.declare_parameter("pointcloud_save_period_sec", 5.0)
+        self.declare_parameter("pointcloud_save_root_dir", "/data/sam3d_queue")
         use_yolo_pf = self.get_parameter("use_yolo_pf").value
         enable_pre_sam3d_quality_filter = self.get_parameter("enable_pre_sam3d_quality_filter").value
+        self.save_full_pointcloud = bool(self.get_parameter("save_full_pointcloud").value)
+        self.pointcloud_save_period_sec = float(self.get_parameter("pointcloud_save_period_sec").value)
+        self.pointcloud_save_root_dir = str(self.get_parameter("pointcloud_save_root_dir").value)
+        self._last_pointcloud_save_t = 0.0
 
         tracking_kwargs = {}
         if enable_pre_sam3d_quality_filter:
@@ -77,6 +84,14 @@ class LidarDriverNode(Node):
         self.get_logger().info(f"Segmentation model: {model_path} (use_yolo_pf={use_yolo_pf})")
         if enable_pre_sam3d_quality_filter:
             self.get_logger().info(f"Tracking config enabled: {tracking_kwargs}")
+        if self.save_full_pointcloud:
+            self.pointcloud_save_dir = Path(self.pointcloud_save_root_dir) / "diagnostics" / "pointclouds" / "lidar"
+            self.pointcloud_save_dir.mkdir(parents=True, exist_ok=True)
+            self.get_logger().info(
+                f"Full pointcloud saver enabled: dir={self.pointcloud_save_dir}, period_sec={self.pointcloud_save_period_sec}"
+            )
+        else:
+            self.pointcloud_save_dir = None
 
         # Unitree Go2 front camera extrinsics to odom body frame
         self.T_cam_in_odom = np.array([0.285, 0., 0.01])
@@ -229,6 +244,33 @@ class LidarDriverNode(Node):
         global_pc_msg = point_cloud2.create_cloud_xyz32(header=Header(frame_id="odom"), points=self.points.get_points())
         global_pc_msg.header.stamp = self.get_clock().now().to_msg()
         self.global_pcd_pub.publish(global_pc_msg)
+        self._maybe_save_pointcloud_periodic()
+
+    def _maybe_save_pointcloud_periodic(self):
+        if not self.save_full_pointcloud:
+            return
+        now = time.time()
+        if (now - self._last_pointcloud_save_t) < max(0.1, self.pointcloud_save_period_sec):
+            return
+        self._save_full_pointcloud_snapshot("periodic")
+        self._last_pointcloud_save_t = now
+
+    def _save_full_pointcloud_snapshot(self, reason: str):
+        if not self.save_full_pointcloud or self.pointcloud_save_dir is None:
+            return
+        pts = np.asarray(self.points.get_points(), dtype=np.float32)
+        if pts.size == 0:
+            return
+        stamp_ns = int(self.get_clock().now().nanoseconds)
+        out_path = self.pointcloud_save_dir / f"lidar_{reason}_{stamp_ns}.npy"
+        np.save(str(out_path), pts)
+
+    def destroy_node(self):
+        try:
+            self._save_full_pointcloud_snapshot("shutdown")
+        except Exception as e:
+            self.get_logger().warn(f"Failed saving shutdown lidar pointcloud snapshot: {e}")
+        return super().destroy_node()
 
     def imu_listener_callback(self, msg):
         pass

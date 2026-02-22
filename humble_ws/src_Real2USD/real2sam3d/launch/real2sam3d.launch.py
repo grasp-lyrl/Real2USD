@@ -62,6 +62,8 @@ def _write_run_config(context, *args, **kwargs):
         "run_sam3d_worker": context.perform_substitution(LaunchConfiguration('run_sam3d_worker')),
         "use_yolo_pf": context.perform_substitution(LaunchConfiguration('use_yolo_pf')),
         "enable_pre_sam3d_quality_filter": context.perform_substitution(LaunchConfiguration('enable_pre_sam3d_quality_filter')),
+        "save_full_pointcloud": context.perform_substitution(LaunchConfiguration('save_full_pointcloud')),
+        "pointcloud_save_period_sec": context.perform_substitution(LaunchConfiguration('pointcloud_save_period_sec')),
         "rviz2": context.perform_substitution(LaunchConfiguration('rviz2')),
         "faiss_index_path": context.perform_substitution(LaunchConfiguration('faiss_index_path')),
         "use_init_odom": context.perform_substitution(LaunchConfiguration('use_init_odom')),
@@ -115,6 +117,8 @@ def generate_launch_description():
     run_sam3d_worker = LaunchConfiguration('run_sam3d_worker', default='false')
     use_yolo_pf = LaunchConfiguration('use_yolo_pf', default='false')
     enable_pre_sam3d_quality_filter = LaunchConfiguration('enable_pre_sam3d_quality_filter', default='false')
+    save_full_pointcloud = LaunchConfiguration('save_full_pointcloud', default='true')
+    pointcloud_save_period_sec = LaunchConfiguration('pointcloud_save_period_sec', default='5.0')
     use_run_subdir = LaunchConfiguration('use_run_subdir', default='true')
     sam3d_queue_dir = LaunchConfiguration('sam3d_queue_dir', default='/data/sam3d_queue')
     faiss_index_path = LaunchConfiguration('faiss_index_path', default='/data/sam3d_faiss')
@@ -141,6 +145,10 @@ def generate_launch_description():
                              description='Use prompt-free YOLOE segmentation weights (models/yoloe-11l-seg-pf.pt). Default false uses prompted model.'),
         DeclareLaunchArgument('enable_pre_sam3d_quality_filter', default_value='true',
                              description='Enable tracker tuning + strict pre-SAM3D quality filtering from config/tracking_pre_sam3d_filter.json.'),
+        DeclareLaunchArgument('save_full_pointcloud', default_value='true',
+                             description='Save full accumulated odom-frame point cloud snapshots to run_dir/diagnostics/pointclouds (npy).'),
+        DeclareLaunchArgument('pointcloud_save_period_sec', default_value='5.0',
+                             description='Periodic snapshot interval (seconds) for full point cloud saving. Final snapshot is also saved at shutdown.'),
         DeclareLaunchArgument('use_run_subdir', default_value='true',
                              description='Create a new run subdir per launch (e.g. sam3d_queue/run_YYYYMMDD_HHMMSS) so each run has its own input/output'),
         DeclareLaunchArgument('sam3d_queue_dir', default_value='/data/sam3d_queue',
@@ -164,13 +172,25 @@ def generate_launch_description():
             package='real2sam3d',
             executable='lidar_cam_node',
             condition=IfCondition(PythonExpression(["'", LaunchConfiguration('use_realsense_cam'), "' != 'true'"])),
-            parameters=[{'use_yolo_pf': use_yolo_pf, 'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter}],
+            parameters=[{
+                'use_yolo_pf': use_yolo_pf,
+                'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter,
+                'save_full_pointcloud': save_full_pointcloud,
+                'pointcloud_save_period_sec': pointcloud_save_period_sec,
+                'pointcloud_save_root_dir': sam3d_queue_dir,
+            }],
         ),
         Node(
             package='real2sam3d',
             executable='realsense_cam_node',
             condition=IfCondition(LaunchConfiguration('use_realsense_cam')),
-            parameters=[{'use_yolo_pf': use_yolo_pf, 'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter}],
+            parameters=[{
+                'use_yolo_pf': use_yolo_pf,
+                'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter,
+                'save_full_pointcloud': save_full_pointcloud,
+                'pointcloud_save_period_sec': pointcloud_save_period_sec,
+                'pointcloud_save_root_dir': sam3d_queue_dir,
+            }],
         ),
         Node(
             package='real2sam3d',

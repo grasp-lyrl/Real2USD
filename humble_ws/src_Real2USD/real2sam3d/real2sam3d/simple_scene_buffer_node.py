@@ -249,6 +249,7 @@ class SimpleSceneBufferNode(Node):
                             pass
             entry = {
                 "id": obj_id,
+                "job_id": job_id,
                 "data_path": data_path,
                 "position": data["position"],
                 "orientation": data["orientation"],

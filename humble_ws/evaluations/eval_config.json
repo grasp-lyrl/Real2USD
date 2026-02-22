@@ -1,0 +1,41 @@
+{
+  "matching": {
+    "method": "greedy",
+    "iou_mode": "aabb",
+    "frame_normalization": "none",
+    "iou_threshold": 0.10,
+    "require_label_match": false
+  },
+  "prediction": {
+    "label_source": "prefer_retrieved_else_label",
+    "ignore_raw_labels": [
+      "courtyard",
+      "lamp",
+      "toy_car",
+      "elevator",
+      "beam",
+      "home_interior",
+      "wood_wall",
+      "server_room",
+      "ceiling",
+      "scratch",
+      "dormitory",
+      "person",
+      "television",
+      "podium",
+      "playroom"
+    ],
+    "ignore_raw_contains": [],
+    "ignore_canonical_labels": []
+  },
+  "label_resolution": {
+    "use_embedding_for_unresolved": true,
+    "learn_new_aliases": true,
+    "embedding_min_score": 0.5
+  },
+  "paths": {
+    "canonical_labels": "./evaluations/canonical_labels.json",
+    "label_aliases": "./evaluations/label_aliases.json",
+    "learned_label_aliases": "./evaluations/learned_label_aliases.json"
+  }
+}

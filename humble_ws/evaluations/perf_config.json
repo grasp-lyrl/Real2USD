@@ -1,0 +1,12 @@
+{
+  "primary_steps": [
+    "frame_total",
+    "inference"
+  ],
+  "memory": {
+    "enabled": true,
+    "sampling_interval_sec": 1.0,
+    "cpu_metric": "rss_mb",
+    "gpu_metric": "vram_mb"
+  }
+}

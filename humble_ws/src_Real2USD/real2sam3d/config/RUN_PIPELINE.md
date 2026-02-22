@@ -43,11 +43,16 @@ Notes:
 - Keep queue path shared between host and container (commonly `/data/sam3d_queue`).
 - Launch writes `current_run.json`. Worker/indexer/render scripts use this by default.
 - Use `no_faiss_mode:=true` to bypass retrieval and use candidate object directly.
-- Segmentation model: default is prompted YOLOE (`models/yoloe-11l-seg.pt`). Set `use_yolo_pf:=true` to use prompt-free weights (`models/yoloe-11l-seg-pf.pt`), matching `demo_go2.py` style.
+- Segmentation model: default is prompt-free YOLOE (`models/yoloe-11l-seg-pf.pt`). Set `use_yolo_pf:=false` to use prompted weights (`models/yoloe-11l-seg.pt`).
 - Optional strict pre-SAM3D admission gate: set `enable_pre_sam3d_quality_filter:=true`. This loads tracker + filter settings from `config/tracking_pre_sam3d_filter.json` (and tracker YAML from `config/botsort_lenient_go2.yaml`) so tracker assignment is more lenient while SAM3D enqueue is stricter.
   - Run logs written in run dir by job writer:
     - `pre_sam3d_filter_log.json`: counts for received/enqueued/skipped and skip reasons.
     - `unique_labels_log.json`: unique labels seen/enqueued/skipped and per-label counts.
+- Full point cloud snapshots (for alignment/eval): enabled by default via `save_full_pointcloud:=true`.
+  - Saved as `.npy` (`Nx3`, odom frame) under:
+    - `run_dir/diagnostics/pointclouds/lidar/`
+    - `run_dir/diagnostics/pointclouds/realsense/`
+  - Cadence is `pointcloud_save_period_sec` (default `5.0`) plus one final snapshot at shutdown.
 - **init_odom:** Default is **off** (`use_init_odom:=false`). The injector uses raw odom; no first-frame normalization. Set `use_init_odom:=true` to normalize poses by first-frame odom (demo_go2-style) when you want to compare or match that behavior.
 - **Run config (experiment arguments):** Each run directory gets `run_config.json` with:
   - **launch:** all launch arguments (e.g. `use_realsense_cam`, `sam3d_retrieval`, `no_faiss_mode`, `glb_registration_bridge`, `pipeline_profiler`, …) so you know how the pipeline was started.

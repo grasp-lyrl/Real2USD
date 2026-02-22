@@ -304,6 +304,9 @@ class Sam3dJobWriterNode(Node):
         mask_area = int(seg_pts.shape[0])
         min_mask_area = int(cfg.get("min_mask_area_px", 0))
         use_depth_valid_ratio_gate = bool(cfg.get("use_depth_valid_ratio_gate", True))
+        depth_range_filter_enabled = bool(cfg.get("depth_range_filter_enabled", False))
+        depth_min_m = float(cfg.get("depth_min_m", 0.0))
+        depth_max_m = float(cfg.get("depth_max_m", 1000.0))
         min_depth_valid_ratio = float(cfg.get("min_depth_valid_ratio", 0.0))
         max_edge_contact_ratio = float(cfg.get("max_edge_contact_ratio", 1.0))
         edge_band_px = int(cfg.get("edge_band_px", 0))
@@ -322,8 +325,12 @@ class Sam3dJobWriterNode(Node):
         if seg_valid.size == 0:
             return True, "mask_outside_image"
 
-        depth_vals = depth_full[seg_valid[:, 1], seg_valid[:, 0]]
-        depth_valid_ratio = float(np.count_nonzero(depth_vals > 0)) / float(seg_valid.shape[0])
+        depth_vals = depth_full[seg_valid[:, 1], seg_valid[:, 0]].astype(np.float32) / 1000.0  # mm -> m
+        if depth_range_filter_enabled:
+            valid_depth_mask = (depth_vals >= depth_min_m) & (depth_vals <= depth_max_m)
+        else:
+            valid_depth_mask = depth_vals > 0
+        depth_valid_ratio = float(np.count_nonzero(valid_depth_mask)) / float(seg_valid.shape[0])
 
         if edge_band_px > 0:
             on_edge = (
