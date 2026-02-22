@@ -11,8 +11,15 @@ This is the only runbook you need for daily use.
   - `transform_cam_from_raw`
   - `initial_position`, `initial_orientation`
   - `object_odom.glb`
-- Registration uses `initial_*` as ICP init and publishes final pose on `/usd/StringIdPose`.
+- Registration uses `initial_*` (z-up odom from injector) as ICP init and publishes final pose on `/usd/StringIdPose`. With `yaw_only_registration:=true` (default), the result is constrained to rotation about Z so objects stay z-up.
 - Scene buffer writes scene outputs from published poses.
+
+**Registration frames:** Source = object mesh (object.glb) in its local frame; target = segment or global point cloud in **odom** (z-up). The bridge sends the injector’s `initial_position` / `initial_orientation` (z-up odom) so the initial pose is already in the same frame as the target. ICP then refines position and yaw only (if yaw_only_registration is true).
+
+**Registration visualization:** Add in RViz (frame: odom):
+- `/registration/overlay` — registered object (red) + target (cyan) in one cloud.
+- `/registration/pc` — registered object points only.
+- `/debug/registration/source_pc` — raw source at origin; `/debug/registration/target_pc` — target.
 
 ## 1) Build
 

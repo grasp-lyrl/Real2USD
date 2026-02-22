@@ -5,13 +5,15 @@ maintains a single scene buffer, and writes scene_graph.json + scene.glb.
 Contract: no extra transformations. All poses are already in Z-up odom; object
 meshes are Z-up at origin. We only apply the given pose T so that v_odom = R @ v + t.
 
-  - scene.glb: from /usd/StringIdPose (registration_node ICP output, Z-up odom).
-  - scene_sam3d_only.glb: from pose.json (transform_odom_from_raw or initial_*). Use to compare with registration.
+  - scene_graph_sam3d_only.json / scene_sam3d_only.glb: initialization of every slot pose (one per slot,
+    slot's object at slot's initial pose from injector). Baseline before retrieval/registration.
+  - scene_graph.json / scene.glb: same slots, but object may be switched by retrieval and pose refined by
+    registration. Single transform: object (data_path) + registration pose; no extra transformation.
 
 Per-slot GLBs (when write_per_slot_glb=true): for each output/<job_id>/ we write
   - object.glb: vanilla from SAM3D (worker).
-  - object_odom.glb: vanilla + transform_odom_from_raw (injector: SAM3D camera → world odom).
-  - object_registered.glb: vanilla + registration pose (after ICP), when registration has run for that slot.
+  - object_odom.glb: vanilla + transform_odom_from_raw (injector).
+  - object_registered.glb: object + registration pose (one transform; written to slot's job dir when that slot is in buffer).
 """
 
 import json
@@ -25,6 +27,15 @@ from scipy.spatial.transform import Rotation as R
 
 from custom_message.msg import UsdStringIdPoseMsg
 
+# Raw object.glb is Y-up (SAM3D). Registration outputs yaw-only (R_z) in odom, so we must convert
+# mesh to Z-up before applying the pose. ply_frame_utils does v_row @ R_flip_z @ R_yup_to_zup => column: v_zup = (R_flip_z @ R_yup_to_zup).T @ v_raw
+try:
+    from real2sam3d.ply_frame_utils import R_flip_z, R_yup_to_zup
+    T_RAW_TO_ZUP = np.eye(4, dtype=np.float64)
+    T_RAW_TO_ZUP[:3, :3] = (R_flip_z @ R_yup_to_zup).T
+except Exception:
+    T_RAW_TO_ZUP = np.eye(4, dtype=np.float64)
+
 
 def _pose_to_matrix(position_xyz, quat_xyzw):
     """Build 4x4 transform from position (3,) and quaternion (x,y,z,w)."""
@@ -35,8 +46,8 @@ def _pose_to_matrix(position_xyz, quat_xyzw):
 
 
 # Per-slot GLB filenames (in output/<job_id>/)
-OBJECT_ODOM_GLB = "object_odom.glb"           # vanilla + injector transform (camera → odom)
-OBJECT_REGISTERED_GLB = "object_registered.glb"  # vanilla + registration pose (after ICP)
+OBJECT_ODOM_GLB = "object_odom.glb"           # vanilla + injector transform (camera → odom), Z-up in odom
+OBJECT_REGISTERED_GLB = "object_registered.glb"  # object + registration pose (single transform, no extra)
 
 
 def _apply_transform_to_mesh(mesh, T: np.ndarray):
@@ -207,6 +218,7 @@ class SimpleSceneBufferNode(Node):
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
         # 1) Registration-based scene graph JSON + joint GLB
+        # One entry per slot: object (from retrieval) + refined pose (from registration). No extra transform.
         scene_list = []
         for obj_id, data in self._buffer.items():
             scene_list.append({
@@ -229,12 +241,13 @@ class SimpleSceneBufferNode(Node):
         except Exception as e:
             self.get_logger().warn("Failed to write joint GLB %s: %s" % (glb_path, e))
 
-        # 1b) Per-slot: object_registered.glb (vanilla + registration pose) for each slot in buffer
+        # 1b) Per-slot: object_registered.glb (raw→Z-up then registration pose)
         if self._write_per_slot_glb:
             for _obj_id, data in self._buffer.items():
+                T_pose = _pose_to_matrix(data["position"], data["orientation"])
                 self._write_slot_glb(
                     data_path=data["data_path"],
-                    pose_4x4=_pose_to_matrix(data["position"], data["orientation"]),
+                    pose_4x4=T_pose @ T_RAW_TO_ZUP,
                     out_filename=OBJECT_REGISTERED_GLB,
                 )
 
@@ -319,9 +332,10 @@ class SimpleSceneBufferNode(Node):
                 if T.shape != (4, 4):
                     T = np.eye(4)
             else:
+                # Registration path: pose is yaw-only in odom; mesh is raw Y-up, so convert to Z-up then apply pose
                 pos = np.array(item["position"], dtype=np.float64)
                 quat = np.array(item["orientation"], dtype=np.float64)
-                T = _pose_to_matrix(pos, quat)
+                T = _pose_to_matrix(pos, quat) @ T_RAW_TO_ZUP
             oid = item.get("id", added)
             meshes = _load_meshes_from_path(path)
             if not meshes:

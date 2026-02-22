@@ -32,8 +32,14 @@ class RegistrationNode(Node):
         self.pub_best_match = self.create_publisher(PointCloud2, "/registration/best_match", 10)
         self.pub_debug_src = self.create_publisher(PointCloud2, "/debug/registration/source_pc", 10)
         self.pub_debug_targ = self.create_publisher(PointCloud2, "/debug/registration/target_pc", 10)
+        self.pub_overlay = self.create_publisher(PointCloud2, "/registration/overlay", 10)
         self.pub_timing = self.create_publisher(PipelineStepTiming, "/pipeline/timings", 10)
         self._timing_sequence = 0
+
+        self.declare_parameter("yaw_only_registration", True)
+        self.yaw_only_registration = self.get_parameter("yaw_only_registration").value
+        if isinstance(self.yaw_only_registration, str):
+            self.yaw_only_registration = self.yaw_only_registration.lower() == "true"
 
         # Debug visualization parameters
         self.debug_visualization = True  # Set to False to disable debug visualization
@@ -135,6 +141,7 @@ class RegistrationNode(Node):
                         points=np.asarray(points_transformed, dtype=np.float32).copy(),
                     )
                 )
+                self._publish_overlay(points_transformed, points_targ)
             except Exception:
                 pass
         if t is not None and quatXYZW is not None:
@@ -182,11 +189,40 @@ class RegistrationNode(Node):
             # self.get_logger().info(f"Cluster {label} size: {np.sum(labels == label)}")
         return labels
 
+    def _publish_overlay(self, src_points_transformed, targ_points):
+        """Publish combined point cloud: registered object (red) + target (cyan) in odom frame for visualization."""
+        if src_points_transformed is None or len(src_points_transformed) == 0:
+            return
+        src_colors = np.tile([1.0, 0.0, 0.0], (len(src_points_transformed), 1))
+        targ_colors = np.tile([0.0, 1.0, 1.0], (len(targ_points), 1))
+        all_points = np.vstack((np.asarray(src_points_transformed, dtype=np.float64), np.asarray(targ_points, dtype=np.float64)))
+        all_colors = np.vstack((src_colors, targ_colors))
+        colors_uint32 = np.zeros(len(all_points), dtype=np.uint32)
+        for i in range(len(all_points)):
+            r, g, b = all_colors[i]
+            colors_uint32[i] = (int(r * 255) << 16) | (int(g * 255) << 8) | int(b * 255)
+        points_with_colors = np.zeros(len(all_points), dtype=[
+            ("x", np.float32), ("y", np.float32), ("z", np.float32), ("rgb", np.float32),
+        ])
+        points_with_colors["x"] = all_points[:, 0].astype(np.float32)
+        points_with_colors["y"] = all_points[:, 1].astype(np.float32)
+        points_with_colors["z"] = all_points[:, 2].astype(np.float32)
+        points_with_colors["rgb"] = colors_uint32.view(np.float32)
+        try:
+            msg = point_cloud2.create_cloud(
+                header=Header(frame_id="odom"),
+                fields=self.fields,
+                points=points_with_colors,
+            )
+            self.pub_overlay.publish(msg)
+        except Exception:
+            pass
+
     def visualize_best_match(self, src_points_transformed, targ_points, transformation=None):
         """Visualize the best match between source and target points. src_points_transformed should be the downsampled and yaw-rotated source after registration."""
         if not self.debug_visualization:
             return
-        
+
         # src_points_transformed is already transformed, so just plot as-is
         src_colors = np.tile([1.0, 0.0, 0.0], (len(src_points_transformed), 1))  # Red
         targ_colors = np.tile([0.0, 1.0, 1.0], (len(targ_points), 1))  # Cyan
@@ -293,12 +329,29 @@ class RegistrationNode(Node):
             return np.array([p.x, p.y, p.z]), np.array([q.x, q.y, q.z, q.w]), None
         T = np.asarray(icp_result.transformation, dtype=np.float64).copy()
         translation = T[0:3, 3].copy()
-        quat = R.from_matrix(T[0:3, 0:3].copy()).as_quat()  # x,y,z,w (scipy needs writable buffer)
+        R_full = T[0:3, 0:3]
+        # Objects are z-up; constrain to yaw-only (rotate about Z) so we don't tip the object
+        if self.yaw_only_registration:
+            yaw = np.arctan2(R_full[1, 0], R_full[0, 0])
+            R_z = np.array([
+                [np.cos(yaw), -np.sin(yaw), 0],
+                [np.sin(yaw), np.cos(yaw), 0],
+                [0, 0, 1],
+            ], dtype=np.float64)
+            quat = R.from_matrix(R_z).as_quat()
+            T_final = np.eye(4, dtype=np.float64)
+            T_final[:3, :3] = R_z
+            T_final[:3, 3] = translation
+        else:
+            quat = R.from_matrix(R_full.copy()).as_quat()
+            T_final = T
         src_copy = o3d.geometry.PointCloud()
         src_copy.points = src_down.points
-        src_copy.transform(T)
+        src_copy.transform(T_final)
         points_transformed = np.asarray(src_copy.points, dtype=np.float64).copy()
-        self.get_logger().info(f"Initial-pose registration: fitness={icp_result.fitness:.3f}, translation={translation}")
+        self.get_logger().info(
+            f"Initial-pose registration: fitness={icp_result.fitness:.3f}, translation={translation}, yaw_only={self.yaw_only_registration}"
+        )
         return translation, quat, points_transformed
 
     def get_pose(self, points_src, points_targ, render=False, initial_pose=None):
@@ -404,24 +457,28 @@ class RegistrationNode(Node):
                 # Check if this is the best result so far
                 if icp_result.fitness > best_fitness:
                     best_fitness = icp_result.fitness
-                    rotation = np.asarray(icp_result.transformation[0:3, 0:3], dtype=np.float64).copy()
-                    yaw_final = np.arctan2(rotation[1,0], rotation[0,0]) + yaw  # Add initial yaw
-                    matrix = np.array([
-                        [np.cos(yaw_final), -np.sin(yaw_final), 0],
-                        [np.sin(yaw_final), np.cos(yaw_final), 0],
-                        [0, 0, 1]
-                    ])
-                    quaternion = R.from_matrix(matrix).as_quat()
+                    rotation_icp = np.asarray(icp_result.transformation[0:3, 0:3], dtype=np.float64).copy()
                     translation = np.asarray(icp_result.transformation[0:3, 3], dtype=np.float64).copy()
+                    # ICP result is T_odom_from_src_rotated; full T_odom_from_src_orig = T_icp @ diag(R_yaw,1)
+                    if self.yaw_only_registration:
+                        yaw_final = np.arctan2(rotation_icp[1, 0], rotation_icp[0, 0]) + yaw
+                        matrix = np.array([
+                            [np.cos(yaw_final), -np.sin(yaw_final), 0],
+                            [np.sin(yaw_final), np.cos(yaw_final), 0],
+                            [0, 0, 1]
+                        ], dtype=np.float64)
+                    else:
+                        matrix = (rotation_icp @ rot_matrix).astype(np.float64)
+                    quaternion = R.from_matrix(matrix).as_quat()
 
-                    # Create transformation matrix
-                    transformation = np.eye(4)
-                    transformation[0:3,3] = translation
-                    transformation[0:3,0:3] = matrix
+                    # Create transformation matrix (T_odom_from_src_orig) for publishing and viz
+                    transformation = np.eye(4, dtype=np.float64)
+                    transformation[0:3, 3] = translation
+                    transformation[0:3, 0:3] = matrix
 
-                    # Transform source points for visualization (copy so downstream gets writable buffer)
+                    # Viz: transform original source (src_down_orig) so overlay matches published pose
                     src_copy = o3d.geometry.PointCloud()
-                    src_copy.points = src_down.points
+                    src_copy.points = src_down_orig.points
                     src_copy.transform(transformation)
                     best_points_transformed = np.asarray(src_copy.points, dtype=np.float64).copy()
                     best_translation = translation
@@ -429,7 +486,10 @@ class RegistrationNode(Node):
                     best_transformation = transformation
                     best_cluster_id = cluster_id
 
-                    self.get_logger().info(f"New best match: Cluster {cluster_id}, yaw_init: {np.degrees(yaw):.1f} deg, fitness: {icp_result.fitness:.3f}, translation: {translation}, yaw: {np.degrees(yaw_final):.1f} deg")
+                    yaw_deg = np.degrees(np.arctan2(matrix[1, 0], matrix[0, 0]))
+                    self.get_logger().info(
+                        f"New best match: Cluster {cluster_id}, yaw_init: {np.degrees(yaw):.1f} deg, fitness: {icp_result.fitness:.3f}, translation: {translation}, yaw: {yaw_deg:.1f} deg, yaw_only={self.yaw_only_registration}"
+                    )
         
         if best_points_transformed is not None:
             # Visualize clusters again, highlighting the best cluster in red

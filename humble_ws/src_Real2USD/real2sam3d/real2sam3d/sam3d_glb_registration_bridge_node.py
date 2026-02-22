@@ -43,6 +43,10 @@ def _segment_point_cloud_from_job_dir_with_reason(
 ) -> Tuple[Optional[np.ndarray], str]:
     """
     Build segment point cloud in odom frame from job files (depth.npy, mask.png, meta.json).
+
+    Uses meta.odometry as-is (no init_odom subtraction). So segment is in the same frame as
+    the robot odom at capture time. When injector runs with use_init_odom=false, pose.json
+    initial_position is also in that frame; registration output will then be in full odom.
     Returns (points, reason). reason is empty if points is not None; otherwise explains why segment is unavailable.
     """
     depth_path = job_dir / "depth.npy"
@@ -129,7 +133,7 @@ def _segment_point_cloud_from_job_dir(job_dir: Path) -> Optional[np.ndarray]:
 
 
 def _load_points_from_glb(glb_path: str, max_points: Optional[int] = 50000) -> Optional[np.ndarray]:
-    """Load vertex positions from a GLB file (Z-up, object-local). Returns (N, 3) float64 or None."""
+    """Load vertex positions from a GLB file. Flattens scene graph so frame matches simple_scene_buffer_node."""
     try:
         import trimesh
     except ImportError:
@@ -137,14 +141,23 @@ def _load_points_from_glb(glb_path: str, max_points: Optional[int] = 50000) -> O
     try:
         scene = trimesh.load(glb_path, process=False)
         if isinstance(scene, trimesh.Scene):
-            meshes = [g for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)]
+            verts_list = []
+            for node_name in scene.graph.nodes_geometry:
+                try:
+                    node_tf, geom_name = scene.graph[node_name]
+                    geom = scene.geometry.get(geom_name)
+                    if isinstance(geom, trimesh.Trimesh) and len(geom.vertices) > 0:
+                        v = np.asarray(geom.vertices, dtype=np.float64)
+                        ones = np.ones((v.shape[0], 1), dtype=np.float64)
+                        v_h = (np.asarray(node_tf, dtype=np.float64) @ np.hstack([v, ones]).T).T[:, :3]
+                        verts_list.append(v_h)
+                except Exception:
+                    continue
+            verts = np.vstack(verts_list) if verts_list else np.empty((0, 3), dtype=np.float64)
         elif isinstance(scene, trimesh.Trimesh):
-            meshes = [scene]
+            verts = np.asarray(scene.vertices, dtype=np.float64)
         else:
             return None
-        if not meshes:
-            return None
-        verts = np.vstack([np.asarray(m.vertices, dtype=np.float64) for m in meshes if len(m.vertices) > 0])
         if len(verts) == 0:
             return None
         if max_points is not None and len(verts) > max_points:
@@ -355,7 +368,8 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         timing_msg.sequence_id = self._timing_sequence
         self._timing_sequence += 1
         self.pub_timing.publish(timing_msg)
-        # Initial pose from SAM3D + go2 (worker writes to pose.json) so registration starts from this
+        # Initial pose = slot's pose (where we saw the slot). Registration refines from here.
+        # Retrieval may switch the object (data_path from another job); we still use the slot's pose as init.
         pose_path = job_dir / "pose.json"
         if pose_path.exists():
             try:

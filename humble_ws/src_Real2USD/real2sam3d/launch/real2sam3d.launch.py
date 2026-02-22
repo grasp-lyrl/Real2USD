@@ -63,6 +63,7 @@ def _write_run_config(context, *args, **kwargs):
         "rviz2": context.perform_substitution(LaunchConfiguration('rviz2')),
         "faiss_index_path": context.perform_substitution(LaunchConfiguration('faiss_index_path')),
         "use_init_odom": context.perform_substitution(LaunchConfiguration('use_init_odom')),
+        "yaw_only_registration": context.perform_substitution(LaunchConfiguration('yaw_only_registration')),
     }
     config = {
         "run_dir": run_dir,
@@ -125,6 +126,8 @@ def generate_launch_description():
                              description='Use realsense_cam_node instead of lidar_cam_node (RealSense topics: aligned_depth, color, camera_info, /utlidar/robot_pose)'),
         DeclareLaunchArgument('use_init_odom', default_value='false',
                              description='Injector: normalize poses by first-frame odom (init_odom). Set true to match demo_go2 / compare; default false uses raw odom.'),
+        DeclareLaunchArgument('yaw_only_registration', default_value='true',
+                             description='Registration: when true, ICP result is projected to yaw-only (rotate about Z) so objects stay z-up. Set false for full 6-DOF.'),
         OpaqueFunction(function=_create_run_dir_and_set_queue),
         OpaqueFunction(function=_write_run_config),
         # Pipeline: [lidar_cam_node | realsense_cam_node] -> job_writer -> ... -> registration -> scene buffer
@@ -141,6 +144,7 @@ def generate_launch_description():
         Node(
             package='real2sam3d',
             executable='registration_node',
+            parameters=[{'yaw_only_registration': LaunchConfiguration('yaw_only_registration', default='true')}],
         ),
         # Node(
         #     package='real2sam3d',

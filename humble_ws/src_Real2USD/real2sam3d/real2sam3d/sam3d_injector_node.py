@@ -105,9 +105,10 @@ class Sam3dInjectorNode(Node):
             pose_path = job_path / "pose.json"
             if not pose_path.exists():
                 continue
-            self._ensure_init_odom(job_path)
+            if self.use_init_odom:
+                self._ensure_init_odom(job_path)
             try:
-                if apply_sam3d_transforms_to_slot(job_path, init_odom=self._init_odom):
+                if apply_sam3d_transforms_to_slot(job_path, init_odom=self._init_odom if self.use_init_odom else None):
                     self.get_logger().debug("Transformed slot %s to Z-up odom" % job_path.name)
             except Exception as e:
                 self.get_logger().warn("Transform failed for %s: %s" % (job_path.name, e))
