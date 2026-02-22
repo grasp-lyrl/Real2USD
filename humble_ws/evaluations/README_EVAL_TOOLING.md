@@ -47,21 +47,34 @@ python3 run_eval.py \
   --run-id clio_hallway1
 ```
 
-Pipeline vs CLIO side-by-side (same GT):
+Three-method side-by-side (pipeline full vs sam3d_only vs clio):
 
 ```bash
-python3 compare_pipeline_clio.py \
+python3 compare_three_methods.py \
   --results-root /abs/path/to/results \
   --scene hallway1 \
-  --run-id run_20260218_120000
+  --run-id run_20260218_120000 \
+  --method-tags pipeline_full,sam3d_only,clio
 ```
 
-evaluations/bash_scripts/run_compare_pipeline_vs_clio.sh   /data/sam3d_queue/run_20260222_051228   evaluations/clio/lounge_0.graphml   evaluations/supervisely/lounge-0_voxel_pointcloud.pcd.json   lounge-0   run_20260222_051228   /data/sam3d_queue/run_20260222_051228/results
-
-
 Writes:
-- `results/comparisons/<scene>_<run_id>_pipeline_vs_clio_summary.csv`
-- `results/comparisons/<scene>_<run_id>_pipeline_vs_clio_per_class.csv`
+- `results/comparisons/<scene>_<run_id>_three_methods_summary.csv`
+- `results/comparisons/<scene>_<run_id>_three_methods_per_class.csv`
+- `results/comparisons/<scene>_<run_id>_three_methods_main_metrics.png`
+- `results/comparisons/<scene>_<run_id>_three_methods_fp_breakdown.png`
+- `results/comparisons/<scene>_<run_id>_three_methods_per_class_f1.png`
+
+One-command 3-method run (recommended):
+
+```bash
+evaluations/bash_scripts/run_full_three_method_comparison.sh \
+  /data/sam3d_queue/run_20260222_051228 \
+  /abs/path/to/clio_scene.graphml \
+  evaluations/supervisely/lounge-0_voxel_pointcloud.pcd.json \
+  lounge-0 \
+  run_20260222_051228 \
+  /data/sam3d_queue/run_20260222_051228/results_labels
+```
 
 Outputs:
 - `results/by_run/<scene>_<run_id>_<evalhash>.json`

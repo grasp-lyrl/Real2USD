@@ -18,6 +18,7 @@ def _load_by_run_files(results_root: Path):
                 {
                     "scene": m["metadata"].get("scene"),
                     "run_id": m["metadata"].get("run_id"),
+                    "method_tag": m["metadata"].get("method_tag"),
                     "prediction_type": m["metadata"].get("prediction_type", "scene_graph"),
                     "eval_hash": m["metadata"].get("eval_hash"),
                     "precision": m["detection_metrics"].get("precision"),

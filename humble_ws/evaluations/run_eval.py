@@ -510,6 +510,7 @@ def main():
     parser.add_argument("--run-dir", default=None, help="Optional run directory for timing/perf extraction")
     parser.add_argument("--scene", default="unknown_scene")
     parser.add_argument("--run-id", default=None)
+    parser.add_argument("--method-tag", default=None, help="Optional method tag (e.g., pipeline_full, sam3d_only, clio)")
     parser.add_argument("--results-root", default=None, help="Results output root. Default: <run_dir>/results when run_dir is set.")
     args = parser.parse_args()
 
@@ -597,6 +598,7 @@ def main():
     metrics["metadata"] = {
         "scene": args.scene,
         "run_id": run_id,
+        "method_tag": args.method_tag,
         "prediction_path": str(Path(prediction_path).resolve()),
         "prediction_type": prediction_type,
         "gt_json": str(Path(args.gt_json).resolve()),
@@ -641,6 +643,7 @@ def main():
     main_row = {
         "scene": args.scene,
         "run_id": run_id,
+        "method_tag": args.method_tag or prediction_type,
         "prediction_type": prediction_type,
         "eval_hash": eval_hash,
         "precision": metrics["detection_metrics"]["precision"],

@@ -1,6 +1,6 @@
 # Evaluation Bash Scripts
 
-These scripts help you quickly re-run evaluation for an existing run directory.
+These scripts are the minimal supported set for evaluation runs.
 
 ## Scripts
 
@@ -10,14 +10,14 @@ These scripts help you quickly re-run evaluation for an existing run directory.
     - `scene_graph_sam3d_only.json` (baseline)
   - Writes results under `<RUN_DIR>/results/`
   - Writes per-run bbox overlay plots
-- `collect_and_plot.sh`
-  - Rebuilds consolidated tables and plots from all `<RESULTS_ROOT>/by_run/*.json`.
-- `rerun_eval_full.sh`
-  - Runs both commands above in sequence.
-- `run_eval_clio.sh`
-  - Runs CLIO GraphML vs Supervisely GT in the same `run_eval.py` format.
-- `run_compare_pipeline_vs_clio.sh`
-  - Evaluates pipeline + CLIO against the same GT and writes side-by-side comparison CSVs.
+- `run_sweep_eval.sh`
+  - Runs IoU/label-match sweeps to estimate geometry ceiling and label penalty.
+- `run_full_three_method_comparison.sh`
+  - Single command for 3-method comparison:
+    - pipeline full (`scene_graph.json`)
+    - SAM3D-only (`scene_graph_sam3d_only.json`)
+    - CLIO (`.graphml`)
+  - Writes unified tables/plots + 3-way comparison CSV/plots + bbox overlays for all methods.
 
 ## One-time setup
 
@@ -37,33 +37,14 @@ evaluations/bash_scripts/run_eval_pair.sh \
 ```
 
 ```bash
-evaluations/bash_scripts/collect_and_plot.sh
-```
-
-Custom results root:
-
-```bash
-evaluations/bash_scripts/collect_and_plot.sh /data/sam3d_queue/run_20260222_051228/results
-```
-
-```bash
-evaluations/bash_scripts/rerun_eval_full.sh \
+evaluations/bash_scripts/run_sweep_eval.sh \
   /data/sam3d_queue/run_20260222_051228 \
-  evaluations/supervisely/hallway-1_voxel_pointcloud.pcd.json \
-  hallway1
+  evaluations/supervisely/lounge-0_voxel_pointcloud.pcd.json \
+  lounge-0
 ```
 
 ```bash
-evaluations/bash_scripts/run_eval_clio.sh \
-  /abs/path/to/clio_scene.graphml \
-  evaluations/supervisely/hallway-1_voxel_pointcloud.pcd.json \
-  hallway1 \
-  clio_hallway1 \
-  /abs/path/to/results_labels
-```
-
-```bash
-evaluations/bash_scripts/run_compare_pipeline_vs_clio.sh \
+evaluations/bash_scripts/run_full_three_method_comparison.sh \
   /data/sam3d_queue/run_20260222_051228 \
   /abs/path/to/clio_scene.graphml \
   evaluations/supervisely/lounge-0_voxel_pointcloud.pcd.json \
