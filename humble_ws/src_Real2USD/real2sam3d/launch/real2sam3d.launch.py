@@ -61,6 +61,7 @@ def _write_run_config(context, *args, **kwargs):
         "use_run_subdir": context.perform_substitution(LaunchConfiguration('use_run_subdir')),
         "run_sam3d_worker": context.perform_substitution(LaunchConfiguration('run_sam3d_worker')),
         "use_yolo_pf": context.perform_substitution(LaunchConfiguration('use_yolo_pf')),
+        "enable_pre_sam3d_quality_filter": context.perform_substitution(LaunchConfiguration('enable_pre_sam3d_quality_filter')),
         "rviz2": context.perform_substitution(LaunchConfiguration('rviz2')),
         "faiss_index_path": context.perform_substitution(LaunchConfiguration('faiss_index_path')),
         "use_init_odom": context.perform_substitution(LaunchConfiguration('use_init_odom')),
@@ -71,6 +72,27 @@ def _write_run_config(context, *args, **kwargs):
         "launch": launch_args,
         "created_at": datetime.now().isoformat(),
     }
+    try:
+        pkg_share = Path(get_package_share_directory('real2sam3d'))
+        cfg_path = pkg_share / "config" / "tracking_pre_sam3d_filter.json"
+        if cfg_path.exists():
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+            config["tracking_pre_sam3d_filter"] = {
+                "path": str(cfg_path.resolve()),
+                "content": cfg,
+            }
+            tracker_yaml = (cfg.get("tracker") or {}).get("tracker_yaml") if isinstance(cfg, dict) else None
+            if tracker_yaml:
+                tracker_path = pkg_share / "config" / str(tracker_yaml)
+                if tracker_path.exists():
+                    with open(tracker_path) as f:
+                        config["tracker_yaml"] = {
+                            "path": str(tracker_path.resolve()),
+                            "content": f.read(),
+                        }
+    except Exception as e:
+        print(f"[WARN] Could not embed tracking/filter config in run_config: {e}", file=__import__("sys").stderr)
     config_path = run_path / "run_config.json"
     try:
         with open(config_path, "w") as f:
@@ -92,6 +114,7 @@ def generate_launch_description():
     no_faiss_mode = LaunchConfiguration('no_faiss_mode', default='false')
     run_sam3d_worker = LaunchConfiguration('run_sam3d_worker', default='false')
     use_yolo_pf = LaunchConfiguration('use_yolo_pf', default='false')
+    enable_pre_sam3d_quality_filter = LaunchConfiguration('enable_pre_sam3d_quality_filter', default='false')
     use_run_subdir = LaunchConfiguration('use_run_subdir', default='true')
     sam3d_queue_dir = LaunchConfiguration('sam3d_queue_dir', default='/data/sam3d_queue')
     faiss_index_path = LaunchConfiguration('faiss_index_path', default='/data/sam3d_faiss')
@@ -114,8 +137,10 @@ def generate_launch_description():
                              description='Run GLB→registration bridge (subscribes to /usd/Sam3dObjectForSlot, publishes src+targ for ICP)'),
         DeclareLaunchArgument('run_sam3d_worker', default_value='false',
                              description='Run SAM3D worker in this launch (uses --dry-run; for real SAM3D run worker in separate terminal with conda)'),
-        DeclareLaunchArgument('use_yolo_pf', default_value='false',
+        DeclareLaunchArgument('use_yolo_pf', default_value='true',
                              description='Use prompt-free YOLOE segmentation weights (models/yoloe-11l-seg-pf.pt). Default false uses prompted model.'),
+        DeclareLaunchArgument('enable_pre_sam3d_quality_filter', default_value='true',
+                             description='Enable tracker tuning + strict pre-SAM3D quality filtering from config/tracking_pre_sam3d_filter.json.'),
         DeclareLaunchArgument('use_run_subdir', default_value='true',
                              description='Create a new run subdir per launch (e.g. sam3d_queue/run_YYYYMMDD_HHMMSS) so each run has its own input/output'),
         DeclareLaunchArgument('sam3d_queue_dir', default_value='/data/sam3d_queue',
@@ -139,13 +164,13 @@ def generate_launch_description():
             package='real2sam3d',
             executable='lidar_cam_node',
             condition=IfCondition(PythonExpression(["'", LaunchConfiguration('use_realsense_cam'), "' != 'true'"])),
-            parameters=[{'use_yolo_pf': use_yolo_pf}],
+            parameters=[{'use_yolo_pf': use_yolo_pf, 'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter}],
         ),
         Node(
             package='real2sam3d',
             executable='realsense_cam_node',
             condition=IfCondition(LaunchConfiguration('use_realsense_cam')),
-            parameters=[{'use_yolo_pf': use_yolo_pf}],
+            parameters=[{'use_yolo_pf': use_yolo_pf, 'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter}],
         ),
         Node(
             package='real2sam3d',
@@ -177,7 +202,7 @@ def generate_launch_description():
             package='real2sam3d',
             executable='sam3d_job_writer_node',
             condition=IfCondition(with_sam3d_job_writer),
-            parameters=[{'queue_dir': sam3d_queue_dir}],
+            parameters=[{'queue_dir': sam3d_queue_dir, 'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter}],
         ),
         Node(
             package='real2sam3d',

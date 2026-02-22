@@ -11,13 +11,16 @@ depth into odom frame and accumulating in a buffer.
 """
 
 import time
+import json
 import numpy as np
 import cv2
+from pathlib import Path
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as R
 
 import rclpy
 from rclpy.node import Node
+from ament_index_python.packages import get_package_share_directory
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
@@ -41,6 +44,7 @@ class RealsenseCamNode(Node):
         self.declare_parameter("odom_topic", "/utlidar/robot_pose")
         self.declare_parameter("camera_position_in_odom", [0.285, 0.0, 0.01])  # same default as Go2
         self.declare_parameter("use_yolo_pf", False)
+        self.declare_parameter("enable_pre_sam3d_quality_filter", False)
 
         depth_topic = self.get_parameter("depth_topic").value
         image_topic = self.get_parameter("image_topic").value
@@ -48,7 +52,25 @@ class RealsenseCamNode(Node):
         odom_topic = self.get_parameter("odom_topic").value
         T_cam = self.get_parameter("camera_position_in_odom").value
         use_yolo_pf = self.get_parameter("use_yolo_pf").value
+        enable_pre_sam3d_quality_filter = self.get_parameter("enable_pre_sam3d_quality_filter").value
         self.T_cam_in_odom = np.array(T_cam, dtype=np.float64)
+
+        tracking_kwargs = {}
+        if enable_pre_sam3d_quality_filter:
+            cfg = self._load_tracking_filter_config()
+            tracker_cfg = cfg.get("tracker", {}) if isinstance(cfg, dict) else {}
+            tracker_yaml = tracker_cfg.get("tracker_yaml")
+            if tracker_yaml:
+                pkg_share = Path(get_package_share_directory("real2sam3d"))
+                tracking_kwargs["tracker"] = str((pkg_share / "config" / tracker_yaml).resolve())
+            if tracker_cfg.get("track_conf") is not None:
+                tracking_kwargs["conf"] = float(tracker_cfg["track_conf"])
+            if tracker_cfg.get("track_iou") is not None:
+                tracking_kwargs["iou"] = float(tracker_cfg["track_iou"])
+            if tracker_cfg.get("retina_masks") is not None:
+                tracking_kwargs["retina_masks"] = bool(tracker_cfg["retina_masks"])
+            if tracker_cfg.get("imgsz") is not None:
+                tracking_kwargs["imgsz"] = int(tracker_cfg["imgsz"])
 
         self.sub_depth = self.create_subscription(Image, depth_topic, self.depth_callback, 10)
         self.sub_rgb = self.create_subscription(Image, image_topic, self.rgb_callback, 10)
@@ -66,7 +88,7 @@ class RealsenseCamNode(Node):
         self._timing_sequence = 0
 
         model_path = "models/yoloe-11l-seg-pf.pt" if use_yolo_pf else "models/yoloe-11l-seg.pt"
-        self.segment = Segmentation(model_path)
+        self.segment = Segmentation(model_path, tracking_kwargs=tracking_kwargs)
         self.projection = ProjectionUtils(T=self.T_cam_in_odom)
         self.bridge = CvBridge()
 
@@ -82,6 +104,18 @@ class RealsenseCamNode(Node):
             % (depth_topic, image_topic, odom_topic)
         )
         self.get_logger().info(f"Segmentation model: {model_path} (use_yolo_pf={use_yolo_pf})")
+        if enable_pre_sam3d_quality_filter:
+            self.get_logger().info(f"Tracking config enabled: {tracking_kwargs}")
+
+    def _load_tracking_filter_config(self):
+        pkg_share = Path(get_package_share_directory("real2sam3d"))
+        cfg_path = pkg_share / "config" / "tracking_pre_sam3d_filter.json"
+        try:
+            with open(cfg_path) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self.get_logger().warn(f"Failed to load tracking filter config {cfg_path}: {e}")
+            return {}
 
     def rgb_callback(self, msg):
         image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")

@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from ament_index_python.packages import get_package_share_directory
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 from sensor_msgs_py import point_cloud2
 from go2_interfaces.msg import Go2State, IMU
@@ -11,6 +12,7 @@ import cv2
 from cv_bridge import CvBridge
 import json, asyncio, time, pickle
 import numpy as np
+from pathlib import Path
 from scipy.spatial.transform import Rotation as R
 import open3d as o3d
 
@@ -28,7 +30,26 @@ class LidarDriverNode(Node):
     def __init__(self):
         super().__init__("lidar_driver_node")
         self.declare_parameter("use_yolo_pf", False)
+        self.declare_parameter("enable_pre_sam3d_quality_filter", False)
         use_yolo_pf = self.get_parameter("use_yolo_pf").value
+        enable_pre_sam3d_quality_filter = self.get_parameter("enable_pre_sam3d_quality_filter").value
+
+        tracking_kwargs = {}
+        if enable_pre_sam3d_quality_filter:
+            cfg = self._load_tracking_filter_config()
+            tracker_cfg = cfg.get("tracker", {}) if isinstance(cfg, dict) else {}
+            tracker_yaml = tracker_cfg.get("tracker_yaml")
+            if tracker_yaml:
+                pkg_share = Path(get_package_share_directory("real2sam3d"))
+                tracking_kwargs["tracker"] = str((pkg_share / "config" / tracker_yaml).resolve())
+            if tracker_cfg.get("track_conf") is not None:
+                tracking_kwargs["conf"] = float(tracker_cfg["track_conf"])
+            if tracker_cfg.get("track_iou") is not None:
+                tracking_kwargs["iou"] = float(tracker_cfg["track_iou"])
+            if tracker_cfg.get("retina_masks") is not None:
+                tracking_kwargs["retina_masks"] = bool(tracker_cfg["retina_masks"])
+            if tracker_cfg.get("imgsz") is not None:
+                tracking_kwargs["imgsz"] = int(tracker_cfg["imgsz"])
 
         # subscribers
         self.sub_rgb = self.create_subscription(Image, "/camera/image_raw", self.rgb_listener_callback, 10)
@@ -52,8 +73,10 @@ class LidarDriverNode(Node):
         self._timing_sequence = 0
 
         model_path = "models/yoloe-11l-seg-pf.pt" if use_yolo_pf else "models/yoloe-11l-seg.pt"
-        self.segment = Segmentation(model_path)
+        self.segment = Segmentation(model_path, tracking_kwargs=tracking_kwargs)
         self.get_logger().info(f"Segmentation model: {model_path} (use_yolo_pf={use_yolo_pf})")
+        if enable_pre_sam3d_quality_filter:
+            self.get_logger().info(f"Tracking config enabled: {tracking_kwargs}")
 
         # Unitree Go2 front camera extrinsics to odom body frame
         self.T_cam_in_odom = np.array([0.285, 0., 0.01])
@@ -70,6 +93,16 @@ class LidarDriverNode(Node):
         # utlidar: ~8-10,000 points per second
         self.points = PointCloudBuffer(max_points=1000000, voxel_size=0.01)
         self.points.clear()
+
+    def _load_tracking_filter_config(self):
+        pkg_share = Path(get_package_share_directory("real2sam3d"))
+        cfg_path = pkg_share / "config" / "tracking_pre_sam3d_filter.json"
+        try:
+            with open(cfg_path) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self.get_logger().warn(f"Failed to load tracking filter config {cfg_path}: {e}")
+            return {}
 
     def lidar_listener_callback(self, msg):
         """Extract the points from the PointCloud2 message

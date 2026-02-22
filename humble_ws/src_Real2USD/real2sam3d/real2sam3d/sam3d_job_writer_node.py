@@ -22,6 +22,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from ament_index_python.packages import get_package_share_directory
 from custom_message.msg import CropImgDepthMsg, PipelineStepTiming, Sam3dJobEnqueued
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
@@ -133,6 +134,7 @@ class Sam3dJobWriterNode(Node):
         self.declare_parameter("queue_dir", "/data/sam3d_queue")
         self.declare_parameter("write_every_n", 1)  # 1 = every message (for testing); increase to throttle
         self.declare_parameter("enable", True)
+        self.declare_parameter("enable_pre_sam3d_quality_filter", False)
         # Dedup: avoid enqueueing the same object many times so SAM3D is not run redundantly
         self.declare_parameter("dedup_track_id_sec", 60.0)  # skip same track_id if we wrote a job in last N sec (0 = off)
         self.declare_parameter("dedup_position_m", 0.5)  # skip if same label and position within this many meters (0 = off)
@@ -140,6 +142,7 @@ class Sam3dJobWriterNode(Node):
         self.queue_dir = Path(self.get_parameter("queue_dir").value)
         self.write_every_n = self.get_parameter("write_every_n").value
         self.enable = self.get_parameter("enable").value
+        self.enable_pre_sam3d_quality_filter = self.get_parameter("enable_pre_sam3d_quality_filter").value
         self.dedup_track_id_sec = self.get_parameter("dedup_track_id_sec").value
         self.dedup_position_m = self.get_parameter("dedup_position_m").value
 
@@ -149,6 +152,19 @@ class Sam3dJobWriterNode(Node):
         self.bridge = CvBridge()
         self._msg_count = 0
         self._dedup = Sam3dDedupState(self.dedup_track_id_sec, self.dedup_position_m)
+        self._filter_cfg = self._load_tracking_filter_config() if self.enable_pre_sam3d_quality_filter else {}
+        self._run_stats = {
+            "received_total": 0,
+            "enqueued_total": 0,
+            "skipped_dedup_total": 0,
+            "skipped_pre_filter_total": 0,
+            "skip_reason_counts": {},
+        }
+        self._label_counts_all = {}
+        self._label_counts_enqueued = {}
+        self._label_counts_skipped_pre_filter = {}
+        self._skip_reason_log_path = self.queue_dir / "pre_sam3d_filter_log.json"
+        self._unique_labels_log_path = self.queue_dir / "unique_labels_log.json"
 
         self.sub = self.create_subscription(
             CropImgDepthMsg,
@@ -162,7 +178,8 @@ class Sam3dJobWriterNode(Node):
         self._timing_sequence = 0
         self.get_logger().info(
             f"SAM3D job writer: queue_dir={self.queue_dir}, write_every_n={self.write_every_n}, enable={self.enable}, "
-            f"dedup_track_id_sec={self.dedup_track_id_sec}, dedup_position_m={self.dedup_position_m}"
+            f"dedup_track_id_sec={self.dedup_track_id_sec}, dedup_position_m={self.dedup_position_m}, "
+            f"enable_pre_sam3d_quality_filter={self.enable_pre_sam3d_quality_filter}"
         )
 
     def _should_skip_dedup(self, track_id: int, label: str, position: Tuple[float, float, float]) -> bool:
@@ -177,15 +194,33 @@ class Sam3dJobWriterNode(Node):
         self._msg_count += 1
         if self._msg_count % self.write_every_n != 0:
             return
+        self._run_stats["received_total"] += 1
 
         track_id = int(msg.track_id)
+        label = (msg.label or "").strip()
+        if label:
+            self._label_counts_all[label] = self._label_counts_all.get(label, 0) + 1
+
+        if self.enable_pre_sam3d_quality_filter:
+            should_skip, reason = self._should_skip_pre_sam3d_filter(msg, track_id)
+            if should_skip:
+                self._run_stats["skipped_pre_filter_total"] += 1
+                self._run_stats["skip_reason_counts"][reason] = self._run_stats["skip_reason_counts"].get(reason, 0) + 1
+                if label:
+                    self._label_counts_skipped_pre_filter[label] = self._label_counts_skipped_pre_filter.get(label, 0) + 1
+                self._flush_run_logs()
+                self.get_logger().debug(f"Skipping SAM3D enqueue due to pre-filter: reason={reason} track_id={track_id}")
+                return
+
         position = (
             msg.odometry.pose.pose.position.x,
             msg.odometry.pose.pose.position.y,
             msg.odometry.pose.pose.position.z,
         )
-        label = msg.label or ""
         if self._should_skip_dedup(track_id, label, position):
+            self._run_stats["skipped_dedup_total"] += 1
+            self._run_stats["skip_reason_counts"]["dedup"] = self._run_stats["skip_reason_counts"].get("dedup", 0) + 1
+            self._flush_run_logs()
             return
 
         job_id = f"{track_id}_{msg.header.stamp.sec}_{msg.header.stamp.nanosec}_{uuid.uuid4().hex[:8]}"
@@ -225,6 +260,10 @@ class Sam3dJobWriterNode(Node):
             }
             write_sam3d_job(rgb, depth_full, seg_pts, meta, job_path, crop_bbox=crop_bbox)
             self._record_written(track_id, label, position)
+            self._run_stats["enqueued_total"] += 1
+            if label:
+                self._label_counts_enqueued[label] = self._label_counts_enqueued.get(label, 0) + 1
+            self._flush_run_logs()
             self.get_logger().info(f"Wrote SAM3D job: {job_path}")
             duration_ms = (time.perf_counter() - t_start) * 1000.0
             timing_msg = PipelineStepTiming()
@@ -244,6 +283,87 @@ class Sam3dJobWriterNode(Node):
             self.pub_debug_last_crop.publish(msg.rgb_image)
         except Exception as e:
             self.get_logger().error(f"Failed to write SAM3D job {job_id}: {e}")
+
+    def _load_tracking_filter_config(self) -> dict:
+        cfg_path = Path(get_package_share_directory("real2sam3d")) / "config" / "tracking_pre_sam3d_filter.json"
+        try:
+            with open(cfg_path) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self.get_logger().warn(f"Failed to load pre-SAM3D filter config {cfg_path}: {e}")
+            return {}
+
+    def _should_skip_pre_sam3d_filter(self, msg: CropImgDepthMsg, track_id: int):
+        cfg = self._filter_cfg.get("pre_sam3d_filter", {}) if isinstance(self._filter_cfg, dict) else {}
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return False, ""
+        if bool(cfg.get("skip_untracked", True)) and track_id < 0:
+            return True, "untracked"
+
+        seg_pts = np.array(msg.seg_points, dtype=np.int32).reshape(-1, 2)
+        mask_area = int(seg_pts.shape[0])
+        min_mask_area = int(cfg.get("min_mask_area_px", 0))
+        use_depth_valid_ratio_gate = bool(cfg.get("use_depth_valid_ratio_gate", True))
+        min_depth_valid_ratio = float(cfg.get("min_depth_valid_ratio", 0.0))
+        max_edge_contact_ratio = float(cfg.get("max_edge_contact_ratio", 1.0))
+        edge_band_px = int(cfg.get("edge_band_px", 0))
+        small_object_area_px = int(cfg.get("small_object_area_px", 0))
+
+        if mask_area == 0:
+            return True, "empty_mask"
+
+        depth_full = self.bridge.imgmsg_to_cv2(msg.depth_image, desired_encoding="16UC1")
+        h, w = depth_full.shape[:2]
+        valid = (
+            (seg_pts[:, 0] >= 0) & (seg_pts[:, 0] < w)
+            & (seg_pts[:, 1] >= 0) & (seg_pts[:, 1] < h)
+        )
+        seg_valid = seg_pts[valid]
+        if seg_valid.size == 0:
+            return True, "mask_outside_image"
+
+        depth_vals = depth_full[seg_valid[:, 1], seg_valid[:, 0]]
+        depth_valid_ratio = float(np.count_nonzero(depth_vals > 0)) / float(seg_valid.shape[0])
+
+        if edge_band_px > 0:
+            on_edge = (
+                (seg_valid[:, 0] < edge_band_px)
+                | (seg_valid[:, 0] >= (w - edge_band_px))
+                | (seg_valid[:, 1] < edge_band_px)
+                | (seg_valid[:, 1] >= (h - edge_band_px))
+            )
+            edge_contact_ratio = float(np.count_nonzero(on_edge)) / float(seg_valid.shape[0])
+        else:
+            edge_contact_ratio = 0.0
+
+        if use_depth_valid_ratio_gate and mask_area < min_mask_area and depth_valid_ratio < min_depth_valid_ratio:
+            return True, "small_and_low_depth"
+        if mask_area < small_object_area_px and edge_contact_ratio > max_edge_contact_ratio:
+            return True, "small_and_edge"
+        return False, ""
+
+    def _flush_run_logs(self):
+        try:
+            stats = dict(self._run_stats)
+            stats["updated_at"] = time.time()
+            with open(self._skip_reason_log_path, "w") as f:
+                json.dump(stats, f, indent=2)
+        except Exception as e:
+            self.get_logger().warn(f"Failed writing skip-reason log: {e}")
+        try:
+            payload = {
+                "updated_at": time.time(),
+                "labels_seen_all": sorted(self._label_counts_all.keys()),
+                "labels_enqueued": sorted(self._label_counts_enqueued.keys()),
+                "labels_skipped_pre_filter": sorted(self._label_counts_skipped_pre_filter.keys()),
+                "label_counts_all": self._label_counts_all,
+                "label_counts_enqueued": self._label_counts_enqueued,
+                "label_counts_skipped_pre_filter": self._label_counts_skipped_pre_filter,
+            }
+            with open(self._unique_labels_log_path, "w") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as e:
+            self.get_logger().warn(f"Failed writing unique-label log: {e}")
 
 
 def main():

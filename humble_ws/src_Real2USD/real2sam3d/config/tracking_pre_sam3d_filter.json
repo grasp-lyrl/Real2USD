@@ -1,0 +1,19 @@
+{
+  "tracker": {
+    "tracker_yaml": "botsort_lenient_go2.yaml",
+    "track_conf": 0.5,
+    "track_iou": 0.2,
+    "retina_masks": true,
+    "imgsz": 1024
+  },
+  "pre_sam3d_filter": {
+    "enabled": true,
+    "skip_untracked": true,
+    "min_mask_area_px": 300,
+    "use_depth_valid_ratio_gate": false,
+    "min_depth_valid_ratio": 0.2,
+    "max_edge_contact_ratio": 0.35,
+    "edge_band_px": 6,
+    "small_object_area_px": 1200
+  }
+}

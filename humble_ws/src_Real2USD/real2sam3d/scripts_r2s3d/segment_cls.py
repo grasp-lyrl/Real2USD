@@ -36,9 +36,10 @@ pip install ultralytics
 """
 
 class Segmentation:
-    def __init__(self, model_path):
+    def __init__(self, model_path, tracking_kwargs=None):
         model_name = os.path.basename(model_path)
         self._use_prompt_free = model_name.endswith("-pf.pt")
+        self._tracking_kwargs = dict(tracking_kwargs or {})
         if model_name.startswith("FastSAM"):
             self.model = FastSAM(model_path)
         elif model_name.startswith("sam2.1"):
@@ -48,7 +49,6 @@ class Segmentation:
         self.model.to(_SEG_DEVICE)
 
         self.classes = ["a round table", "a church bench", "power outlet", "chair", "door", "a desk", "a sofa", "barstool", "file cabinet", "cocktail table", "side table", "elevator door"] #, "canopy bed", "office desk"]
-        self.classes_usd = ["Table", "Chair", "Misc", "Chair", "Misc", "Table", "Chair", "Chair", "Storage", "Table", "Table", "Misc"]#, "Table", "Table"]
 
         self.track_id_counter = 999  # Counter for generating unique IDs
 
@@ -87,9 +87,14 @@ class Segmentation:
 
         # track segmentation
         # self.model.set_classes(self.classes)
-        results = self.model.track(
-            image, retina_masks=retina_masks, imgsz=imgsz, conf=conf, iou=iou, verbose=False, persist=True,
-        )
+        track_kwargs = dict(self._tracking_kwargs)
+        track_kwargs.setdefault("retina_masks", retina_masks)
+        track_kwargs.setdefault("imgsz", imgsz)
+        track_kwargs.setdefault("conf", conf)
+        track_kwargs.setdefault("iou", iou)
+        track_kwargs.setdefault("verbose", False)
+        track_kwargs.setdefault("persist", True)
+        results = self.model.track(image, **track_kwargs)
         # results is a list because you can feed in multiple images
         result = results[0]
 
@@ -116,7 +121,8 @@ class Segmentation:
                     class_names_usd = class_names
                 else:
                     class_names = [self.classes[int(idx)] for idx in class_indices]
-                    class_names_usd = [self.classes_usd[int(idx)] for idx in class_indices]
+                    # For evaluation, use the prompted YOLOE class strings directly as labels.
+                    class_names_usd = class_names
             except:
                 # If no class indices, assign "" to all detections
                 class_names = [""] * len(box_xyxy)
