@@ -47,9 +47,9 @@ if [[ -f "$WS_SETUP" ]]; then
 fi
 
 # 1) Pipeline full
-python3 "${EVAL_ROOT}/run_eval.py" \
+python3 "${EVAL_ROOT}/scripts/run_eval.py" \
   --prediction-type scene_graph \
-  --prediction-path "${RUN_DIR}/scene_graph.json" \
+  --prediction-json "${RUN_DIR}/scene_graph.json" \
   --gt-json "$GT_JSON" \
   --run-dir "$RUN_DIR" \
   --scene "$SCENE_NAME" \
@@ -58,9 +58,9 @@ python3 "${EVAL_ROOT}/run_eval.py" \
   --results-root "$RESULTS_ROOT"
 
 # 2) SAM3D-only
-python3 "${EVAL_ROOT}/run_eval.py" \
+python3 "${EVAL_ROOT}/scripts/run_eval.py" \
   --prediction-type scene_graph \
-  --prediction-path "${RUN_DIR}/scene_graph_sam3d_only.json" \
+  --prediction-json "${RUN_DIR}/scene_graph_sam3d_only.json" \
   --gt-json "$GT_JSON" \
   --run-dir "$RUN_DIR" \
   --scene "$SCENE_NAME" \
@@ -69,9 +69,9 @@ python3 "${EVAL_ROOT}/run_eval.py" \
   --results-root "$RESULTS_ROOT"
 
 # 3) CLIO
-python3 "${EVAL_ROOT}/run_eval.py" \
+python3 "${EVAL_ROOT}/scripts/run_eval.py" \
   --prediction-type clio \
-  --prediction-path "$CLIO_GRAPHML" \
+  --prediction-json "$CLIO_GRAPHML" \
   --gt-json "$GT_JSON" \
   --run-dir "$RUN_DIR" \
   --scene "$SCENE_NAME" \
@@ -116,9 +116,13 @@ print(str(best) if best else '')
 PY
 )"
   if [[ -n "$JSON_PATH" ]]; then
-    python3 "${EVAL_ROOT}/plot_bbox_overlays.py" --by-run-json "$JSON_PATH"
+    python3 "${EVAL_ROOT}/scripts/plot_overlays.py" --by-run-json "$JSON_PATH" --run-dir "$RUN_DIR"
+    python3 "${EVAL_ROOT}/pose_sensitivity_eval.py" --by-run-json "$JSON_PATH"
   fi
 done
+
+# 7) Consolidated lidar-vs-realsense decision report (if both sensors exist in results)
+python3 "${EVAL_ROOT}/sensor_decision_report.py" --results-root "$RESULTS_ROOT" || true
 
 echo "[OK] Full 3-method comparison complete."
 echo "[OK] See: ${RESULTS_ROOT}/comparisons and ${RESULTS_ROOT}/plots"

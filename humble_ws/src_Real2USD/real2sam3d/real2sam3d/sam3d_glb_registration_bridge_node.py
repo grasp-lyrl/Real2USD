@@ -241,12 +241,18 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         self.declare_parameter("debounce_sec", 30.0)
         # "global" = accumulated world point cloud + initial pose from SAM3D+go2 (default); "segment" = target from job dir
         self.declare_parameter("registration_target", "global")
+        self.declare_parameter("global_target_radius_m", 2.5)
+        self.declare_parameter("global_target_max_points", 30000)
+        self.declare_parameter("global_target_min_points", 200)
 
         self.queue_dir = Path(self.get_parameter("queue_dir").value)
         self.world_pc_topic = self.get_parameter("world_point_cloud_topic").value
         self.max_src_points = self.get_parameter("max_src_points").value
         self.debounce_sec = self.get_parameter("debounce_sec").value
         self.registration_target = (self.get_parameter("registration_target").value or "global").strip().lower()
+        self.global_target_radius_m = float(self.get_parameter("global_target_radius_m").value)
+        self.global_target_max_points = int(self.get_parameter("global_target_max_points").value)
+        self.global_target_min_points = int(self.get_parameter("global_target_min_points").value)
         if self.registration_target not in ("segment", "global"):
             self.registration_target = "global"
 
@@ -280,6 +286,30 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         self.get_logger().info(
             f"SAM3D GLB registration bridge: subscribe {object_for_slot_topic}; target={self.registration_target}, world PC from {self.world_pc_topic}"
         )
+
+    def _global_target_from_latest_world(self, center_xyz: Optional[np.ndarray]) -> Optional[PointCloud2]:
+        if self._latest_world_pc is None:
+            return None
+        if center_xyz is None:
+            return self._latest_world_pc
+        pts = np.asarray(
+            point_cloud2.read_points_list(self._latest_world_pc, field_names=("x", "y", "z"), skip_nans=True),
+            dtype=np.float64,
+        )
+        if pts.size == 0:
+            return None
+        d = np.linalg.norm(pts - center_xyz.reshape(1, 3), axis=1)
+        keep = d <= self.global_target_radius_m
+        pts = pts[keep]
+        if len(pts) < self.global_target_min_points:
+            return None
+        if len(pts) > self.global_target_max_points:
+            rng = np.random.default_rng(42)
+            idx = rng.choice(len(pts), size=self.global_target_max_points, replace=False)
+            pts = pts[idx]
+        out = point_cloud2.create_cloud_xyz32(header=Header(frame_id="odom"), points=pts.astype(np.float32))
+        out.header.stamp = self.get_clock().now().to_msg()
+        return out
 
     def _on_world_pc(self, msg: PointCloud2) -> None:
         self._latest_world_pc = msg
@@ -315,8 +345,26 @@ class Sam3dGlbRegistrationBridgeNode(Node):
             if self._latest_world_pc is None:
                 self.get_logger().warn(f"[registration target] job_id={job_id}: registration_target=global but no world PC; skip")
                 return
-            targ_pc_msg = self._latest_world_pc
-            self.get_logger().info(f"[registration target] job_id={job_id} id={track_id}: using global PC (param)")
+            center = None
+            pose_path = job_dir / "pose.json"
+            if pose_path.exists():
+                try:
+                    with open(pose_path) as f:
+                        pose_data = json.load(f)
+                    ip = pose_data.get("initial_position")
+                    if isinstance(ip, list) and len(ip) >= 3:
+                        center = np.asarray(ip[:3], dtype=np.float64)
+                except (OSError, json.JSONDecodeError, TypeError):
+                    center = None
+            targ_pc_msg = self._global_target_from_latest_world(center)
+            if targ_pc_msg is None:
+                self.get_logger().warn(
+                    f"[registration target] job_id={job_id} id={track_id}: insufficient local global-PC support; fallback full world PC"
+                )
+                targ_pc_msg = self._latest_world_pc
+            self.get_logger().info(
+                f"[registration target] job_id={job_id} id={track_id}: using global PC (radius={self.global_target_radius_m:.2f}m)"
+            )
         else:
             points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(job_dir)
             if points_targ is None:

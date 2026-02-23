@@ -1,0 +1,70 @@
+# Paste from repo root (Real2USD). Edit RUN_DIR and CLIO_GRAPHML if needed.
+# cd humble_ws/evaluations
+
+# Rotation: "none" = no rotation (plots in original frame). "gt_global_yaw" = align to dominant GT orientation.
+FRAME_NORM="none"
+
+# GT (Supervisely) – use the JSON that matches your scene
+GT_JSON="supervisely/lounge-0_voxel_pointcloud.pcd.json"   # or hallway-1, smalloffice-0, etc.
+RUN_DIR="/data/sam3d_queue/run_20260222_203756"   # your run folder (has scene_graph.json, scene_graph_sam3d_only.json)
+SCENE="lounge"
+RUN_ID="$(basename "$RUN_DIR")"
+RESULTS_ROOT="${RUN_DIR}/results"
+CLIO_GRAPHML="/home/me/evaluations/clio/lounge_0.graphml"
+
+# Pipeline (full)
+python3 scripts/run_eval.py \
+  --prediction-type scene_graph \
+  --prediction-json "${RUN_DIR}/scene_graph.json" \
+  --gt-json "$GT_JSON" \
+  --run-dir "$RUN_DIR" \
+  --scene "$SCENE" \
+  --run-id "$RUN_ID" \
+  --method-tag "pipeline_full" \
+  --results-root "$RESULTS_ROOT" \
+  --frame-normalization "$FRAME_NORM"
+
+# SAM3D-only
+python3 scripts/run_eval.py \
+  --prediction-type scene_graph \
+  --prediction-json "${RUN_DIR}/scene_graph_sam3d_only.json" \
+  --gt-json "$GT_JSON" \
+  --run-dir "$RUN_DIR" \
+  --scene "$SCENE" \
+  --run-id "$RUN_ID" \
+  --method-tag "sam3d_only" \
+  --results-root "$RESULTS_ROOT" \
+  --frame-normalization "$FRAME_NORM"
+
+# CLIO (path to .graphml file)
+python3 scripts/run_eval.py \
+  --prediction-type clio \
+  --prediction-json "$CLIO_GRAPHML" \
+  --gt-json "$GT_JSON" \
+  --run-dir "$RUN_DIR" \
+  --scene "$SCENE" \
+  --run-id "$RUN_ID" \
+  --method-tag "clio" \
+  --results-root "$RESULTS_ROOT" \
+  --frame-normalization "$FRAME_NORM"
+
+# --- Comparison across methods ---
+# Produces comparisons/<scene>_<run_id>_three_methods_*.csv and .png
+python3 compare_three_methods.py \
+  --results-root "$RESULTS_ROOT" \
+  --scene "$SCENE" \
+  --run-id "$RUN_ID" \
+  --method-tags "pipeline_full,sam3d_only,clio"
+
+# --- Bounding box overlay plots (pred + GT boxes; pred+GT on point cloud when PC exists) ---
+# Writes: results/plots/*_overlay_bbox_gt.png and (if run has diagnostics/pointclouds) *_bbox_on_pc.png
+for METHOD in pipeline_full sam3d_only clio; do
+  BY_RUN=$(ls -t "${RESULTS_ROOT}/by_run/${SCENE}_${RUN_ID}_${METHOD}_"*.json 2>/dev/null | head -n1)
+  if [[ -n "$BY_RUN" ]]; then
+    python3 scripts/plot_overlays.py --by-run-json "$BY_RUN" --run-dir "$RUN_DIR"
+  fi
+done
+
+# --- Optional: aggregate tables/plots from all by_run in this results root ---
+python3 collect_ablation_table.py --results-root "$RESULTS_ROOT"
+python3 plot_eval.py --results-root "$RESULTS_ROOT"

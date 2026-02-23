@@ -137,6 +137,81 @@ def plot_registration_retrieval_diagnostics(df: pd.DataFrame, out_dir: Path, sns
     plt.close()
 
 
+def plot_sensor_main_metrics(df: pd.DataFrame, out_dir: Path, sns):
+    if "sensor_source" not in df.columns:
+        return
+    d = df[df["sensor_source"].isin(["lidar", "realsense"])].copy()
+    d = d.dropna(subset=["f1", "recall", "mean_iou_3d"])
+    if d.empty:
+        return
+    agg = (
+        d.groupby("sensor_source", as_index=False)[["f1", "recall", "mean_iou_3d"]]
+        .mean()
+        .sort_values("sensor_source")
+    )
+    melted = agg.melt(id_vars=["sensor_source"], value_vars=["f1", "recall", "mean_iou_3d"], var_name="metric", value_name="value")
+    plt.figure(figsize=(8, 5))
+    if sns is not None:
+        ax = sns.barplot(data=melted, x="sensor_source", y="value", hue="metric")
+    else:
+        ax = plt.gca()
+        sensors = agg["sensor_source"].tolist()
+        xs = list(range(len(sensors)))
+        width = 0.25
+        for i, m in enumerate(["f1", "recall", "mean_iou_3d"]):
+            vals = agg[m].tolist()
+            ax.bar([x + (i - 1) * width for x in xs], vals, width=width, label=m)
+        ax.set_xticks(xs)
+        ax.set_xticklabels(sensors)
+        ax.legend()
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlabel("Sensor")
+    ax.set_ylabel("Mean score across runs")
+    ax.set_title("Sensor Comparison: F1 / Recall / IoU")
+    plt.tight_layout()
+    plt.savefig(out_dir / "sensor_comparison_main_metrics.png", dpi=220)
+    plt.close()
+
+
+def plot_sensor_range_metrics(df: pd.DataFrame, out_dir: Path, sns):
+    if "sensor_source" not in df.columns:
+        return
+    need = ["near_f1", "mid_f1", "far_f1"]
+    if any(c not in df.columns for c in need):
+        return
+    d = df[df["sensor_source"].isin(["lidar", "realsense"])].copy()
+    d = d.dropna(subset=need)
+    if d.empty:
+        return
+    agg = d.groupby("sensor_source", as_index=False)[need].mean()
+    melted = agg.melt(id_vars=["sensor_source"], value_vars=need, var_name="range_bucket", value_name="f1")
+    plt.figure(figsize=(8, 5))
+    if sns is not None:
+        ax = sns.barplot(data=melted, x="range_bucket", y="f1", hue="sensor_source")
+    else:
+        ax = plt.gca()
+        buckets = need
+        sensors = ["lidar", "realsense"]
+        xs = list(range(len(buckets)))
+        width = 0.35
+        for i, s in enumerate(sensors):
+            vals = []
+            for b in buckets:
+                row = agg[agg["sensor_source"] == s]
+                vals.append(float(row[b].iloc[0]) if not row.empty else 0.0)
+            ax.bar([x + (i - 0.5) * width for x in xs], vals, width=width, label=s)
+        ax.set_xticks(xs)
+        ax.set_xticklabels(buckets)
+        ax.legend()
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlabel("Range bucket")
+    ax.set_ylabel("Mean F1")
+    ax.set_title("Sensor Comparison by Range")
+    plt.tight_layout()
+    plt.savefig(out_dir / "sensor_comparison_range_f1.png", dpi=220)
+    plt.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate paper-friendly plots from evaluation tables.")
     default_results = str((Path(__file__).resolve().parent / "results").resolve())
@@ -161,6 +236,8 @@ def main():
     plot_per_class_f1(per_class_df, plots_dir, sns)
     plot_per_class_tpfpfn(per_class_df, plots_dir, sns)
     plot_registration_retrieval_diagnostics(main_df, plots_dir, sns)
+    plot_sensor_main_metrics(main_df, plots_dir, sns)
+    plot_sensor_range_metrics(main_df, plots_dir, sns)
     print(f"[OK] wrote plots to {plots_dir}")
 
 

@@ -28,7 +28,8 @@
     "cupboard": "storage",
     "closet": "storage",
     "misc door": "door",
-    "door door": "door"
+    "door door": "door",
+    "elevator": "door"
   },
   "contains_rules": {
     "chair": "seat",

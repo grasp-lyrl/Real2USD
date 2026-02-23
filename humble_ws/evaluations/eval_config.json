@@ -1,10 +1,16 @@
 {
   "matching": {
     "method": "greedy",
-    "iou_mode": "aabb",
-    "frame_normalization": "none",
-    "iou_threshold": 0.10,
-    "require_label_match": false
+    "iou_mode": "obb",
+    "frame_normalization": "gt_global_yaw",
+    "iou_threshold": 0.1,
+    "require_label_match": false,
+    "range_buckets_m": [
+      2.0,
+      4.0
+    ],
+    "compute_open_set_metrics": true,
+    "os_similarity_threshold": 0.9
   },
   "prediction": {
     "label_source": "prefer_retrieved_else_label",
@@ -34,8 +40,8 @@
     "embedding_min_score": 0.5
   },
   "paths": {
-    "canonical_labels": "./evaluations/canonical_labels.json",
-    "label_aliases": "./evaluations/label_aliases.json",
-    "learned_label_aliases": "./evaluations/learned_label_aliases.json"
+    "canonical_labels": "./canonical_labels.json",
+    "label_aliases": "./label_aliases.json",
+    "learned_label_aliases": "./learned_label_aliases.json"
   }
 }

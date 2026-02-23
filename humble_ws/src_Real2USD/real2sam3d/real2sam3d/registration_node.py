@@ -1,4 +1,6 @@
 import traceback
+import json
+from pathlib import Path
 
 import numpy as np
 import open3d as o3d
@@ -40,6 +42,22 @@ class RegistrationNode(Node):
         self.yaw_only_registration = self.get_parameter("yaw_only_registration").value
         if isinstance(self.yaw_only_registration, str):
             self.yaw_only_registration = self.yaw_only_registration.lower() == "true"
+        self.declare_parameter("registration_min_fitness", 0.10)
+        self.declare_parameter("registration_icp_distance_threshold_m", 0.03)
+        self.declare_parameter("registration_icp_max_iteration", 50)
+        self.declare_parameter("registration_min_target_points", 30)
+        self.declare_parameter("registration_max_translation_delta_m", 2.5)
+        self.declare_parameter("registration_metrics_path", "")
+        self.registration_min_fitness = float(self.get_parameter("registration_min_fitness").value)
+        self.registration_icp_distance_threshold_m = float(self.get_parameter("registration_icp_distance_threshold_m").value)
+        self.registration_icp_max_iteration = int(self.get_parameter("registration_icp_max_iteration").value)
+        self.registration_min_target_points = int(self.get_parameter("registration_min_target_points").value)
+        self.registration_max_translation_delta_m = float(self.get_parameter("registration_max_translation_delta_m").value)
+        metrics_path = str(self.get_parameter("registration_metrics_path").value or "").strip()
+        self.registration_metrics_path = Path(metrics_path) if metrics_path else None
+        if self.registration_metrics_path is not None:
+            self.registration_metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_reg_debug = {}
 
         # Debug visualization parameters
         self.debug_visualization = True  # Set to False to disable debug visualization
@@ -68,6 +86,23 @@ class RegistrationNode(Node):
         ]
 
         self.cluster_colors = {}  # Store colors for each cluster
+
+    def _log_registration_event(self, *, job_id: str, track_id: int, data_path: str, success: bool, duration_ms: float):
+        if self.registration_metrics_path is None:
+            return
+        payload = {
+            "job_id": job_id,
+            "track_id": int(track_id),
+            "data_path": data_path,
+            "success": bool(success),
+            "duration_ms": float(duration_ms),
+            "debug": self._last_reg_debug,
+        }
+        try:
+            with open(self.registration_metrics_path, "a") as f:
+                f.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
 
     def callback_src_targ(self, msg):
         try:
@@ -160,6 +195,21 @@ class RegistrationNode(Node):
             pose.orientation.z = quatXYZW[2]
             pose_msg.pose = pose
             self.pub_pose.publish(pose_msg)
+            self._log_registration_event(
+                job_id=getattr(msg, "job_id", "") or "",
+                track_id=trackId,
+                data_path=usd_url,
+                success=True,
+                duration_ms=t_elapsed,
+            )
+        else:
+            self._log_registration_event(
+                job_id=getattr(msg, "job_id", "") or "",
+                track_id=trackId,
+                data_path=usd_url,
+                success=False,
+                duration_ms=t_elapsed,
+            )
 
     def preprocess_point_cloud(self, pcd, voxel_size, skip_downsample=False):
         # Minimal logging for preprocessing
@@ -311,25 +361,47 @@ class RegistrationNode(Node):
         target_down, _ = self.preprocess_point_cloud(target, voxel_size=voxel_size)
         n_src = len(np.asarray(src_down.points))
         n_targ = len(np.asarray(target_down.points))
-        if n_src < 30 or n_targ < 30:
+        if n_src < self.registration_min_target_points or n_targ < self.registration_min_target_points:
+            self._last_reg_debug = {
+                "mode": "initial_pose",
+                "reason": "too_few_points_after_preprocess",
+                "n_src": int(n_src),
+                "n_targ": int(n_targ),
+            }
             self.get_logger().warn("Initial-pose registration: too few points after preprocessing; returning initial pose")
             return np.array([p.x, p.y, p.z]), np.array([q.x, q.y, q.z, q.w]), None
 
-        distance_threshold = 0.03
+        distance_threshold = self.registration_icp_distance_threshold_m
         icp_result = o3d.pipelines.registration.registration_icp(
             src_down, target_down, distance_threshold, trans_init,
             o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50),
+            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=self.registration_icp_max_iteration),
         )
-        # Robustness (design §4): if fitness very low, fall back to publishing initial_pose
-        min_fitness = 0.1
-        if icp_result.fitness < min_fitness:
+        # Robustness: if fitness low or translation jumps too far, fall back to initial pose.
+        if icp_result.fitness < self.registration_min_fitness:
+            self._last_reg_debug = {
+                "mode": "initial_pose",
+                "reason": "low_fitness_fallback_to_initial",
+                "fitness": float(icp_result.fitness),
+                "min_fitness": float(self.registration_min_fitness),
+            }
             self.get_logger().warn(
-                f"Initial-pose registration: low fitness {icp_result.fitness:.3f} < {min_fitness}; using initial pose as result"
+                f"Initial-pose registration: low fitness {icp_result.fitness:.3f} < {self.registration_min_fitness:.3f}; using initial pose as result"
             )
             return np.array([p.x, p.y, p.z]), np.array([q.x, q.y, q.z, q.w]), None
         T = np.asarray(icp_result.transformation, dtype=np.float64).copy()
         translation = T[0:3, 3].copy()
+        init_translation = np.array([p.x, p.y, p.z], dtype=np.float64)
+        translation_delta = float(np.linalg.norm(translation - init_translation))
+        if translation_delta > self.registration_max_translation_delta_m:
+            self._last_reg_debug = {
+                "mode": "initial_pose",
+                "reason": "translation_jump_fallback_to_initial",
+                "fitness": float(icp_result.fitness),
+                "translation_delta_m": float(translation_delta),
+                "max_translation_delta_m": float(self.registration_max_translation_delta_m),
+            }
+            return init_translation, np.array([q.x, q.y, q.z, q.w], dtype=np.float64), None
         R_full = T[0:3, 0:3]
         # Objects are z-up; constrain to yaw-only (rotate about Z) so we don't tip the object
         if self.yaw_only_registration:
@@ -353,6 +425,15 @@ class RegistrationNode(Node):
         self.get_logger().info(
             f"Initial-pose registration: fitness={icp_result.fitness:.3f}, translation={translation}, yaw_only={self.yaw_only_registration}"
         )
+        self._last_reg_debug = {
+            "mode": "initial_pose",
+            "reason": "ok",
+            "fitness": float(icp_result.fitness),
+            "inlier_rmse": float(icp_result.inlier_rmse),
+            "translation_delta_m": float(translation_delta),
+            "n_src": int(n_src),
+            "n_targ": int(n_targ),
+        }
         return translation, quat, points_transformed
 
     def get_pose(self, points_src, points_targ, render=False, initial_pose=None):
@@ -379,7 +460,7 @@ class RegistrationNode(Node):
             cluster_mask = cluster_labels == cluster_id
             cluster_points = np.asarray(points_targ[cluster_mask], dtype=np.float64).copy()
 
-            if len(cluster_points) < self.min_samples:
+            if len(cluster_points) < self.registration_min_target_points:
                 # Only warn if skipping due to too few points
                 # self.get_logger().warn(f"Skipping cluster {cluster_id} - too few points: {len(cluster_points)}")
                 continue
@@ -402,7 +483,7 @@ class RegistrationNode(Node):
             # Skip registration if source or target too small after preprocessing (avoids FGR/ICP errors)
             n_src_down = len(np.asarray(src_down_orig.points))
             n_targ_down = len(np.asarray(target_down.points))
-            if n_src_down < 30 or n_targ_down < 30:
+            if n_src_down < self.registration_min_target_points or n_targ_down < self.registration_min_target_points:
                 # self.get_logger().warn(f"Skipping registration for cluster {cluster_id}: source cloud too small after downsampling ({len(src_down_orig.points)} points)")
                 continue
 
@@ -431,8 +512,8 @@ class RegistrationNode(Node):
                 n_targ_down = len(np.asarray(target_down.points))
                 maximum_tuple_count = min(500, n_src_down // 2, n_targ_down // 2)
                 # FGR requires maximum_tuple_count >= 1; Open3D fails with low=0, high=0 otherwise
-                if maximum_tuple_count < 1 or n_src_down < 30 or n_targ_down < 30:
-                    distance_threshold = 0.02
+                if maximum_tuple_count < 1 or n_src_down < self.registration_min_target_points or n_targ_down < self.registration_min_target_points:
+                    distance_threshold = max(0.005, self.registration_icp_distance_threshold_m * 0.66)
                 else:
                     try:
                         result = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
@@ -443,16 +524,16 @@ class RegistrationNode(Node):
                                 tuple_scale=0.95,
                                 maximum_tuple_count=maximum_tuple_count))
                         trans_init = result.transformation
-                        distance_threshold = 0.03
+                        distance_threshold = self.registration_icp_distance_threshold_m
                     except Exception as e:
                         self.get_logger().warn(f"FGR failed for cluster {cluster_id}: {str(e)}")
-                        distance_threshold = 0.02
+                        distance_threshold = max(0.005, self.registration_icp_distance_threshold_m * 0.66)
 
                 # Perform ICP with fixed parameters
                 icp_result = o3d.pipelines.registration.registration_icp(
                     src_down, target_down, distance_threshold, trans_init,
                     o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-                    o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50))
+                    o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=self.registration_icp_max_iteration))
 
                 # Only log best match summary
                 # Check if this is the best result so far
@@ -497,9 +578,29 @@ class RegistrationNode(Node):
             self.visualize_best_cluster(points_targ, cluster_labels, best_cluster_id)
             self.visualize_best_match(best_points_transformed, points_targ)
             self.get_logger().info(f"Final best fitness: {best_fitness:.3f}")
+            if best_fitness < self.registration_min_fitness:
+                self._last_reg_debug = {
+                    "mode": "cluster_search",
+                    "reason": "best_fitness_below_threshold",
+                    "best_fitness": float(best_fitness),
+                    "min_fitness": float(self.registration_min_fitness),
+                    "best_cluster_id": int(best_cluster_id) if best_cluster_id is not None else None,
+                }
+                return None, None, None
+            self._last_reg_debug = {
+                "mode": "cluster_search",
+                "reason": "ok",
+                "best_fitness": float(best_fitness),
+                "best_cluster_id": int(best_cluster_id) if best_cluster_id is not None else None,
+                "num_clusters": int(len([c for c in unique_clusters if c != -1])),
+            }
         else:
             # self.get_logger().warn("No valid registration found!")
-            pass
+            self._last_reg_debug = {
+                "mode": "cluster_search",
+                "reason": "no_valid_registration",
+                "num_clusters": int(len([c for c in unique_clusters if c != -1])),
+            }
         
         return best_translation, best_quaternion, best_points_transformed
 

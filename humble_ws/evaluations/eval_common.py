@@ -1,7 +1,7 @@
 import json
 import ast
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -96,6 +96,20 @@ def _load_mesh_vertices(data_path: str) -> np.ndarray:
     return np.vstack(verts)
 
 
+def _normalize_obb_vertical_last(
+    center: np.ndarray, dims: np.ndarray, R: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Reorder OBB axes so the one most aligned with world Z is last. Returns (center, dims_ordered, R_ordered)."""
+    center = np.asarray(center, dtype=np.float64).ravel()[:3]
+    dims = np.asarray(dims, dtype=np.float64).ravel()[:3]
+    R = np.asarray(R, dtype=np.float64).reshape(3, 3)
+    z_component = np.abs(R[2, :])
+    k_z = int(np.argmax(z_component))
+    i_h = [i for i in range(3) if i != k_z]
+    perm = i_h + [k_z]
+    return center.copy(), dims[perm].copy(), R[:, perm].copy()
+
+
 def _boxes_from_vertices(verts: np.ndarray, T: np.ndarray) -> Dict:
     ones = np.ones((verts.shape[0], 1), dtype=np.float64)
     vh = np.hstack([verts, ones])
@@ -113,9 +127,13 @@ def _boxes_from_vertices(verts: np.ndarray, T: np.ndarray) -> Dict:
 
         obb = trimesh.points.PointCloud(transformed).bounding_box_oriented
         T_obb = np.asarray(obb.primitive.transform, dtype=np.float64)
-        out["obb_center"] = T_obb[:3, 3].tolist()
-        out["obb_dimensions"] = np.asarray(obb.primitive.extents, dtype=np.float64).tolist()
-        out["obb_rotation_matrix"] = T_obb[:3, :3].tolist()
+        center = T_obb[:3, 3]
+        dims = np.asarray(obb.primitive.extents, dtype=np.float64)
+        R = T_obb[:3, :3]
+        center, dims, R = _normalize_obb_vertical_last(center, dims, R)
+        out["obb_center"] = center.tolist()
+        out["obb_dimensions"] = dims.tolist()
+        out["obb_rotation_matrix"] = R.tolist()
     except Exception:
         out["obb_center"] = out["center"]
         out["obb_dimensions"] = out["dimensions"]

@@ -18,5 +18,11 @@
     "max_edge_contact_ratio": 0.35,
     "edge_band_px": 6,
     "small_object_area_px": 1200
+  },
+  "sensor_depth_reliability": {
+    "realsense_min_depth_m": 0.2,
+    "realsense_max_depth_m": 4.0,
+    "lidar_min_range_m": 0.2,
+    "lidar_max_range_m": 8.0
   }
 }

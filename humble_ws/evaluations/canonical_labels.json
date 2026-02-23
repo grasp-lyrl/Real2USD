@@ -1,8 +1,1 @@
-{
-  "canonical_labels": [
-    "seat",
-    "table",
-    "door",
-    "storage"
-  ]
-}
+{"canonical_labels": ["seat", "table", "door"]}

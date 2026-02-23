@@ -61,6 +61,13 @@ Notes:
 - **Profiler timing logs:** With `pipeline_profiler:=true` (default), the pipeline profiler writes timing data into the **run directory** so you can report inference times across pipeline variations (ablations). Each run dir gets:
   - `timing_events.csv`: one row per event (`stamp_sec`, `node_name`, `step_name`, `duration_ms`).
   - `timing_summary.json`: per (node, step) stats: `count`, `mean_ms`, `std_ms`, `min_ms`, `max_ms` (e.g. `sam3d_worker` / `inference` for SAM3D latency). Use these files for tables and comparison across sensor, pointmap, retrieval, registration settings.
+- **Depth reliability gates (new):**
+  - `realsense_min_depth_m` / `realsense_max_depth_m` control usable RealSense depth range before RGBD point generation and global pointcloud accumulation.
+  - `lidar_min_range_m` / `lidar_max_range_m` control usable lidar range before depth projection and global pointcloud accumulation.
+- **Registration robustness controls (new):**
+  - `registration_min_fitness`, `registration_icp_distance_threshold_m`, `registration_icp_max_iteration`, `registration_min_target_points`, `registration_max_translation_delta_m`.
+  - Bridge target mode and locality: `registration_target_mode` (`global` or `segment`) and `registration_target_radius_m` (local crop around initial pose when using global target).
+  - Per-attempt diagnostics are appended to `run_dir/diagnostics/registration_metrics.jsonl`.
 
 ## 3) Run worker (host conda)
 

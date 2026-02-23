@@ -179,3 +179,100 @@ def greedy_match(
     unmatched_pred = [i for i in range(len(preds)) if i not in used_p]
     unmatched_gt = [i for i in range(len(gts)) if i not in used_g]
     return matches, unmatched_pred, unmatched_gt, candidates
+
+
+# Sentinel for missing/unresolved label; excluded from per-class and open-set "classes"
+UNLABELED_CLASS = "__unlabeled__"
+
+
+def _sim_pred_task(pred: Dict, task_label: str) -> float:
+    return 1.0 if (pred.get("label_canonical") or "").strip() == (task_label or "").strip() else 0.0
+
+
+def open_set_metrics(
+    preds: List[Dict],
+    gts: List[Dict],
+    iou_threshold: float,
+    iou_mode: str = "aabb",
+    similarity_threshold: float = 0.9,
+) -> Dict[str, float]:
+    """Open-set Recall (osR) and Precision (osP). Task = GT class; similarity = label match (1/0). Excludes unknown/unlabeled from tasks."""
+    # Only labeled GTs form tasks; exclude unknown and empty
+    def _valid_task(lbl: str) -> bool:
+        s = (lbl or "").strip()
+        return bool(s) and s.lower() != "unknown" and s != UNLABELED_CLASS
+
+    task_labels = list({(gt.get("label_canonical") or UNLABELED_CLASS).strip() for gt in gts})
+    task_labels = [t for t in task_labels if _valid_task(t)]
+    if not task_labels:
+        return {"osR_strict": 0.0, "osR_relaxed": 0.0, "osP_strict": 0.0, "osP_relaxed": 0.0, "F1_os": 0.0}
+
+    gt_by_task: Dict[str, List[int]] = {}
+    for gi, gt in enumerate(gts):
+        t = (gt.get("label_canonical") or UNLABELED_CLASS).strip()
+        if not _valid_task(t):
+            continue
+        gt_by_task.setdefault(t, []).append(gi)
+    total_gt = sum(len(gt_by_task[t]) for t in task_labels)
+
+    osr_strict_correct = 0
+    osr_relaxed_correct = 0
+    for task in task_labels:
+        n = len(gt_by_task[task])
+        gt_indices = gt_by_task[task]
+        candidates = [(pi, pred) for pi, pred in enumerate(preds) if _sim_pred_task(pred, task) >= similarity_threshold]
+        scored = [(pi, pred, max(pair_iou_3d(pred, gts[gi], iou_mode=iou_mode) for gi in gt_indices)) for pi, pred in candidates]
+        scored.sort(key=lambda x: x[2], reverse=True)
+        top_n = scored[:n]
+        used_gt = set()
+        for pi, pred, _ in top_n:
+            best_gi = None
+            best_iou = 0.0
+            for gi in gt_indices:
+                if gi in used_gt:
+                    continue
+                iou = pair_iou_3d(pred, gts[gi], iou_mode=iou_mode)
+                if iou >= iou_threshold and iou > best_iou:
+                    best_iou = iou
+                    best_gi = gi
+            if best_gi is not None:
+                used_gt.add(best_gi)
+                strict, relaxed = strict_relaxed_from_aabb(pred, gts[best_gi])
+                if strict:
+                    osr_strict_correct += 1
+                if relaxed:
+                    osr_relaxed_correct += 1
+
+    if total_gt == 0:
+        osR_strict = 0.0
+        osR_relaxed = 0.0
+    else:
+        osR_strict = osr_strict_correct / total_gt
+        osR_relaxed = osr_relaxed_correct / total_gt
+
+    relevant_preds = [pi for pi, pred in enumerate(preds) if max(_sim_pred_task(pred, t) for t in task_labels) >= similarity_threshold]
+    if not relevant_preds:
+        osP_strict = 0.0
+        osP_relaxed = 0.0
+    else:
+        strict_ok = relaxed_ok = 0
+        for pi in relevant_preds:
+            pred = preds[pi]
+            best_gi = None
+            best_iou = 0.0
+            for gi, gt in enumerate(gts):
+                iou = pair_iou_3d(pred, gt, iou_mode=iou_mode)
+                if iou >= iou_threshold and iou > best_iou:
+                    best_iou = iou
+                    best_gi = gi
+            if best_gi is not None:
+                s, r = strict_relaxed_from_aabb(pred, gts[best_gi])
+                if s:
+                    strict_ok += 1
+                if r:
+                    relaxed_ok += 1
+        osP_strict = strict_ok / len(relevant_preds)
+        osP_relaxed = relaxed_ok / len(relevant_preds)
+
+    F1_os = 2.0 * osR_relaxed * osP_relaxed / (osR_relaxed + osP_relaxed) if (osR_relaxed + osP_relaxed) > 0 else 0.0
+    return {"osR_strict": float(osR_strict), "osR_relaxed": float(osR_relaxed), "osP_strict": float(osP_strict), "osP_relaxed": float(osP_relaxed), "F1_os": float(F1_os)}

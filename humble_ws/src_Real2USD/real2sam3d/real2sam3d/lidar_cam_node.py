@@ -34,16 +34,41 @@ class LidarDriverNode(Node):
         self.declare_parameter("save_full_pointcloud", True)
         self.declare_parameter("pointcloud_save_period_sec", 5.0)
         self.declare_parameter("pointcloud_save_root_dir", "/data/sam3d_queue")
+        self.declare_parameter("debug_verbose", False)
+        default_lidar_min_range_m = 0.
+        default_lidar_max_range_m = 1000.0
+        self.declare_parameter("lidar_min_range_m", default_lidar_min_range_m)
+        self.declare_parameter("lidar_max_range_m", default_lidar_max_range_m)
         use_yolo_pf = self.get_parameter("use_yolo_pf").value
         enable_pre_sam3d_quality_filter = self.get_parameter("enable_pre_sam3d_quality_filter").value
         self.save_full_pointcloud = bool(self.get_parameter("save_full_pointcloud").value)
         self.pointcloud_save_period_sec = float(self.get_parameter("pointcloud_save_period_sec").value)
         self.pointcloud_save_root_dir = str(self.get_parameter("pointcloud_save_root_dir").value)
+        self.debug_verbose = bool(self.get_parameter("debug_verbose").value)
+        self.lidar_min_range_m = float(self.get_parameter("lidar_min_range_m").value)
+        self.lidar_max_range_m = float(self.get_parameter("lidar_max_range_m").value)
         self._last_pointcloud_save_t = 0.0
+        self._debug_last_log_t = {}
+        self._lidar_frame_count = 0
+        self._rgb_msg_count = 0
+        self._cam_info_msg_count = 0
+        self._odom_msg_count = 0
 
         tracking_kwargs = {}
         if enable_pre_sam3d_quality_filter:
             cfg = self._load_tracking_filter_config()
+            reliability_cfg = cfg.get("sensor_depth_reliability", {}) if isinstance(cfg, dict) else {}
+            # Launch/CLI param should win over config defaults.
+            if (
+                reliability_cfg.get("lidar_min_range_m") is not None
+                and abs(self.lidar_min_range_m - default_lidar_min_range_m) < 1e-9
+            ):
+                self.lidar_min_range_m = float(reliability_cfg.get("lidar_min_range_m"))
+            if (
+                reliability_cfg.get("lidar_max_range_m") is not None
+                and abs(self.lidar_max_range_m - default_lidar_max_range_m) < 1e-9
+            ):
+                self.lidar_max_range_m = float(reliability_cfg.get("lidar_max_range_m"))
             tracker_cfg = cfg.get("tracker", {}) if isinstance(cfg, dict) else {}
             tracker_yaml = tracker_cfg.get("tracker_yaml")
             if tracker_yaml:
@@ -84,6 +109,10 @@ class LidarDriverNode(Node):
         self.get_logger().info(f"Segmentation model: {model_path} (use_yolo_pf={use_yolo_pf})")
         if enable_pre_sam3d_quality_filter:
             self.get_logger().info(f"Tracking config enabled: {tracking_kwargs}")
+        self.get_logger().info(
+            f"Lidar reliability gate: min_range={self.lidar_min_range_m:.2f}m, max_range={self.lidar_max_range_m:.2f}m"
+        )
+        self.get_logger().info(f"Debug verbose logging: {self.debug_verbose}")
         if self.save_full_pointcloud:
             self.pointcloud_save_dir = Path(self.pointcloud_save_root_dir) / "diagnostics" / "pointclouds" / "lidar"
             self.pointcloud_save_dir.mkdir(parents=True, exist_ok=True)
@@ -124,11 +153,35 @@ class LidarDriverNode(Node):
         return (N,3) array of lidar points from buffer
         """
         t_frame_start = time.perf_counter()
+        self._lidar_frame_count += 1
+        tnow = time.time()
         lidar_pts = np.asarray(
             point_cloud2.read_points_list(
                 msg, field_names=("x", "y", "z"), skip_nans=True
             )
         )
+        raw_count = int(lidar_pts.shape[0]) if lidar_pts.ndim == 2 else 0
+        if lidar_pts.size == 0:
+            self._debug_log(
+                "lidar_empty",
+                f"frame={self._lidar_frame_count}: lidar cloud empty",
+                min_period_sec=2.0,
+            )
+            return
+        ranges = np.linalg.norm(lidar_pts, axis=1)
+        keep = (ranges >= self.lidar_min_range_m) & (ranges <= self.lidar_max_range_m)
+        lidar_pts = lidar_pts[keep]
+        kept_count = int(lidar_pts.shape[0]) if lidar_pts.ndim == 2 else 0
+        if lidar_pts.size == 0:
+            self._debug_log(
+                "lidar_all_filtered",
+                (
+                    f"frame={self._lidar_frame_count}: all lidar points filtered by range gate "
+                    f"[{self.lidar_min_range_m:.2f}, {self.lidar_max_range_m:.2f}]m; raw_count={raw_count}"
+                ),
+                min_period_sec=2.0,
+            )
+            return
         # add points to buffer
         self.points.add_points(lidar_pts)
 
@@ -156,6 +209,15 @@ class LidarDriverNode(Node):
             result, _, imgs_crop, box_pts, mask_pts, track_ids, labels, labels_usd = self.segment.crop_img_w_bbox(self.rgb_image, conf=0.5, iou=0.2)
             seg_duration_ms = (time.perf_counter() - t_seg_start) * 1000.0
             self._publish_timing("lidar_cam_node", "segment", seg_duration_ms)
+            self._debug_log(
+                "seg_summary",
+                (
+                    f"frame={self._lidar_frame_count}: raw_pts={raw_count}, kept_pts={kept_count}, "
+                    f"segments={len(mask_pts)}, seg_ms={seg_duration_ms:.1f}, "
+                    f"rgb_msgs={self._rgb_msg_count}, cam_info_msgs={self._cam_info_msg_count}, odom_msgs={self._odom_msg_count}"
+                ),
+                min_period_sec=1.5,
+            )
             # publish annotated segmented image
             img_result_msg = self.bridge.cv2_to_imgmsg(result, encoding="bgr8")
             self.get_logger().info(f"labels: {labels}")
@@ -224,6 +286,23 @@ class LidarDriverNode(Node):
                 )
             frame_duration_ms = (time.perf_counter() - t_frame_start) * 1000.0
             self._publish_timing("lidar_cam_node", "frame_total", frame_duration_ms)
+        else:
+            missing = []
+            if self.cam_info is None:
+                missing.append("cam_info")
+            if self.rgb_image is None:
+                missing.append("rgb_image")
+            if self.odom_info["t"] is None:
+                missing.append("odom")
+            self._debug_log(
+                "waiting_inputs",
+                (
+                    f"frame={self._lidar_frame_count}: waiting for {','.join(missing)}; "
+                    f"raw_pts={raw_count}, kept_pts={kept_count}, "
+                    f"rgb_msgs={self._rgb_msg_count}, cam_info_msgs={self._cam_info_msg_count}, odom_msgs={self._odom_msg_count}"
+                ),
+                min_period_sec=1.5,
+            )
 
     def _publish_timing(self, node_name: str, step_name: str, duration_ms: float):
         msg = PipelineStepTiming()
@@ -239,6 +318,7 @@ class LidarDriverNode(Node):
     def rgb_listener_callback(self, msg):
         image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         self.rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        self._rgb_msg_count += 1
 
     def global_pcd_callback(self):
         global_pc_msg = point_cloud2.create_cloud_xyz32(header=Header(frame_id="odom"), points=self.points.get_points())
@@ -289,6 +369,7 @@ class LidarDriverNode(Node):
         self.odom_info["q"] = q
         self.odom_info["eulerXYZ"] = eulerXYZ
         self.odom_buffer.append({"t":t.copy(), "q":q.copy(), "eulerXYZ":eulerXYZ.copy()})
+        self._odom_msg_count += 1
 
         #save the odom buffer as a pickle file
         # if len(self.odom_buffer) % 100 == 0:
@@ -296,15 +377,30 @@ class LidarDriverNode(Node):
         #         pickle.dump(self.odom_buffer, f)
 
     def cam_info_listener_callback(self, msg):
-        # intrinsics
-        K = msg.k.reshape(3, 3)  # intrinsics
-        R = msg.r  # Rectification Matrix, only used for stereo cameras
-        P = msg.p.reshape(3, 4)  # projection matrix
-        width = msg.width
-        height = msg.height
+        try:
+            # sensor_msgs/CameraInfo arrays are plain sequences; convert before reshape.
+            K = np.array(msg.k, dtype=np.float64).reshape(3, 3)  # intrinsics
+            Rm = np.array(msg.r, dtype=np.float64).reshape(3, 3)  # rectification
+            P = np.array(msg.p, dtype=np.float64).reshape(3, 4)  # projection matrix
+            cam_info = {"K": K, "R": Rm, "P": P, "width": int(msg.width), "height": int(msg.height)}
+            self.cam_info = cam_info
+            self._cam_info_msg_count += 1
+            self._debug_log(
+                "cam_info_ok",
+                f"camera_info parsed: width={msg.width}, height={msg.height}",
+                min_period_sec=5.0,
+            )
+        except Exception as e:
+            self.get_logger().warn(f"Failed parsing camera_info: {e}")
 
-        cam_info = {"K": K, "R": R, "P": P, "width": width, "height": height}
-        self.cam_info = cam_info
+    def _debug_log(self, key: str, message: str, min_period_sec: float = 1.0):
+        if not self.debug_verbose:
+            return
+        now = time.time()
+        last = self._debug_last_log_t.get(key, 0.0)
+        if (now - last) >= min_period_sec:
+            self._debug_last_log_t[key] = now
+            self.get_logger().info(f"[debug] {message}")
     
 
 def main():
