@@ -92,8 +92,12 @@ def depth_to_pointmap(depth_image: np.ndarray, cam_info: dict, crop_bbox=None):
     """
     Convert depth image (H,W) to pointmap (H,W,3) in PyTorch3D convention using camera intrinsics.
     Matches demo_go2.py: https://github.com/christopher-hsu/sam-3d-objects/blob/main/demo_go2.py
-    depth_image: in meters, may be cropped (then crop_bbox [x_min, y_min, x_max, y_max] is required).
+
+    depth_image: depth in **meters** (our job writer saves depth/1000 from 16UC1 mm; demo_go2
+                 reads depth.png in mm and does Z/=1000 internally).
     cam_info: dict with "K" or "k" (9 values, row-major 3x3).
+    crop_bbox: optional [x_min, y_min, x_max, y_max]; if set, pixel indices are offset so
+              (uu, vv) refer to full-image coordinates (required when depth is a crop).
     """
     K = np.array(cam_info.get("K") or cam_info.get("k"), dtype=np.float64).reshape(3, 3)
     fx, fy = K[0, 0], K[1, 1]

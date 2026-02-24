@@ -12,7 +12,7 @@ This is the only runbook you need for daily use.
   - `initial_position`, `initial_orientation`
   - `object_odom.glb`
 - Registration uses `initial_*` (z-up odom from injector) as ICP init and publishes final pose on `/usd/StringIdPose`. With `yaw_only_registration:=true` (default), the result is constrained to rotation about Z so objects stay z-up.
-- Scene buffer writes scene outputs from published poses.
+- Scene buffer writes scene outputs from published poses. **scene_graph.json** only includes objects that have already received a pose on `/usd/StringIdPose` at the time of the periodic write. If registration for a slot finishes *after* the last write, that slot will be in **scene_graph_sam3d_only.json** (and `scene_sam3d_only.glb`) but missing from **scene_graph.json** until the next write. Enable `write_on_pose:=true` (default) so a write is scheduled shortly after each new pose, so late registrations still get persisted.
 
 **Registration frames:** Source = object mesh (object.glb) in its local frame; target = segment or global point cloud in **odom** (z-up). The bridge sends the injector’s `initial_position` / `initial_orientation` (z-up odom) so the initial pose is already in the same frame as the target. ICP then refines position and yaw only (if yaw_only_registration is true).
 
@@ -45,7 +45,7 @@ Notes:
 - Use `no_faiss_mode:=true` to bypass retrieval and use candidate object directly.
 - Segmentation model: default is prompt-free YOLOE (`models/yoloe-11l-seg-pf.pt`). Set `use_yolo_pf:=false` to use prompted weights (`models/yoloe-11l-seg.pt`).
 - Optional strict pre-SAM3D admission gate: set `enable_pre_sam3d_quality_filter:=true`. This loads tracker + filter settings from `config/tracking_pre_sam3d_filter.json` (and tracker YAML from `config/botsort_lenient_go2.yaml`) so tracker assignment is more lenient while SAM3D enqueue is stricter.
-  - Run logs written in run dir by job writer:
+    - Run logs written in run dir by job writer:
     - `pre_sam3d_filter_log.json`: counts for received/enqueued/skipped and skip reasons.
     - `unique_labels_log.json`: unique labels seen/enqueued/skipped and per-label counts.
 - Full point cloud snapshots (for alignment/eval): enabled by default via `save_full_pointcloud:=true`.
@@ -155,3 +155,13 @@ Focus on:
 ```bash
 export REAL2SAM3D_ODOM_QUAT_WXYZ=1
 ```
+
+## 7) Troubleshooting
+
+### Slot appears in logs but not in scene_graph.json
+
+If you see a slot (e.g. id 111) go through injector → retrieval → bridge → registration and a log like “low fitness; using initial pose as result”, but that id is missing from **scene_graph.json**, the cause is **timing**: **scene_graph.json** is built from poses that have already been received on `/usd/StringIdPose` at the time of the periodic write. Registration can take tens of seconds; if it finishes *after* the last periodic write, that slot is not yet in the buffer when the file is written.
+
+- **Check:** The same slot should appear in **scene_graph_sam3d_only.json** and in **scene_sam3d_only.glb** (those are built by scanning `output/`, not from registration).
+- **Two causes:** (1) **Empty target:** If the global point cloud had no points within `registration_target_radius_m` of the slot's initial pose, registration returns without publishing (you may see `Registration skipped id=... empty clouds`). The code now publishes the initial pose in that case so the slot still appears. (2) **Timing:** Registration finished after the last scene write; use **write_on_pose** (default on) or wait for the next write.
+- **Fix:** Keep the pipeline running so another periodic write runs after registration completes, or enable **write_on_pose** (default on): the scene buffer will schedule an extra write a few seconds after each new pose. Parameter: `write_on_pose:=true`, `write_on_pose_debounce_sec:=2.0`.

@@ -10,7 +10,8 @@ Requires: open3d (pip install open3d). For GLB: trimesh (pip install trimesh).
 Optional: pyvista (pip install pyvista) for correct vertex-color rendering when Open3D
 shows grey; with pyvista installed, colored meshes are rendered with PyVista.
 To reduce libGL/nouveau errors when running headless: LIBGL_ALWAYS_SOFTWARE=1 or xvfb-run.
-Object is in object-local frame (centroid at origin); we orbit the camera around it.
+Object is in object-local frame (centroid at origin); we orbit the camera about the Y axis
+(Y-up frame: glTF/Blender convention) so views are consistent with the mesh's vertical.
 
 Usage:
   python render_sam3d_views.py --job-dir /data/sam3d_queue/output/<job_id>
@@ -277,14 +278,16 @@ def _render_views_pyvista(verts, faces, colors, num_views: int, size: int, out_d
     elevation_deg = 25.0
     el = np.radians(elevation_deg)
     center = [0.0, 0.0, 0.0]
-    up = [0.0, 0.0, 1.0]
+    # Y-up frame: orbit about Y (camera moves in XZ plane; up = Y)
+    up = [0.0, 1.0, 0.0]
 
     written = 0
     for i in range(num_views):
         az = 2.0 * np.pi * i / num_views
+        # Orbit in XZ plane; elevation adds Y component
         x = r * np.cos(az) * np.cos(el)
-        y = r * np.sin(az) * np.cos(el)
-        z = r * np.sin(el)
+        y = r * np.sin(el)
+        z = r * np.sin(az) * np.cos(el)
         eye = [x, y, z]
         pl = pv.Plotter(off_screen=True, window_size=[size, size])
         pl.set_background([1.0, 1.0, 1.0])
@@ -365,15 +368,17 @@ def _render_views(geometry, num_views: int, size: int, out_dir: Path, use_vertex
         return 0
 
     center = [0.0, 0.0, 0.0]
-    up = [0.0, 0.0, 1.0]
+    # Y-up frame: orbit about Y (camera moves in XZ plane; up = Y)
+    up = [0.0, 1.0, 0.0]
     fov_deg = 50.0
 
     written = 0
     for i in range(num_views):
         az = 2.0 * np.pi * i / num_views
+        # Orbit in XZ plane; elevation adds Y component
         x = r * np.cos(az) * np.cos(el)
-        y = r * np.sin(az) * np.cos(el)
-        z = r * np.sin(el)
+        y = r * np.sin(el)
+        z = r * np.sin(az) * np.cos(el)
         eye = [float(x), float(y), float(z)]
         try:
             renderer.setup_camera(fov_deg, center, eye, up)

@@ -165,6 +165,8 @@ class SimpleSceneBufferNode(Node):
 
         self.declare_parameter("output_dir", "/data/sam3d_queue")
         self.declare_parameter("write_interval_sec", 5.0)
+        self.declare_parameter("write_on_pose", True)
+        self.declare_parameter("write_on_pose_debounce_sec", 2.0)
         self.declare_parameter("scene_json_name", "scene_graph.json")
         self.declare_parameter("scene_glb_name", "scene.glb")
         self.declare_parameter("write_sam3d_only_output", True)
@@ -174,6 +176,10 @@ class SimpleSceneBufferNode(Node):
 
         self._output_dir = Path(self.get_parameter("output_dir").value)
         self._write_interval_sec = self.get_parameter("write_interval_sec").value
+        p_wop = self.get_parameter("write_on_pose").value
+        self._write_on_pose = p_wop is True or (isinstance(p_wop, str) and p_wop.lower() == "true")
+        self._write_on_pose_debounce_sec = float(self.get_parameter("write_on_pose_debounce_sec").value)
+        self._defer_write_timer = None
         self._scene_json_name = self.get_parameter("scene_json_name").value
         self._scene_glb_name = self.get_parameter("scene_glb_name").value
         self._write_sam3d_only = self.get_parameter("write_sam3d_only_output").value
@@ -193,8 +199,8 @@ class SimpleSceneBufferNode(Node):
         self._timer = self.create_timer(self._write_interval_sec, self._write_scene)
 
         self.get_logger().info(
-            "simple_scene_buffer_node: output_dir=%s, write_interval=%.1fs, sam3d_only=%s"
-            % (self._output_dir, self._write_interval_sec, self._write_sam3d_only)
+            "simple_scene_buffer_node: output_dir=%s, write_interval=%.1fs, sam3d_only=%s, write_on_pose=%s"
+            % (self._output_dir, self._write_interval_sec, self._write_sam3d_only, self._write_on_pose)
         )
 
     def _pose_callback(self, msg: UsdStringIdPoseMsg):
@@ -215,6 +221,18 @@ class SimpleSceneBufferNode(Node):
             "orientation": orientation,
             "job_id": getattr(msg, "job_id", "") or "",
         }
+        # Schedule an extra write shortly after this pose so late registrations get persisted (avoids missing id in scene_graph.json when registration finishes after last periodic write)
+        if self._write_on_pose and self._defer_write_timer is None:
+            self._defer_write_timer = self.create_timer(
+                self._write_on_pose_debounce_sec,
+                self._on_defer_write,
+            )
+
+    def _on_defer_write(self):
+        if self._defer_write_timer is not None:
+            self._defer_write_timer.cancel()
+            self._defer_write_timer = None
+        self._write_scene()
 
     def _write_scene(self):
         self._output_dir.mkdir(parents=True, exist_ok=True)

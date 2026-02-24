@@ -104,6 +104,20 @@ class RegistrationNode(Node):
         except Exception:
             pass
 
+    def _quat_to_yaw_only(self, quat_xyzw: np.ndarray) -> np.ndarray:
+        """Project orientation to yaw-only (rotation about Z). quat_xyzw is (x,y,z,w). Returns (x,y,z,w)."""
+        q = np.asarray(quat_xyzw, dtype=np.float64).ravel()
+        if q.shape[0] < 4:
+            return quat_xyzw
+        R_full = R.from_quat([q[0], q[1], q[2], q[3]]).as_matrix()
+        yaw = np.arctan2(R_full[1, 0], R_full[0, 0])
+        R_z = np.array([
+            [np.cos(yaw), -np.sin(yaw), 0],
+            [np.sin(yaw), np.cos(yaw), 0],
+            [0, 0, 1],
+        ], dtype=np.float64)
+        return np.asarray(R.from_matrix(R_z).as_quat(), dtype=np.float64)
+
     def callback_src_targ(self, msg):
         try:
             # Writable copy: ROS PointCloud2 buffer is read-only; Open3D may write to arrays.
@@ -130,6 +144,36 @@ class RegistrationNode(Node):
         trackId = msg.id
 
         if len(points_src) == 0 or len(points_targ) == 0:
+            self.get_logger().warn(
+                f"Registration skipped id={trackId} job_id={getattr(msg, 'job_id', '')}: empty clouds (src={len(points_src)}, targ={len(points_targ)}). No pose published."
+            )
+            # When we have initial_pose, publish it anyway so the slot appears in scene_graph.json (object at SAM3D pose when ICP target is empty).
+            initial_pose = getattr(msg, "initial_pose", None)
+            if initial_pose is not None and len(points_src) > 0:
+                p = initial_pose.position
+                q = initial_pose.orientation
+                t = np.array([p.x, p.y, p.z], dtype=np.float64)
+                quatXYZW = np.array([q.x, q.y, q.z, q.w], dtype=np.float64)
+                if self.yaw_only_registration:
+                    quatXYZW = self._quat_to_yaw_only(quatXYZW)
+                pose_msg = UsdStringIdPoseMsg()
+                pose_msg.header = Header(frame_id="odom")
+                pose_msg.data_path = usd_url
+                pose_msg.id = trackId
+                pose_msg.job_id = getattr(msg, "job_id", "") or ""
+                pose = Pose()
+                pose.position.x = t[0]
+                pose.position.y = t[1]
+                pose.position.z = t[2]
+                pose.orientation.w = quatXYZW[3]
+                pose.orientation.x = quatXYZW[0]
+                pose.orientation.y = quatXYZW[1]
+                pose.orientation.z = quatXYZW[2]
+                pose_msg.pose = pose
+                self.pub_pose.publish(pose_msg)
+                self.get_logger().info(
+                    f"Published initial pose for id={trackId} (empty target); slot will appear in scene_graph.json"
+                )
             return
         try:
             self.pub_debug_src.publish(
@@ -369,7 +413,10 @@ class RegistrationNode(Node):
                 "n_targ": int(n_targ),
             }
             self.get_logger().warn("Initial-pose registration: too few points after preprocessing; returning initial pose")
-            return np.array([p.x, p.y, p.z]), np.array([q.x, q.y, q.z, q.w]), None
+            quat = np.array([q.x, q.y, q.z, q.w], dtype=np.float64)
+            if self.yaw_only_registration:
+                quat = self._quat_to_yaw_only(quat)
+            return np.array([p.x, p.y, p.z]), quat, None
 
         distance_threshold = self.registration_icp_distance_threshold_m
         icp_result = o3d.pipelines.registration.registration_icp(
@@ -388,7 +435,10 @@ class RegistrationNode(Node):
             self.get_logger().warn(
                 f"Initial-pose registration: low fitness {icp_result.fitness:.3f} < {self.registration_min_fitness:.3f}; using initial pose as result"
             )
-            return np.array([p.x, p.y, p.z]), np.array([q.x, q.y, q.z, q.w]), None
+            quat = np.array([q.x, q.y, q.z, q.w], dtype=np.float64)
+            if self.yaw_only_registration:
+                quat = self._quat_to_yaw_only(quat)
+            return np.array([p.x, p.y, p.z]), quat, None
         T = np.asarray(icp_result.transformation, dtype=np.float64).copy()
         translation = T[0:3, 3].copy()
         init_translation = np.array([p.x, p.y, p.z], dtype=np.float64)
@@ -401,7 +451,10 @@ class RegistrationNode(Node):
                 "translation_delta_m": float(translation_delta),
                 "max_translation_delta_m": float(self.registration_max_translation_delta_m),
             }
-            return init_translation, np.array([q.x, q.y, q.z, q.w], dtype=np.float64), None
+            quat = np.array([q.x, q.y, q.z, q.w], dtype=np.float64)
+            if self.yaw_only_registration:
+                quat = self._quat_to_yaw_only(quat)
+            return init_translation, quat, None
         R_full = T[0:3, 0:3]
         # Objects are z-up; constrain to yaw-only (rotate about Z) so we don't tip the object
         if self.yaw_only_registration:

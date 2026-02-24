@@ -178,6 +178,8 @@ Run worker with `--write-demo-go2-compare` to produce:
 - `object_demo_go2_odom.glb`
 - `demo_go2_compare.json`
 
+See **config/DEMO_GO2_PARITY.md** for a full demo_go2 vs sam3d_only comparison and how to get similar results.
+
 ### 8.3 Apples-to-apples criterion
 
 For same `job_id`, compare:

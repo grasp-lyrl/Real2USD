@@ -292,16 +292,36 @@ class Sam3dGlbRegistrationBridgeNode(Node):
             return None
         if center_xyz is None:
             return self._latest_world_pc
-        pts = np.asarray(
-            point_cloud2.read_points_list(self._latest_world_pc, field_names=("x", "y", "z"), skip_nans=True),
-            dtype=np.float64,
-        )
-        if pts.size == 0:
+        # Convert to (N,3) same way as registration_node (read_points_list returns list of named tuples)
+        try:
+            pts_list = point_cloud2.read_points_list(
+                self._latest_world_pc, field_names=("x", "y", "z"), skip_nans=True
+            )
+        except Exception as e:
+            self.get_logger().warn(f"[global target] read_points_list failed: {e}")
             return None
+        if len(pts_list) == 0:
+            self.get_logger().warn(
+                f"[global target] world PC has 0 points (center={center_xyz.tolist()}); cannot crop."
+            )
+            return None
+        try:
+            _xyz_dtype = [("x", np.float64), ("y", np.float64), ("z", np.float64)]
+            arr = np.array(pts_list, dtype=_xyz_dtype)
+            pts = np.column_stack((arr["x"], arr["y"], arr["z"])).copy()
+        except Exception as e:
+            self.get_logger().warn(f"[global target] convert to (N,3) failed: {e}")
+            return None
+        n_total = len(pts)
         d = np.linalg.norm(pts - center_xyz.reshape(1, 3), axis=1)
         keep = d <= self.global_target_radius_m
         pts = pts[keep]
-        if len(pts) < self.global_target_min_points:
+        n_after_crop = len(pts)
+        if n_after_crop < self.global_target_min_points:
+            self.get_logger().warn(
+                f"[global target] crop around center={center_xyz.tolist()} radius={self.global_target_radius_m}m: "
+                f"world_pts={n_total} -> after_crop={n_after_crop} (min={self.global_target_min_points}); returning None (caller will use full PC)."
+            )
             return None
         if len(pts) > self.global_target_max_points:
             rng = np.random.default_rng(42)
@@ -358,8 +378,18 @@ class Sam3dGlbRegistrationBridgeNode(Node):
                     center = None
             targ_pc_msg = self._global_target_from_latest_world(center)
             if targ_pc_msg is None:
+                # Fallback: use full world PC so registration still runs (may have many points)
+                n_full = 0
+                try:
+                    plist = point_cloud2.read_points_list(
+                        self._latest_world_pc, field_names=("x", "y", "z"), skip_nans=True
+                    )
+                    n_full = len(plist)
+                except Exception:
+                    pass
                 self.get_logger().warn(
-                    f"[registration target] job_id={job_id} id={track_id}: insufficient local global-PC support; fallback full world PC"
+                    f"[registration target] job_id={job_id} id={track_id}: insufficient local global-PC support; "
+                    f"fallback full world PC (n_pts={n_full})"
                 )
                 targ_pc_msg = self._latest_world_pc
             self.get_logger().info(

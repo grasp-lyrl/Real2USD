@@ -29,7 +29,10 @@
     "closet": "storage",
     "misc door": "door",
     "door door": "door",
-    "elevator": "door"
+    "elevator": "door",
+    "canopy_bed": "seat",
+    "exhaust_hood": "seat",
+    "water_tank": "seat"
   },
   "contains_rules": {
     "chair": "seat",
