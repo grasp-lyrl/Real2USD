@@ -85,35 +85,44 @@ class LidarDriverNode(Node):
 
 
         if lidar_pts.shape[0] > 0 and self.cam_info is not None and self.rgb_image is not None and self.odom_info["t"] is not None:    
+            # Snapshot once so all data for this frame stays consistent even if callbacks overwrite self during processing.
+            frame_stamp = msg.header.stamp
+            frame_odom = {
+                "t": np.array(self.odom_info["t"], dtype=np.float64),
+                "q": np.array(self.odom_info["q"], dtype=np.float64),
+                "eulerXYZ": np.array(self.odom_info["eulerXYZ"], dtype=np.float64) if self.odom_info.get("eulerXYZ") is not None else None,
+            }
+            frame_rgb = self.rgb_image.copy()
+            frame_cam_info = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in self.cam_info.items()}
+
             t_start = time.perf_counter()
             # Process the lidar points into 2D camera frame and publish the depth image       
-            depth_image, depth_color, mask = self.projection.lidar2depth(lidar_pts, self.cam_info, self.odom_info)
+            depth_image, depth_color, mask = self.projection.lidar2depth(lidar_pts, frame_cam_info, frame_odom)
             depth_msg = self.bridge.cv2_to_imgmsg(depth_image, encoding="16UC1")
             # msg.header.stamp = lidar_msg.header.stamp
             self.depth_pub.publish(depth_msg)
 
             # overlay the depth image on the rgb image and publish the rgbd image
             try:
-                overlay = cv2.cvtColor(self.rgb_image.copy(), cv2.COLOR_RGB2BGR)
+                overlay = cv2.cvtColor(frame_rgb.copy(), cv2.COLOR_RGB2BGR)
                 overlay[mask] = cv2.addWeighted(overlay[mask], 0.0, depth_color[mask], 1.0, 0)
                 self.rgbd_pub.publish(self.bridge.cv2_to_imgmsg(overlay, encoding="bgr8"))
             except:
                 pass
 
             # publish the lidar points with color in the odom frame
-            _, color_pc_msg = self.projection.twoDtoThreeDColor(depth_image, self.rgb_image, self.cam_info, self.odom_info)
+            _, color_pc_msg = self.projection.twoDtoThreeDColor(depth_image, frame_rgb, frame_cam_info, frame_odom)
             self.color_pc_pub.publish(color_pc_msg)
 
             # Segment the image and publish the segmentation output and tracks
-            result, _, imgs_crop, _, mask_pts, track_ids, labels, labels_usd = self.segment.crop_img_w_bbox(self.rgb_image, conf=0.5, iou=0.2)
+            result, _, imgs_crop, _, mask_pts, track_ids, labels, labels_usd = self.segment.crop_img_w_bbox(frame_rgb, conf=0.5, iou=0.2)
             # publish annotated segmented image
             img_result_msg = self.bridge.cv2_to_imgmsg(result, encoding="bgr8")
             self.get_logger().info(f"labels: {labels}")
             self.seg_pub.publish(img_result_msg)
 
             # One stamp per frame so timing_node can measure time-per-frame (CropImgDepth → last StringIdPose for this frame)
-            frame_stamp = self.get_clock().now().to_msg()
-            # publish the cropped image, depth image, and point cloud
+            # publish the cropped image, depth image, and point cloud (same stamp and odom for whole frame)
             for ii in range(len(mask_pts)):
                 # Create new CropImgDepthMsg
                 crop_msg = CropImgDepthMsg()
@@ -133,25 +142,25 @@ class LidarDriverNode(Node):
                 crop_msg.depth_image = self.bridge.cv2_to_imgmsg(depth_image, encoding="16UC1")
                 crop_msg.depth_image.header = crop_msg.header
                 
-                # Set camera info
+                # Set camera info (frame snapshot)
                 camera_info_msg = CameraInfo()
                 camera_info_msg.header = crop_msg.header
-                camera_info_msg.k = self.cam_info["K"].flatten().tolist()
-                camera_info_msg.p = self.cam_info["P"].flatten().tolist()
-                camera_info_msg.width = self.cam_info["width"]
-                camera_info_msg.height = self.cam_info["height"]
+                camera_info_msg.k = frame_cam_info["K"].flatten().tolist()
+                camera_info_msg.p = frame_cam_info["P"].flatten().tolist()
+                camera_info_msg.width = frame_cam_info["width"]
+                camera_info_msg.height = frame_cam_info["height"]
                 crop_msg.camera_info = camera_info_msg
                 
-                # Set odometry info
+                # Set odometry info (frame snapshot)
                 odom_msg = Odometry()
                 odom_msg.header = crop_msg.header
-                odom_msg.pose.pose.position.x = self.odom_info["t"][0]
-                odom_msg.pose.pose.position.y = self.odom_info["t"][1]
-                odom_msg.pose.pose.position.z = self.odom_info["t"][2]
-                odom_msg.pose.pose.orientation.x = self.odom_info["q"][0]
-                odom_msg.pose.pose.orientation.y = self.odom_info["q"][1]
-                odom_msg.pose.pose.orientation.z = self.odom_info["q"][2]
-                odom_msg.pose.pose.orientation.w = self.odom_info["q"][3]
+                odom_msg.pose.pose.position.x = float(frame_odom["t"][0])
+                odom_msg.pose.pose.position.y = float(frame_odom["t"][1])
+                odom_msg.pose.pose.position.z = float(frame_odom["t"][2])
+                odom_msg.pose.pose.orientation.x = float(frame_odom["q"][0])
+                odom_msg.pose.pose.orientation.y = float(frame_odom["q"][1])
+                odom_msg.pose.pose.orientation.z = float(frame_odom["q"][2])
+                odom_msg.pose.pose.orientation.w = float(frame_odom["q"][3])
                 crop_msg.odometry = odom_msg
                 
                 # Set track ID and label

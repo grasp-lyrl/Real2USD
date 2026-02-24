@@ -160,33 +160,38 @@ class DatasetRecorderNode(Node):
 
     def _depth_cb(self, msg: Image):
         """Main driver: triggered on aligned depth from rs. Save grouped data for this timestep."""
+        # Snapshot once so all data for this frame stays consistent even if callbacks overwrite self during processing.
+        frame_rgb = self.rgb_image.copy() if self.rgb_image is not None else None
+        frame_cam_info = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in self.cam_info.items()} if self.cam_info is not None else None
+        frame_odom = {k: (list(v) if isinstance(v, (list, np.ndarray)) else v) for k, v in self.odom_info.items()} if self.odom_info.get("t") is not None else None
 
-        if self.rgb_image is not None:
-            if self.is_blurry(self.rgb_image):
+        if frame_rgb is not None:
+            if self.is_blurry(frame_rgb):
                 self.get_logger().info("Image is blurry, skipping this frame.")
                 return
-            if self.has_severe_artifacts(self.rgb_image):
+            if self.has_severe_artifacts(frame_rgb):
                 self.get_logger().info("Image has severe artifacts, skipping this frame.")
                 return
 
         # determine should_process if more than 1m translation from last processed frame or more than 10s elapsed
+        if frame_odom is None:
+            return
         if self.last_pos is not None:
-            dist_moved = np.linalg.norm(np.array(self.odom_info["t"]) - np.array(self.last_pos))
+            dist_moved = np.linalg.norm(np.array(frame_odom["t"]) - np.array(self.last_pos))
             time_elapsed = self.get_clock().now().to_msg().sec - self.last_time
-            speed = dist_moved / (time_elapsed + 1e-6)
 
             # only process if moved more than threshold or enough time has passed
             should_process = (dist_moved > 1.0) or (time_elapsed > 10.0)
         else:
-            self.last_pos = self.odom_info["t"]
+            self.last_pos = list(frame_odom["t"])
             self.last_time = self.get_clock().now().to_msg().sec
             should_process = True
 
         if should_process:
-            self.last_pos = self.odom_info["t"]
+            self.last_pos = list(frame_odom["t"])
             self.last_time = self.get_clock().now().to_msg().sec
 
-            if self.cam_info is None or self.rgb_image is None or self.odom_info["t"] is None:
+            if frame_cam_info is None or frame_rgb is None:
                 return
 
             # create step folder
@@ -200,20 +205,20 @@ class DatasetRecorderNode(Node):
 
             # save camera info if available
             caminfo_path = os.path.join(step_path, "camera_info.json")
-            if self.cam_info is not None:
+            if frame_cam_info is not None:
                 cam_json = {
-                    "K": self.cam_info["K"].tolist(),
-                    "P": self.cam_info["P"].tolist(),
-                    "width": int(self.cam_info["width"]),
-                    "height": int(self.cam_info["height"]),
+                    "K": frame_cam_info["K"].tolist(),
+                    "P": frame_cam_info["P"].tolist(),
+                    "width": int(frame_cam_info["width"]),
+                    "height": int(frame_cam_info["height"]),
                 }
                 with open(caminfo_path, "w") as f:
                     json.dump(cam_json, f, indent=2)
 
-            # save odom
+            # save odom (frame snapshot)
             odom_path = os.path.join(step_path, "odom.json")
             with open(odom_path, "w") as f:
-                json.dump(self.odom_info, f, indent=2)
+                json.dump(frame_odom, f, indent=2)
 
             # save depth image
             depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
@@ -228,10 +233,10 @@ class DatasetRecorderNode(Node):
 
             cv2.imwrite(depth_path, depth_to_save)
 
-            # save RGB if present
+            # save RGB if present (frame snapshot)
             rgb_path = os.path.join(step_path, "rgb.png")
-            # our rgb_image is RGB; convert to BGR for OpenCV
-            cv2.imwrite(rgb_path, cv2.cvtColor(self.rgb_image, cv2.COLOR_RGB2BGR))
+            # our frame_rgb is RGB; convert to BGR for OpenCV
+            cv2.imwrite(rgb_path, cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
 
 
             # minimal metadata
