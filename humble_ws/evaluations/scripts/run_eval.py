@@ -458,6 +458,7 @@ def main() -> None:
             normalize_yaw_rad=gt_global_yaw_rad,
         )
     preds, pred_filter = _filter_predictions_by_config(preds_all, config)
+    print(f"[run_eval] Loaded {len(preds_all)} predictions; after filter: {len(preds)} (ignored: {pred_filter.get('num_predictions_ignored', 0)})")
 
     gts = load_supervisely_gt(
         args.gt_json,

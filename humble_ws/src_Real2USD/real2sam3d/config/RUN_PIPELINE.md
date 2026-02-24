@@ -14,7 +14,7 @@ This is the only runbook you need for daily use.
 - Registration uses `initial_*` (z-up odom from injector) as ICP init and publishes final pose on `/usd/StringIdPose`. With `yaw_only_registration:=true` (default), the result is constrained to rotation about Z so objects stay z-up.
 - Scene buffer writes scene outputs from published poses. **scene_graph.json** only includes objects that have already received a pose on `/usd/StringIdPose` at the time of the periodic write. If registration for a slot finishes *after* the last write, that slot will be in **scene_graph_sam3d_only.json** (and `scene_sam3d_only.glb`) but missing from **scene_graph.json** until the next write. Enable `write_on_pose:=true` (default) so a write is scheduled shortly after each new pose, so late registrations still get persisted.
 
-**Registration frames:** Source = object mesh (object.glb) in its local frame; target = segment or global point cloud in **odom** (z-up). The bridge sends the injector’s `initial_position` / `initial_orientation` (z-up odom) so the initial pose is already in the same frame as the target. ICP then refines position and yaw only (if yaw_only_registration is true).
+**Registration frames:** Source = object mesh (object.glb) in its local frame; target = segment or global point cloud in **odom** (z-up). The bridge sends the injector’s `initial_position` / `initial_orientation` (z-up odom) so the initial pose is already in the same frame as the target. ICP then refines position and yaw only (if yaw_only_registration is true). **RealSense:** When `use_realsense_cam:=true`, the registration target is the **segment** (local) point cloud — the same depth+mask unprojection that was fed into SAM3D for that job — not the accumulated global point cloud. This avoids relying on the RealSense accumulated world PC and matches registration to the observation that produced the mesh. Lidar pipeline continues to use the global accumulated PC by default (`registration_target_mode:=global`).
 
 **Registration visualization:** Add in RViz (frame: odom):
 - `/registration/overlay` — registered object (red) + target (cyan) in one cloud.
@@ -165,3 +165,11 @@ If you see a slot (e.g. id 111) go through injector → retrieval → bridge →
 - **Check:** The same slot should appear in **scene_graph_sam3d_only.json** and in **scene_sam3d_only.glb** (those are built by scanning `output/`, not from registration).
 - **Two causes:** (1) **Empty target:** If the global point cloud had no points within `registration_target_radius_m` of the slot's initial pose, registration returns without publishing (you may see `Registration skipped id=... empty clouds`). The code now publishes the initial pose in that case so the slot still appears. (2) **Timing:** Registration finished after the last scene write; use **write_on_pose** (default on) or wait for the next write.
 - **Fix:** Keep the pipeline running so another periodic write runs after registration completes, or enable **write_on_pose** (default on): the scene buffer will schedule an extra write a few seconds after each new pose. Parameter: `write_on_pose:=true`, `write_on_pose_debounce_sec:=2.0`.
+
+## 8) Files and config expected in the repo
+
+- **Entry points:** Every `setup.py` console_script has a matching module under `real2sam3d/` (e.g. `realsense_cam_node.py`, `registration_node.py`, …). The commented-out `usd_buffer_node` is intentional.
+- **Config:** `config/tracking_pre_sam3d_filter.json` and `config/botsort_lenient_go2.yaml` are required when using `enable_pre_sam3d_quality_filter:=true`. The JSON references the YAML by name; both are installed under `share/real2sam3d/config/`.
+- **Gemini key (navigator_llm_node):** `config/gemini_key.py` is in the repo with an empty stub. Copy `config/gemini_key_template.py` to `config/gemini_key.py` and set `GEMINI_API_KEY` if you use the LLM navigator; otherwise the node will start but API calls will fail.
+- **Models:** YOLO weights (`models/yoloe-11l-seg.pt` / `models/yoloe-11l-seg-pf.pt`) are not in the repo; see USER_NEXT_STEPS.md for obtaining them.
+- **resource/real2sam3d:** Present for ament package index; no other files needed there.

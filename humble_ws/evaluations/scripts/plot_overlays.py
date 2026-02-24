@@ -186,6 +186,17 @@ def main() -> None:
     unmatched_pred = set(data.get("unmatched_prediction_indices", []))
     unmatched_gt = set(data.get("unmatched_gt_indices", []))
 
+    # Log counts so user can see why overlay may show fewer than scene_graph objects
+    n_pred = len(preds)
+    n_gt = len(gts)
+    n_drawn_pred = sum(1 for p in preds if _obb_xy_from_box(p) is not None)
+    n_drawn_gt = sum(1 for g in gts if _obb_xy_from_box(g) is not None)
+    if n_drawn_pred < n_pred or n_drawn_gt < n_gt:
+        print(f"[INFO] Predictions: {n_drawn_pred}/{n_pred} drawn (missing center/dims for {n_pred - n_drawn_pred})")
+        print(f"[INFO] GT: {n_drawn_gt}/{n_gt} drawn (missing center/dims for {n_gt - n_drawn_gt})")
+    else:
+        print(f"[INFO] Drawing {n_pred} predictions, {n_gt} GT boxes")
+
     meta = data.get("metadata", {})
     scene = meta.get("scene", "unknown_scene")
     run_id = meta.get("run_id", "unknown_run")

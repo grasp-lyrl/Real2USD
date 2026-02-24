@@ -4,8 +4,8 @@ Entrypoints used by the evaluation pipeline and bash scripts.
 
 ## Scripts
 
-- **run_eval.py** – Single-run evaluation: load predictions (scene_graph or CLIO), load GT, match with greedy IoU, compute metrics and diagnostics, write `results_root/by_run/<scene>_<run_id>_<method_tag>_<ts>_<hash>.json`. Use `--prediction-json` or `--prediction-path`, `--gt-json`, `--run-dir`, `--results-root`, `--method-tag`, etc.
-- **plot_overlays.py** – Plot bounding boxes overlaid with GT, and (if point cloud exists) pred+GT on point cloud. Boxes are drawn as **OBB footprints** (rotated rectangles). Requires `--by-run-json`; optional `--run-dir` for PC, `--out-dir` for PNGs.
+- **run_eval.py** – Single-run evaluation: load predictions (scene_graph or CLIO), load GT, match with greedy IoU, compute metrics and diagnostics, write `results_root/by_run/<scene>_<run_id>_<method_tag>_<ts>_<hash>.json`. Use `--prediction-json` or `--prediction-path`, `--gt-json`, `--run-dir`, `--results-root`, `--method-tag`, etc. Predictions can be **filtered** by `eval_config.json` → `prediction.ignore_raw_labels`, `ignore_raw_contains`, `ignore_canonical_labels`; use **`--no-ignore-labels`** to include all predictions (so overlay shows every object from scene_graph).
+- **plot_overlays.py** – Plot bounding boxes overlaid with GT, and (if point cloud exists) pred+GT on point cloud. Boxes are drawn as **OBB footprints** (rotated rectangles). Requires `--by-run-json`; optional `--run-dir` for PC, `--out-dir` for PNGs. The overlay shows exactly the predictions and GT stored in the by_run JSON; if you see fewer boxes than in scene_graph, those were filtered out by run_eval (see above).
 
 ## OBB orientation and matching
 

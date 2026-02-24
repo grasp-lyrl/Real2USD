@@ -5,6 +5,7 @@ humble_ws/log
 
 # Gemini API key
 humble_ws/src_Real2USD/real2usd/config/gemini_key.py
+humble_ws/src_Real2USD/real2sam3d/config/gemini_key.py
 
 # Models
 models/

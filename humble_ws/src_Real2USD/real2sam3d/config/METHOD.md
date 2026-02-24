@@ -127,8 +127,8 @@ Bridge (`sam3d_glb_registration_bridge_node.py`):
 - Source point cloud:
   - sampled from selected object file (`.glb` preferred, `.ply` fallback)
 - Target point cloud:
-  - default: global accumulated world point cloud (`/global_lidar_points`)
-  - optional: segment-derived target from `depth.npy` + `mask.png` + `meta.json`
+  - **Lidar (default):** global accumulated world point cloud (`/global_lidar_points`), cropped around initial pose.
+  - **RealSense:** when `use_realsense_cam:=true`, target is the **segment** (local) point cloud from the job dir (`depth.npy` + `mask.png` + `meta.json`) — the same unprojected points that were fed into SAM3D. This avoids relying on the accumulated RealSense world PC and registers against the observation that produced the mesh. Lidar can use segment by setting `registration_target_mode:=segment`.
 - Initial pose:
   - loaded from `pose.json` (`initial_position`, `initial_orientation`)
   - forwarded in `UsdStringIdSrcTargMsg.initial_pose`

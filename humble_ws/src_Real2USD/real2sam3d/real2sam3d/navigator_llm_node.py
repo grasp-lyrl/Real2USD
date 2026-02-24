@@ -16,7 +16,23 @@ import pydantic
 from typing import List, Optional, Dict, Any, Union
 import math
 import glob
-from config.gemini_key import GEMINI_API_KEY
+
+def _load_gemini_key():
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        pkg_share = get_package_share_directory("real2sam3d")
+        key_path = os.path.join(pkg_share, "config", "gemini_key.py")
+        with open(key_path) as f:
+            ns = {}
+            exec(f.read(), ns)
+            return ns.get("GEMINI_API_KEY", "")
+    except Exception:
+        try:
+            from config.gemini_key import GEMINI_API_KEY
+            return GEMINI_API_KEY
+        except Exception:
+            return ""
+GEMINI_API_KEY = _load_gemini_key()
 
 """
 This node listens to a query and generates waypoints for navigation.
@@ -78,6 +94,8 @@ class LlmNavigatorNode(Node):
         self.marker_id = 0
         
         # Configure Gemini
+        if not GEMINI_API_KEY:
+            self.get_logger().warn("GEMINI_API_KEY is empty. Copy config/gemini_key_template.py to config/gemini_key.py and set your key.")
         self.client = genai.Client(api_key=GEMINI_API_KEY)
 
         self.context_file = self.declare_parameter('context_file', '').get_parameter_value().string_value

@@ -232,6 +232,17 @@ class RealsenseCamNode(Node):
         if self.cam_info is None or self.rgb_image is None or self.odom_info["t"] is None:
             return
 
+        # Capture odom and stamp once for this frame so everything (depth unproject, accumulation, all CropImgDepth) uses the same pose. self.odom_info can be overwritten by odom_callback during the loop.
+        frame_stamp = msg.header.stamp
+        frame_odom = {
+            "t": np.array(self.odom_info["t"], dtype=np.float64),
+            "q": np.array(self.odom_info["q"], dtype=np.float64),
+            "eulerXYZ": np.array(self.odom_info["eulerXYZ"], dtype=np.float64) if self.odom_info.get("eulerXYZ") is not None else None,
+        }
+        # Snapshot rgb and cam_info so they stay aligned with this depth frame even if callbacks overwrite self during slow processing.
+        frame_rgb = self.rgb_image.copy()
+        frame_cam_info = {k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v for k, v in self.cam_info.items()}
+
         depth_rs = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
         if depth_rs is None or depth_rs.size == 0:
             return
@@ -252,7 +263,7 @@ class RealsenseCamNode(Node):
         mask = depth_256 > 0
         if np.any(mask):
             _, color_pc_msg = self.projection.twoDtoThreeDColor(
-                depth_256, self.rgb_image, self.cam_info, self.odom_info
+                depth_256, frame_rgb, frame_cam_info, frame_odom
             )
             if self.T_lidar_from_realsense is not None:
                 color_pc_msg = self._transform_pointcloud_xyz(color_pc_msg)
@@ -261,10 +272,10 @@ class RealsenseCamNode(Node):
             v, u = np.where(depth_256 > 0)
             Z = depth_256[v, u].astype(np.float64) / 256.0
             uv1 = np.stack([u, v, np.ones_like(u, dtype=np.float64)], axis=0)
-            xyz_cam = (np.linalg.inv(self.cam_info["K"]) @ uv1) * Z
+            xyz_cam = (np.linalg.inv(frame_cam_info["K"]) @ uv1) * Z
             points_cam = xyz_cam.T
-            R_odom = R.from_quat(self.odom_info["q"]).as_matrix()
-            t_odom = self.odom_info["t"]
+            R_odom = R.from_quat(frame_odom["q"]).as_matrix()
+            t_odom = frame_odom["t"]
             T_world_from_odom = np.eye(4)
             T_world_from_odom[:3, :3] = R_odom
             T_world_from_odom[:3, 3] = t_odom
@@ -278,7 +289,7 @@ class RealsenseCamNode(Node):
                 self.points.add_points(points_odom)
 
         try:
-            overlay = cv2.cvtColor(self.rgb_image.copy(), cv2.COLOR_RGB2BGR)
+            overlay = cv2.cvtColor(frame_rgb.copy(), cv2.COLOR_RGB2BGR)
             depth_vis = cv2.normalize(depth_mm, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             depth_color = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
             overlay[mask] = cv2.addWeighted(overlay[mask], 0.0, depth_color[mask], 1.0, 0)
@@ -288,7 +299,7 @@ class RealsenseCamNode(Node):
 
         t_seg_start = time.perf_counter()
         result, _, imgs_crop, box_pts, mask_pts, track_ids, labels, labels_usd = self.segment.crop_img_w_bbox(
-            self.rgb_image, conf=0.5, iou=0.2
+            frame_rgb, conf=0.5, iou=0.2
         )
         seg_duration_ms = (time.perf_counter() - t_seg_start) * 1000.0
         self._publish_timing("realsense_cam_node", "segment", seg_duration_ms)
@@ -297,21 +308,23 @@ class RealsenseCamNode(Node):
         self.get_logger().info("labels: %s" % labels)
         self.seg_pub.publish(img_result_msg)
 
-        dim_x = self.rgb_image.shape[1]
-        dim_y = self.rgb_image.shape[0]
+        dim_x = frame_rgb.shape[1]
+        dim_y = frame_rgb.shape[0]
         pad = 10
         odom_msg = Odometry()
-        odom_msg.pose.pose.position.x = float(self.odom_info["t"][0])
-        odom_msg.pose.pose.position.y = float(self.odom_info["t"][1])
-        odom_msg.pose.pose.position.z = float(self.odom_info["t"][2])
-        odom_msg.pose.pose.orientation.x = float(self.odom_info["q"][0])
-        odom_msg.pose.pose.orientation.y = float(self.odom_info["q"][1])
-        odom_msg.pose.pose.orientation.z = float(self.odom_info["q"][2])
-        odom_msg.pose.pose.orientation.w = float(self.odom_info["q"][3])
+        odom_msg.header.stamp = frame_stamp
+        odom_msg.header.frame_id = "odom"
+        odom_msg.pose.pose.position.x = float(frame_odom["t"][0])
+        odom_msg.pose.pose.position.y = float(frame_odom["t"][1])
+        odom_msg.pose.pose.position.z = float(frame_odom["t"][2])
+        odom_msg.pose.pose.orientation.x = float(frame_odom["q"][0])
+        odom_msg.pose.pose.orientation.y = float(frame_odom["q"][1])
+        odom_msg.pose.pose.orientation.z = float(frame_odom["q"][2])
+        odom_msg.pose.pose.orientation.w = float(frame_odom["q"][3])
 
         for ii in range(len(mask_pts)):
             crop_msg = CropImgDepthMsg()
-            crop_msg.header.stamp = self.get_clock().now().to_msg()
+            crop_msg.header.stamp = frame_stamp
             crop_msg.header.frame_id = "odom"
             bp = box_pts[ii]
             x_min = int(np.clip(bp[1, 0] - pad, 0, dim_x - 1))
@@ -326,10 +339,10 @@ class RealsenseCamNode(Node):
             crop_msg.depth_image.header = crop_msg.header
             camera_info_msg = CameraInfo()
             camera_info_msg.header = crop_msg.header
-            camera_info_msg.k = self.cam_info["K"].flatten().tolist()
-            camera_info_msg.p = self.cam_info["P"].flatten().tolist()
-            camera_info_msg.width = self.cam_info["width"]
-            camera_info_msg.height = self.cam_info["height"]
+            camera_info_msg.k = frame_cam_info["K"].flatten().tolist()
+            camera_info_msg.p = frame_cam_info["P"].flatten().tolist()
+            camera_info_msg.width = frame_cam_info["width"]
+            camera_info_msg.height = frame_cam_info["height"]
             crop_msg.camera_info = camera_info_msg
             crop_msg.odometry = odom_msg
             crop_msg.odometry.header = crop_msg.header

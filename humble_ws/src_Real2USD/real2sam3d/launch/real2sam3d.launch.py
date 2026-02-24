@@ -81,6 +81,9 @@ def _write_run_config(context, *args, **kwargs):
         "registration_target_mode": context.perform_substitution(LaunchConfiguration('registration_target_mode')),
         "registration_target_radius_m": context.perform_substitution(LaunchConfiguration('registration_target_radius_m')),
     }
+    # Effective registration target: segment for RealSense (local points fed to SAM3D), else registration_target_mode
+    use_rs = (context.perform_substitution(LaunchConfiguration('use_realsense_cam')) or '').strip().lower() == 'true'
+    launch_args["registration_target_effective"] = "segment" if use_rs else (launch_args.get("registration_target_mode") or "global")
     config = {
         "run_dir": run_dir,
         "launch": launch_args,
@@ -307,7 +310,11 @@ def generate_launch_description():
             parameters=[{
                 'queue_dir': sam3d_queue_dir,
                 'world_point_cloud_topic': '/global_lidar_points',
-                'registration_target': registration_target_mode,
+                # RealSense: use segment (local) target — the same points fed into SAM3D — not the accumulated global PC. Lidar: use registration_target_mode (default global).
+                'registration_target': PythonExpression([
+                    "'segment' if '", LaunchConfiguration('use_realsense_cam'), "' == 'true' else '",
+                    LaunchConfiguration('registration_target_mode'), "'"
+                ]),
                 'global_target_radius_m': registration_target_radius_m,
             }],
         ),
