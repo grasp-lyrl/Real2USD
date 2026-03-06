@@ -40,14 +40,16 @@ GROUND_PLANE_HEIGHT_THRESHOLD = 0.1
 
 def _segment_point_cloud_from_job_dir_with_reason(
     job_dir: Path,
+    use_mask: bool = True,
 ) -> Tuple[Optional[np.ndarray], str]:
     """
-    Build segment point cloud in odom frame from job files (depth.npy, mask.png, meta.json).
+    Build point cloud in odom frame from job files (depth.npy, mask.png optional, meta.json).
 
-    Uses meta.odometry as-is (no init_odom subtraction). So segment is in the same frame as
-    the robot odom at capture time. When injector runs with use_init_odom=false, pose.json
-    initial_position is also in that frame; registration output will then be in full odom.
-    Returns (points, reason). reason is empty if points is not None; otherwise explains why segment is unavailable.
+    If use_mask is True: only unproject pixels where mask > 0 and depth valid (segment-only target).
+    If use_mask is False: unproject all valid depth pixels in the crop (full depth of that view).
+    Uses meta.odometry as-is (no init_odom subtraction). So points are in the same frame as
+    the robot odom at capture time.
+    Returns (points, reason). reason is empty if points is not None; otherwise explains why unavailable.
     """
     depth_path = job_dir / "depth.npy"
     mask_path = job_dir / "mask.png"
@@ -55,7 +57,7 @@ def _segment_point_cloud_from_job_dir_with_reason(
     missing = []
     if not depth_path.exists():
         missing.append("depth.npy")
-    if not mask_path.exists():
+    if use_mask and not mask_path.exists():
         missing.append("mask.png")
     if not meta_path.exists():
         missing.append("meta.json")
@@ -64,9 +66,13 @@ def _segment_point_cloud_from_job_dir_with_reason(
 
     try:
         depth_crop = np.load(str(depth_path)).astype(np.float64)
-        mask_crop = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-        if mask_crop is None or depth_crop.size == 0:
-            return None, "depth/mask empty or unreadable"
+        mask_crop = None
+        if use_mask:
+            mask_crop = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+            if mask_crop is None:
+                return None, "mask.png empty or unreadable"
+        if depth_crop.size == 0:
+            return None, "depth empty"
         with open(meta_path) as f:
             meta = json.load(f)
     except Exception as e:
@@ -86,11 +92,14 @@ def _segment_point_cloud_from_job_dir_with_reason(
 
     x_min, y_min, x_max, y_max = int(crop_bbox[0]), int(crop_bbox[1]), int(crop_bbox[2]), int(crop_bbox[3])
     K = np.array(k_flat, dtype=np.float64).reshape(3, 3)
-    if mask_crop.shape != depth_crop.shape:
-        mask_crop = cv2.resize(mask_crop, (depth_crop.shape[1], depth_crop.shape[0]), interpolation=cv2.INTER_NEAREST)
-    vc, uc = np.where((mask_crop > 0) & (depth_crop > 1e-6))
+    if use_mask:
+        if mask_crop.shape != depth_crop.shape:
+            mask_crop = cv2.resize(mask_crop, (depth_crop.shape[1], depth_crop.shape[0]), interpolation=cv2.INTER_NEAREST)
+        vc, uc = np.where((mask_crop > 0) & (depth_crop > 1e-6))
+    else:
+        vc, uc = np.where(depth_crop > 1e-6)
     if len(vc) == 0:
-        return None, "mask has no valid depth pixels"
+        return None, "no valid depth pixels" if not use_mask else "mask has no valid depth pixels"
     u_full = (x_min + uc).astype(np.int32)
     v_full = (y_min + vc).astype(np.int32)
     Z = depth_crop[vc, uc]
@@ -126,9 +135,9 @@ def _segment_point_cloud_from_job_dir_with_reason(
     return points_odom.astype(np.float64), ""
 
 
-def _segment_point_cloud_from_job_dir(job_dir: Path) -> Optional[np.ndarray]:
+def _segment_point_cloud_from_job_dir(job_dir: Path, use_mask: bool = True) -> Optional[np.ndarray]:
     """Wrapper: returns points or None (for callers that do not need reason)."""
-    points, _ = _segment_point_cloud_from_job_dir_with_reason(job_dir)
+    points, _ = _segment_point_cloud_from_job_dir_with_reason(job_dir, use_mask=use_mask)
     return points
 
 
@@ -241,6 +250,7 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         self.declare_parameter("debounce_sec", 30.0)
         # "global" = accumulated world point cloud + initial pose from SAM3D+go2 (default); "segment" = target from job dir
         self.declare_parameter("registration_target", "global")
+        self.declare_parameter("segment_target_use_mask", False)
         self.declare_parameter("global_target_radius_m", 2.5)
         self.declare_parameter("global_target_max_points", 30000)
         self.declare_parameter("global_target_min_points", 200)
@@ -250,6 +260,9 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         self.max_src_points = self.get_parameter("max_src_points").value
         self.debounce_sec = self.get_parameter("debounce_sec").value
         self.registration_target = (self.get_parameter("registration_target").value or "global").strip().lower()
+        self.segment_target_use_mask = self.get_parameter("segment_target_use_mask").value
+        if isinstance(self.segment_target_use_mask, str):
+            self.segment_target_use_mask = self.segment_target_use_mask.lower() in ("true", "1", "yes")
         self.global_target_radius_m = float(self.get_parameter("global_target_radius_m").value)
         self.global_target_max_points = int(self.get_parameter("global_target_max_points").value)
         self.global_target_min_points = int(self.get_parameter("global_target_min_points").value)
@@ -284,7 +297,9 @@ class Sam3dGlbRegistrationBridgeNode(Node):
         self._timing_sequence = 0
 
         self.get_logger().info(
-            f"SAM3D GLB registration bridge: subscribe {object_for_slot_topic}; target={self.registration_target}, world PC from {self.world_pc_topic}"
+            f"SAM3D GLB registration bridge: subscribe {object_for_slot_topic}; target={self.registration_target}"
+            + (f", segment_use_mask={self.segment_target_use_mask}" if self.registration_target == "segment" else "")
+            + f"; world PC from {self.world_pc_topic}"
         )
 
     def _global_target_from_latest_world(self, center_xyz: Optional[np.ndarray]) -> Optional[PointCloud2]:
@@ -396,11 +411,15 @@ class Sam3dGlbRegistrationBridgeNode(Node):
                 f"[registration target] job_id={job_id} id={track_id}: using global PC (radius={self.global_target_radius_m:.2f}m)"
             )
         else:
-            points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(job_dir)
+            points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(
+                job_dir, use_mask=self.segment_target_use_mask
+            )
             if points_targ is None:
                 alt_job_dir = self.queue_dir / "input_processed" / job_id
                 if alt_job_dir.exists():
-                    points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(alt_job_dir)
+                    points_targ, segment_reason = _segment_point_cloud_from_job_dir_with_reason(
+                        alt_job_dir, use_mask=self.segment_target_use_mask
+                    )
             if points_targ is not None and len(points_targ) >= 30:
                 targ_pc_msg = point_cloud2.create_cloud_xyz32(
                     header=Header(frame_id="odom"),
@@ -408,7 +427,8 @@ class Sam3dGlbRegistrationBridgeNode(Node):
                 )
                 targ_pc_msg.header.stamp = now.to_msg()
                 self.get_logger().info(
-                    f"[registration target] job_id={job_id} id={track_id}: using segment PC from job dir ({len(points_targ)} pts)"
+                    f"[registration target] job_id={job_id} id={track_id}: using segment PC from job dir "
+                    f"({'masked' if self.segment_target_use_mask else 'full depth'}, {len(points_targ)} pts)"
                 )
             if targ_pc_msg is None:
                 if self._latest_world_pc is None:

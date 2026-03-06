@@ -48,6 +48,7 @@ class RegistrationNode(Node):
         self.declare_parameter("registration_min_target_points", 30)
         self.declare_parameter("registration_max_translation_delta_m", 2.5)
         self.declare_parameter("registration_metrics_path", "")
+        self.declare_parameter("queue_dir", "")
         self.registration_min_fitness = float(self.get_parameter("registration_min_fitness").value)
         self.registration_icp_distance_threshold_m = float(self.get_parameter("registration_icp_distance_threshold_m").value)
         self.registration_icp_max_iteration = int(self.get_parameter("registration_icp_max_iteration").value)
@@ -57,6 +58,8 @@ class RegistrationNode(Node):
         self.registration_metrics_path = Path(metrics_path) if metrics_path else None
         if self.registration_metrics_path is not None:
             self.registration_metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        queue_dir = str(self.get_parameter("queue_dir").value or "").strip()
+        self._queue_dir = Path(queue_dir) if queue_dir else None
         self._last_reg_debug = {}
 
         # Debug visualization parameters
@@ -86,6 +89,34 @@ class RegistrationNode(Node):
         ]
 
         self.cluster_colors = {}  # Store colors for each cluster
+
+    def _write_registration_to_pose_json(
+        self,
+        job_id: str,
+        data_path: str,
+        position: list,
+        orientation: list,
+    ):
+        """Append registration output to output/<job_id>/pose.json (position, orientation, registered_data_path)."""
+        if not job_id or self._queue_dir is None:
+            return
+        pose_path = self._queue_dir / "output" / job_id / "pose.json"
+        if not pose_path.exists():
+            return
+        try:
+            with open(pose_path) as f:
+                pose = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return
+        pose["position"] = [float(x) for x in position]
+        pose["orientation"] = [float(x) for x in orientation]
+        pose["registered_data_path"] = data_path
+        pose["frame"] = pose.get("frame", "z_up_odom")
+        try:
+            with open(pose_path, "w") as f:
+                json.dump(pose, f, indent=2)
+        except OSError as e:
+            self.get_logger().warn("Failed to write registration to %s: %s" % (pose_path, e))
 
     def _log_registration_event(self, *, job_id: str, track_id: int, data_path: str, success: bool, duration_ms: float):
         if self.registration_metrics_path is None:
@@ -171,6 +202,12 @@ class RegistrationNode(Node):
                 pose.orientation.z = quatXYZW[2]
                 pose_msg.pose = pose
                 self.pub_pose.publish(pose_msg)
+                job_id = getattr(msg, "job_id", "") or ""
+                self._write_registration_to_pose_json(
+                    job_id, usd_url,
+                    [t[0], t[1], t[2]],
+                    [quatXYZW[0], quatXYZW[1], quatXYZW[2], quatXYZW[3]],
+                )
                 self.get_logger().info(
                     f"Published initial pose for id={trackId} (empty target); slot will appear in scene_graph.json"
                 )
@@ -239,8 +276,17 @@ class RegistrationNode(Node):
             pose.orientation.z = quatXYZW[2]
             pose_msg.pose = pose
             self.pub_pose.publish(pose_msg)
+            job_id = getattr(msg, "job_id", "") or ""
+            self._write_registration_to_pose_json(
+                job_id, usd_url,
+                [t[0], t[1], t[2]],
+                [quatXYZW[0], quatXYZW[1], quatXYZW[2], quatXYZW[3]],
+            )
+            self.get_logger().info(
+                f"Published pose for job_id={pose_msg.job_id or '(empty)'} id={trackId}; slot will appear in scene_graph.json / scene.glb"
+            )
             self._log_registration_event(
-                job_id=getattr(msg, "job_id", "") or "",
+                job_id=job_id,
                 track_id=trackId,
                 data_path=usd_url,
                 success=True,
@@ -438,6 +484,7 @@ class RegistrationNode(Node):
             quat = np.array([q.x, q.y, q.z, q.w], dtype=np.float64)
             if self.yaw_only_registration:
                 quat = self._quat_to_yaw_only(quat)
+            # Return initial pose so the slot is still published and added to scene_graph.json / scene.glb
             return np.array([p.x, p.y, p.z]), quat, None
         T = np.asarray(icp_result.transformation, dtype=np.float64).copy()
         translation = T[0:3, 3].copy()

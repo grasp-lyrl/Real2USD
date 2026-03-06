@@ -12,7 +12,9 @@ This is the only runbook you need for daily use.
   - `initial_position`, `initial_orientation`
   - `object_odom.glb`
 - Registration uses `initial_*` (z-up odom from injector) as ICP init and publishes final pose on `/usd/StringIdPose`. With `yaw_only_registration:=true` (default), the result is constrained to rotation about Z so objects stay z-up.
-- Scene buffer writes scene outputs from published poses. **scene_graph.json** only includes objects that have already received a pose on `/usd/StringIdPose` at the time of the periodic write. If registration for a slot finishes *after* the last write, that slot will be in **scene_graph_sam3d_only.json** (and `scene_sam3d_only.glb`) but missing from **scene_graph.json** until the next write. Enable `write_on_pose:=true` (default) so a write is scheduled shortly after each new pose, so late registrations still get persisted.
+- Scene buffer writes scene outputs from published poses. **scene_graph.json** is **decoupled from GLB**: on each timer tick the node writes **scene_graph.json** and **scene_graph_sam3d_only.json** first (synchronously), then starts the GLB write in a background thread. So the JSON files are always complete even if scene.glb fails or the process is killed (e.g. OOM) during GLB. JSON is also updated when poses arrive (`write_on_pose` debounce). **scene.glb** and **scene_sam3d_only.glb** are updated on the same timer in a single background thread (one at a time to avoid OOM).
+
+**Why is the registration backlog so large? (I thought the bottleneck was SAM3D.)** In steady state it is: SAM3D takes ~10 min per job, and registration takes ~0.6 s per slot, so registration easily keeps up. The backlog happens when **many slots become ready at once**. The injector runs a **periodic scan** (`watch_interval_sec`, default 1 s): on each tick it looks at `output/` and publishes **SlotReady for every job that has output but isn’t yet in _published_job_ids**. So if you start the pipeline when `output/` already has 37 completed jobs (e.g. from a previous run or a pre-filled queue), the **first** scan publishes 37 SlotReady messages in one burst. Retrieval and the bridge then publish 37 registration requests in quick succession. Registration processes them one at a time (~0.6 s each), so it takes ~22 s to clear the queue. If you stop the run before that, you see 22 in scene.glb and 15 still in the registration queue. So the bottleneck in steady state is SAM3D; the burst comes from the injector’s “publish all ready slots” behavior on each scan. To avoid a big backlog on startup, either run with an empty `output/` or let the pipeline run long enough after startup for registration to drain the queue. You can also set **injector** parameter **max_slots_per_scan:=1** (or 2) so at most that many new slots are published per watch tick; registration then gets a steady stream and won’t be hit with 37 requests at once.
 
 **Registration frames:** Source = object mesh (object.glb) in its local frame; target = segment or global point cloud in **odom** (z-up). The bridge sends the injector’s `initial_position` / `initial_orientation` (z-up odom) so the initial pose is already in the same frame as the target. ICP then refines position and yaw only (if yaw_only_registration is true). **RealSense:** When `use_realsense_cam:=true`, the registration target is the **segment** (local) point cloud — the same depth+mask unprojection that was fed into SAM3D for that job — not the accumulated global point cloud. This avoids relying on the RealSense accumulated world PC and matches registration to the observation that produced the mesh. Lidar pipeline continues to use the global accumulated PC by default (`registration_target_mode:=global`).
 
@@ -38,6 +40,20 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch real2sam3d real2sam3d.launch.py
 ```
+
+### Run pipeline after worker only (existing output folder)
+
+If you have a run directory whose `output/` is already filled by the SAM3D worker (e.g. you ran the worker offline or copied results), you can run the rest of the pipeline (injector → retrieval → bridge → registration → scene buffer) without the camera or job writer:
+
+```bash
+ros2 launch real2sam3d real2sam3d.launch.py post_worker_only:=true sam3d_queue_dir:=/path/to/your/run
+```
+
+- **post_worker_only:=true** — Disables the camera nodes and job writer; only injector, retrieval (if not no_faiss_mode), bridge, registration, and scene buffer run. The launch does not create a new run subdir; it uses `sam3d_queue_dir` as the run directory.
+- Point **sam3d_queue_dir** at the run that contains `output/<job_id>/` with at least `pose.json` and `object.glb` per job. For registration with segment target, each `output/<job_id>/` should also have `depth.npy`, `mask.png`, and `meta.json` (the worker copies these when it runs).
+- Use **no_faiss_mode:=true** if you don’t have a FAISS index and want the injector to publish the slot’s own object directly (no retrieval).
+- Use **registration_target_mode:=segment** so registration uses the segment point cloud from each job dir (depth.npy, mask.png, meta.json). With no camera running, global target has no data.
+- After the pipeline runs, use the offline scene buffer script if you need to regenerate scene files: `ros2 run real2sam3d run_offline_scene_buffer --run-dir /path/to/your/run`
 
 Notes:
 - Keep queue path shared between host and container (commonly `/data/sam3d_queue`).
@@ -165,6 +181,38 @@ If you see a slot (e.g. id 111) go through injector → retrieval → bridge →
 - **Check:** The same slot should appear in **scene_graph_sam3d_only.json** and in **scene_sam3d_only.glb** (those are built by scanning `output/`, not from registration).
 - **Two causes:** (1) **Empty target:** If the global point cloud had no points within `registration_target_radius_m` of the slot's initial pose, registration returns without publishing (you may see `Registration skipped id=... empty clouds`). The code now publishes the initial pose in that case so the slot still appears. (2) **Timing:** Registration finished after the last scene write; use **write_on_pose** (default on) or wait for the next write.
 - **Fix:** Keep the pipeline running so another periodic write runs after registration completes, or enable **write_on_pose** (default on): the scene buffer will schedule an extra write a few seconds after each new pose. Parameter: `write_on_pose:=true`, `write_on_pose_debounce_sec:=2.0`.
+
+### simple_scene_buffer_node dies with exit code -9 (SIGKILL)
+
+Exit code -9 usually means the process was killed by the OOM killer (out of memory). The node loads many meshes (scene.glb + scene_sam3d_only.glb, and optionally per-slot GLBs) in background threads. Previously, a new GLB write could start every 5 s while earlier writes were still running, so multiple threads could each hold 80+ meshes in memory and exhaust RAM. **Fix:** The node now allows only one GLB write at a time; if a write is still in progress when the timer fires, that tick is skipped. If you still see OOM with very large runs (e.g. 200+ jobs), consider disabling per-slot GLB writing (`write_per_slot_glb:=false`) or increasing system memory.
+
+### Re-run only the buffer (rebuild scene from existing run)
+
+To regenerate **scene_graph.json** and **scene.glb** from an existing run directory (e.g. after a run where the buffer node didn’t write everything, or to refresh the files from disk):
+
+```bash
+source install/setup.bash
+ros2 run real2sam3d run_offline_scene_buffer --run-dir /data/sam3d_queue/run_20260224_053223
+```
+
+Or from the package root (with `install/setup.bash` sourced):
+
+```bash
+python scripts_sam3d_worker/run_offline_scene_buffer.py --run-dir /path/to/run
+```
+
+Use `--no-glb` to write only the JSON files (faster). The script scans `output/<job_id>/` for `pose.json` + `object.glb`. When registration has run, each `pose.json` contains **position**, **orientation**, and **registered_data_path** (written by the registration node); the offline script uses those when present, otherwise falls back to initial poses (injector output).
+
+### Refine scene graph (deduplicate objects)
+
+After you have **scene_graph.json**, you can reduce duplicate objects (same real-world instance appearing as multiple slots) using CLIP label similarity and 3D IoU:
+
+```bash
+ros2 run real2sam3d refine_scene_graph --input /path/to/run_dir/scene_graph.json \
+  --output /path/to/run_dir/scene_graph_reduced.json --iou-threshold 0.2 --clip-threshold 0.8
+```
+
+Use `--no-clip` for exact-label-only matching (no torch/transformers). Use `--position-only --position-radius 0.5` when mesh paths are not available or to avoid loading GLBs. See `real2sam3d/refine_scene_graph.py` docstring for full options and suggested workflow.
 
 ## 8) Files and config expected in the repo
 

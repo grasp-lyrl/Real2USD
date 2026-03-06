@@ -47,9 +47,9 @@ class RealsenseCamNode(Node):
         self.declare_parameter("enable_pre_sam3d_quality_filter", False)
         self.declare_parameter("save_full_pointcloud", True)
         self.declare_parameter("pointcloud_save_period_sec", 5.0)
-        self.declare_parameter("pointcloud_save_root_dir", "/data/sam3d_queue")
+        self.declare_parameter("pointcloud_save_root_dir", "/data/real2usd_queue")
         default_realsense_min_depth_m = 0.2
-        default_realsense_max_depth_m = 4.0
+        default_realsense_max_depth_m = 5.0
         self.declare_parameter("realsense_min_depth_m", default_realsense_min_depth_m)
         self.declare_parameter("realsense_max_depth_m", default_realsense_max_depth_m)
         self.declare_parameter("realsense_to_lidar_transform_json", "")
@@ -332,8 +332,14 @@ class RealsenseCamNode(Node):
             x_max = int(np.clip(bp[4, 0] + pad, 0, dim_x - 1))
             y_max = int(np.clip(bp[4, 1] + pad, 0, dim_y - 1))
             crop_msg.crop_bbox = [x_min, y_min, x_max, y_max]
-            crop_msg.rgb_image = self.bridge.cv2_to_imgmsg(imgs_crop[ii], encoding="bgr8")
+            # rgb_image = unmasked (full context); rgb_image_masked = segment mask + grey bg
+            unmasked_crop = frame_rgb[y_min:y_max, x_min:x_max]
+            crop_msg.rgb_image = self.bridge.cv2_to_imgmsg(
+                cv2.cvtColor(unmasked_crop, cv2.COLOR_RGB2BGR), encoding="bgr8"
+            )
             crop_msg.rgb_image.header = crop_msg.header
+            crop_msg.rgb_image_masked = self.bridge.cv2_to_imgmsg(imgs_crop[ii], encoding="bgr8")
+            crop_msg.rgb_image_masked.header = crop_msg.header
             crop_msg.seg_points = mask_pts[ii].astype(int).flatten().tolist()
             crop_msg.depth_image = self.bridge.cv2_to_imgmsg(depth_mm, encoding="16UC1")
             crop_msg.depth_image.header = crop_msg.header

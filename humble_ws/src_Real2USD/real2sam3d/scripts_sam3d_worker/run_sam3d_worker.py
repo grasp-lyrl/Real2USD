@@ -244,12 +244,14 @@ def process_one_job(
         return True
 
     try:
+        t0 = time.perf_counter()
         output = run_sam3d_inference(
             rgb, mask, meta,
             depth=depth,
             use_depth=use_depth,
             sam3d_repo=sam3d_repo,
         )
+        inference_ms = (time.perf_counter() - t0) * 1000.0
     except Exception as e:
         print(f"[ERROR] SAM3D inference failed for {job_id}: {e}", file=sys.stderr)
         return False
@@ -328,6 +330,10 @@ def process_one_job(
         pose["sam3d_rotation"] = rot.tolist() if hasattr(rot, "tolist") else list(rot)  # w,x,y,z
         pose["sam3d_translation"] = trans.tolist() if hasattr(trans, "tolist") else list(trans)[:3]
 
+    # Worker-measured inference time (ms) for pipeline timing summary (inference time per object, not latency).
+    pose["inference_ms"] = round(inference_ms, 2)
+
+    if scale is not None and rot is not None and trans is not None:
         # Optional worker-side demo_go2 parity export for debugging:
         # Write per-job GLBs transformed with the same row-vector chain as demo_go2.py
         # so we can compare against injector/object_odom.glb without running demo_go2 separately.

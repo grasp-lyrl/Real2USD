@@ -24,7 +24,7 @@ class s3_usd_interaction:
     def __init__(self):
         os.environ["AWS_ACCESS_KEY_ID"] = ""
         os.environ["AWS_SECRET_ACCESS_KEY"] = ""
-        os.environ["AWS_REGION"] = "us-east-2"
+        os.environ["AWS_REGION"] = ""
 
         # Initialize Boto3 client
         self.s3 = boto3.client('s3')

@@ -3,9 +3,11 @@ Phase 3 retrieval node: for each slot (job_id + track_id + crop image), query th
 SAM3D FAISS index (CLIP embeddings of object views) and publish the best-matching
 object for registration. If FAISS is not ready or empty, use the candidate (newly
 generated) object. Bridge subscribes to Sam3dObjectForSlot and runs registration.
+Publishes PipelineStepTiming to /pipeline/timings (step_name="retrieval") for profiling.
 """
 
 import asyncio
+import time
 from pathlib import Path
 
 import cv2
@@ -14,7 +16,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Pose
 from std_msgs.msg import Header
-from custom_message.msg import SlotReadyMsg, Sam3dObjectForSlotMsg
+from custom_message.msg import PipelineStepTiming, SlotReadyMsg, Sam3dObjectForSlotMsg
 
 TOPIC_OBJECT_FOR_SLOT = "/usd/Sam3dObjectForSlot"
 
@@ -64,6 +66,8 @@ class Sam3dRetrievalNode(Node):
             TOPIC_OBJECT_FOR_SLOT,
             10,
         )
+        self.pub_timing = self.create_publisher(PipelineStepTiming, "/pipeline/timings", 10)
+        self._timing_sequence = 0
         self.get_logger().info(
             f"SAM3D retrieval: subscribe /usd/SlotReady, publish {TOPIC_OBJECT_FOR_SLOT} (faiss_index={self.faiss_index_path})"
         )
@@ -98,6 +102,7 @@ class Sam3dRetrievalNode(Node):
                 pass
 
     def _on_slot_ready(self, msg: SlotReadyMsg):
+        t_start = time.perf_counter()
         job_id = msg.job_id
         track_id = msg.track_id
         candidate_data_path = msg.candidate_data_path
@@ -113,6 +118,7 @@ class Sam3dRetrievalNode(Node):
             self.get_logger().warn(
                 f"[retrieval] job_id={job_id} track_id={track_id}: no rgb.png; using candidate (not FAISS)"
             )
+            self._publish_timing(t_start)
             self._publish_object_for_slot(msg.header, job_id, track_id, candidate_data_path)
             return
 
@@ -122,6 +128,7 @@ class Sam3dRetrievalNode(Node):
             self.get_logger().warn(
                 f"[retrieval] job_id={job_id}: FAISS load failed{reason}; using candidate"
             )
+            self._publish_timing(t_start)
             self._publish_object_for_slot(msg.header, job_id, track_id, candidate_data_path)
             return
 
@@ -132,6 +139,7 @@ class Sam3dRetrievalNode(Node):
                 self.get_logger().warn(
                     f"[retrieval] job_id={job_id}: could not read rgb.png; using candidate"
                 )
+                self._publish_timing(t_start)
                 self._publish_object_for_slot(msg.header, job_id, track_id, candidate_data_path)
                 return
             embedding = self._clip_search.process_image(image)
@@ -174,7 +182,20 @@ class Sam3dRetrievalNode(Node):
             )
             best_data_path = candidate_data_path
 
+        self._publish_timing(t_start)
         self._publish_object_for_slot(msg.header, job_id, track_id, best_data_path)
+
+    def _publish_timing(self, t_start: float):
+        duration_ms = (time.perf_counter() - t_start) * 1000.0
+        msg = PipelineStepTiming()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "map"
+        msg.node_name = "sam3d_retrieval_node"
+        msg.step_name = "retrieval"
+        msg.duration_ms = duration_ms
+        msg.sequence_id = self._timing_sequence
+        self._timing_sequence += 1
+        self.pub_timing.publish(msg)
 
     def _publish_object_for_slot(self, header: Header, job_id: str, track_id: int, data_path: str):
         out = Sam3dObjectForSlotMsg()

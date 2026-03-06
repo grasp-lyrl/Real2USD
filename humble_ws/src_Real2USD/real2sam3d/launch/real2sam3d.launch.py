@@ -14,6 +14,14 @@ from launch_ros.actions import Node
 def _create_run_dir_and_set_queue(context, *args, **kwargs):
     """Create a per-run subdir under sam3d_queue_dir, write current_run.json, and set sam3d_queue_dir."""
     base = context.perform_substitution(LaunchConfiguration('sam3d_queue_dir'))
+    post_only = context.perform_substitution(LaunchConfiguration('post_worker_only')).strip().lower() == 'true'
+    if post_only:
+        # Post-worker-only: use run dir as-is (no new subdir)
+        run_dir_resolved = str(Path(base).resolve())
+        return [
+            SetLaunchConfiguration('sam3d_queue_dir', TextSubstitution(text=run_dir_resolved)),
+            SetLaunchConfiguration('faiss_index_path', TextSubstitution(text=run_dir_resolved)),
+        ]
     use_subdir = context.perform_substitution(LaunchConfiguration('use_run_subdir')).lower() == 'true'
     if not use_subdir:
         return []
@@ -59,6 +67,7 @@ def _write_run_config(context, *args, **kwargs):
         "simple_scene_buffer": context.perform_substitution(LaunchConfiguration('simple_scene_buffer')),
         "pipeline_profiler": context.perform_substitution(LaunchConfiguration('pipeline_profiler')),
         "use_run_subdir": context.perform_substitution(LaunchConfiguration('use_run_subdir')),
+        "post_worker_only": context.perform_substitution(LaunchConfiguration('post_worker_only')),
         "run_sam3d_worker": context.perform_substitution(LaunchConfiguration('run_sam3d_worker')),
         "use_yolo_pf": context.perform_substitution(LaunchConfiguration('use_yolo_pf')),
         "enable_pre_sam3d_quality_filter": context.perform_substitution(LaunchConfiguration('enable_pre_sam3d_quality_filter')),
@@ -128,6 +137,7 @@ def generate_launch_description():
     with_sam3d_retrieval = LaunchConfiguration('sam3d_retrieval', default='true')
     with_simple_scene_buffer = LaunchConfiguration('simple_scene_buffer', default='true')
     with_pipeline_profiler = LaunchConfiguration('pipeline_profiler', default='true')
+    post_worker_only = LaunchConfiguration('post_worker_only', default='false')
     no_faiss_mode = LaunchConfiguration('no_faiss_mode', default='false')
     run_sam3d_worker = LaunchConfiguration('run_sam3d_worker', default='false')
     use_yolo_pf = LaunchConfiguration('use_yolo_pf', default='false')
@@ -174,13 +184,13 @@ def generate_launch_description():
                              description='Enable tracker tuning + strict pre-SAM3D quality filtering from config/tracking_pre_sam3d_filter.json.'),
         DeclareLaunchArgument('save_full_pointcloud', default_value='true',
                              description='Save full accumulated odom-frame point cloud snapshots to run_dir/diagnostics/pointclouds (npy).'),
-        DeclareLaunchArgument('pointcloud_save_period_sec', default_value='5.0',
+        DeclareLaunchArgument('pointcloud_save_period_sec', default_value='60.0',
                              description='Periodic snapshot interval (seconds) for full point cloud saving. Final snapshot is also saved at shutdown.'),
         DeclareLaunchArgument('debug_verbose', default_value='false',
                              description='Enable verbose debug logging in camera nodes (lidar/realsense).'),
         DeclareLaunchArgument('realsense_min_depth_m', default_value='0.2',
                              description='RealSense reliability gate: minimum usable depth in meters.'),
-        DeclareLaunchArgument('realsense_max_depth_m', default_value='4.0',
+        DeclareLaunchArgument('realsense_max_depth_m', default_value='5.0',
                              description='RealSense reliability gate: maximum usable depth in meters.'),
         DeclareLaunchArgument('lidar_min_range_m', default_value='0.2',
                              description='Lidar reliability gate: minimum usable range in meters.'),
@@ -196,6 +206,8 @@ def generate_launch_description():
                              description='Run simple scene buffer node (writes scene_graph.json + scene.glb from /usd/StringIdPose)'),
         DeclareLaunchArgument('pipeline_profiler', default_value='true',
                              description='Run pipeline profiler and SAM3D profiler (timeline + sam3d_worker/inference latency)'),
+        DeclareLaunchArgument('post_worker_only', default_value='false',
+                             description='If true, run only the pipeline after SAM3D worker: injector, retrieval, bridge, registration, scene buffer. No camera, no job writer. Point sam3d_queue_dir at the run dir that already has output/ filled.'),
         DeclareLaunchArgument('use_realsense_cam', default_value='false',
                              description='Use realsense_cam_node instead of lidar_cam_node (RealSense topics: aligned_depth, color, camera_info, /utlidar/robot_pose)'),
         DeclareLaunchArgument('use_init_odom', default_value='false',
@@ -216,13 +228,18 @@ def generate_launch_description():
                              description='Registration target source for bridge: global or segment.'),
         DeclareLaunchArgument('registration_target_radius_m', default_value='2.5',
                              description='When using global target, crop target points around initial pose within this radius.'),
+        DeclareLaunchArgument('segment_target_use_mask', default_value='false',
+                             description='When registration target is segment (e.g. RealSense): if true use masked depth only; if false use full depth of that view.'),
         OpaqueFunction(function=_create_run_dir_and_set_queue),
         OpaqueFunction(function=_write_run_config),
         # Pipeline: [lidar_cam_node | realsense_cam_node] -> job_writer -> ... -> registration -> scene buffer
+        # When post_worker_only:=true, skip camera and job writer (run only injector -> retrieval -> bridge -> registration -> scene buffer)
         Node(
             package='real2sam3d',
             executable='lidar_cam_node',
-            condition=IfCondition(PythonExpression(["'", LaunchConfiguration('use_realsense_cam'), "' != 'true'"])),
+            condition=IfCondition(PythonExpression([
+                "'", post_worker_only, "' != 'true' and '", LaunchConfiguration('use_realsense_cam'), "' != 'true'"
+            ])),
             parameters=[{
                 'use_yolo_pf': use_yolo_pf,
                 'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter,
@@ -237,7 +254,9 @@ def generate_launch_description():
         Node(
             package='real2sam3d',
             executable='realsense_cam_node',
-            condition=IfCondition(LaunchConfiguration('use_realsense_cam')),
+            condition=IfCondition(PythonExpression([
+                "'", post_worker_only, "' != 'true' and '", LaunchConfiguration('use_realsense_cam'), "' == 'true'"
+            ])),
             parameters=[{
                 'use_yolo_pf': use_yolo_pf,
                 'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter,
@@ -260,6 +279,7 @@ def generate_launch_description():
                 'registration_min_target_points': registration_min_target_points,
                 'registration_max_translation_delta_m': registration_max_translation_delta_m,
                 'registration_metrics_path': PythonExpression(["'", sam3d_queue_dir, "' + '/diagnostics/registration_metrics.jsonl'"]),
+                'queue_dir': sam3d_queue_dir,
             }],
         ),
         # Node(
@@ -286,7 +306,9 @@ def generate_launch_description():
         Node(
             package='real2sam3d',
             executable='sam3d_job_writer_node',
-            condition=IfCondition(with_sam3d_job_writer),
+            condition=IfCondition(PythonExpression([
+                "'", with_sam3d_job_writer, "' == 'true' and '", post_worker_only, "' != 'true'"
+            ])),
             parameters=[{'queue_dir': sam3d_queue_dir, 'enable_pre_sam3d_quality_filter': enable_pre_sam3d_quality_filter}],
         ),
         Node(
@@ -315,6 +337,7 @@ def generate_launch_description():
                     "'segment' if '", LaunchConfiguration('use_realsense_cam'), "' == 'true' else '",
                     LaunchConfiguration('registration_target_mode'), "'"
                 ]),
+                'segment_target_use_mask': LaunchConfiguration('segment_target_use_mask', default='false'),
                 'global_target_radius_m': registration_target_radius_m,
             }],
         ),

@@ -17,7 +17,10 @@
     "min_depth_valid_ratio": 0.2,
     "max_edge_contact_ratio": 0.35,
     "edge_band_px": 6,
-    "small_object_area_px": 1200
+    "small_object_area_px": 1200,
+    "always_feed_canonical_labels": ["door"],
+    "always_feed_raw_labels": [
+    ]
   },
   "sensor_depth_reliability": {
     "realsense_min_depth_m": 0.2,

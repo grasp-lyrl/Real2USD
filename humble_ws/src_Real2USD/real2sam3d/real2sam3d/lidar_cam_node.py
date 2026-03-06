@@ -251,9 +251,14 @@ class LidarDriverNode(Node):
                 y_max = int(np.clip(bp[4, 1] + pad, 0, dim_y - 1))
                 crop_msg.crop_bbox = [x_min, y_min, x_max, y_max]
                 
-                # Set RGB image
-                crop_msg.rgb_image = self.bridge.cv2_to_imgmsg(imgs_crop[ii], encoding="bgr8")
+                # rgb_image = unmasked (full context); rgb_image_masked = segment mask + grey bg
+                unmasked_crop = frame_rgb[y_min:y_max, x_min:x_max]
+                crop_msg.rgb_image = self.bridge.cv2_to_imgmsg(
+                    cv2.cvtColor(unmasked_crop, cv2.COLOR_RGB2BGR), encoding="bgr8"
+                )
                 crop_msg.rgb_image.header = crop_msg.header
+                crop_msg.rgb_image_masked = self.bridge.cv2_to_imgmsg(imgs_crop[ii], encoding="bgr8")
+                crop_msg.rgb_image_masked.header = crop_msg.header
                 
                 # Set segmentation points as flat array
                 crop_msg.seg_points = mask_pts[ii].astype(int).flatten().tolist()

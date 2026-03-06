@@ -35,11 +35,13 @@ class Sam3dInjectorNode(Node):
 
         self.declare_parameter("queue_dir", "/data/sam3d_queue")
         self.declare_parameter("watch_interval_sec", 1.0)
+        self.declare_parameter("max_slots_per_scan", 0)  # 0 = no limit; set to 1–2 to avoid registration burst when output/ has many jobs
         self.declare_parameter("publish_object_for_slot", False)
         self.declare_parameter("use_init_odom", False)
 
         self.queue_dir = Path(self.get_parameter("queue_dir").value)
         self.watch_interval_sec = self.get_parameter("watch_interval_sec").value
+        self._max_slots_per_scan = int(self.get_parameter("max_slots_per_scan").value)
         p = self.get_parameter("publish_object_for_slot").value
         self.publish_object_for_slot = p is True or (isinstance(p, str) and p.lower() == "true")
         p_init = self.get_parameter("use_init_odom").value
@@ -61,6 +63,8 @@ class Sam3dInjectorNode(Node):
             self.get_logger().info(
                 f"SAM3D injector: watching {self.output_dir}, publishing to {TOPIC_SLOT_READY}"
             )
+        if self._max_slots_per_scan > 0:
+            self.get_logger().info("max_slots_per_scan=%d (throttle to avoid registration burst)" % self._max_slots_per_scan)
         self.get_logger().info("use_init_odom=%s (set use_init_odom:=true to normalize poses by first-frame odom)" % self.use_init_odom)
 
     def _ensure_init_odom(self, job_path: Path):
@@ -99,7 +103,10 @@ class Sam3dInjectorNode(Node):
         # matching demo_go2's "step_0001 as origin" behavior.
         job_dirs = [p for p in self.output_dir.iterdir() if p.is_dir()]
         job_dirs.sort(key=lambda p: p.stat().st_mtime)
+        published_this_scan = 0
         for job_path in job_dirs:
+            if self._max_slots_per_scan > 0 and published_this_scan >= self._max_slots_per_scan:
+                break
             if not job_path.is_dir() or job_path.name in self._published_job_ids:
                 continue
             pose_path = job_path / "pose.json"
@@ -167,6 +174,7 @@ class Sam3dInjectorNode(Node):
                 self.pub_slot_ready.publish(msg)
                 self.get_logger().info("Slot ready: job_id=%s track_id=%s candidate=%s" % (job_path.name, track_id, data_path))
             self._published_job_ids.add(job_path.name)
+            published_this_scan += 1
 
     def _write_object_odom_glb(self, job_path: Path, pose_data: dict):
         """Write output/<job_id>/object_odom.glb from object.glb + transform_odom_from_raw if available."""

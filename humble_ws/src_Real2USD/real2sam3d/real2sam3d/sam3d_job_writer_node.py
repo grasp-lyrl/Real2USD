@@ -225,6 +225,7 @@ class Sam3dJobWriterNode(Node):
 
         job_id = f"{track_id}_{msg.header.stamp.sec}_{msg.header.stamp.nanosec}_{uuid.uuid4().hex[:8]}"
         job_path = self.input_dir / job_id
+        frame_wall_sec = self.get_clock().now().nanoseconds * 1e-9  # wall clock for E2E full-pipeline
 
         t_start = time.perf_counter()
         try:
@@ -279,6 +280,7 @@ class Sam3dJobWriterNode(Node):
             enq.header.stamp = self.get_clock().now().to_msg()
             enq.header.frame_id = "map"
             enq.job_id = job_id
+            enq.frame_wall_sec = frame_wall_sec
             self.pub_job_enqueued.publish(enq)
             self.pub_debug_last_crop.publish(msg.rgb_image)
         except Exception as e:
@@ -293,10 +295,23 @@ class Sam3dJobWriterNode(Node):
             self.get_logger().warn(f"Failed to load pre-SAM3D filter config {cfg_path}: {e}")
             return {}
 
+    def _normalize_label_for_filter(self, label: str) -> str:
+        """Normalize label for comparison with always_feed_raw_labels (lowercase, replace _ with space)."""
+        s = (label or "").strip().lower().replace("_", " ")
+        return " ".join(s.split())
+
     def _should_skip_pre_sam3d_filter(self, msg: CropImgDepthMsg, track_id: int):
         cfg = self._filter_cfg.get("pre_sam3d_filter", {}) if isinstance(self._filter_cfg, dict) else {}
         if not cfg or not bool(cfg.get("enabled", False)):
             return False, ""
+        # If this label is in always_feed_raw_labels (labels that resolve to seat/table), still feed to SAM3D
+        raw_labels = cfg.get("always_feed_raw_labels")
+        if isinstance(raw_labels, (list, tuple)) and len(raw_labels) > 0:
+            label_norm = self._normalize_label_for_filter(msg.label or "")
+            if label_norm:
+                allowed = {self._normalize_label_for_filter(str(r)) for r in raw_labels if (r and str(r).strip())}
+                if label_norm in allowed:
+                    return False, ""
         if bool(cfg.get("skip_untracked", True)) and track_id < 0:
             return True, "untracked"
 
