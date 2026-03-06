@@ -1,5 +1,9 @@
+import json
+from pathlib import Path
+
 import rclpy
 from rclpy.node import Node
+from ament_index_python.packages import get_package_share_directory
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 from sensor_msgs_py import point_cloud2
 from go2_interfaces.msg import Go2State, IMU
@@ -9,7 +13,7 @@ from custom_message.msg import CropImgDepthMsg
 from std_msgs.msg import Header, Int64, Float64
 import cv2
 from cv_bridge import CvBridge
-import json, asyncio, time, pickle
+import asyncio, time, pickle
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 import open3d as o3d
@@ -49,11 +53,30 @@ class LidarDriverNode(Node):
         self.color_pc_pub = self.create_publisher(PointCloud2, "/segment/pointcloud_color", 10)
         self.timing_pub = self.create_publisher(Float64, "/timing/lidar_cam_node", 10)
 
+        self.declare_parameter("use_tracking", False)
+        use_tracking = self.get_parameter("use_tracking").value
+        tracking_kwargs = {}
+        if use_tracking:
+            cfg = self._load_tracking_config()
+            tracker_cfg = cfg.get("tracker", {}) if isinstance(cfg, dict) else {}
+            if tracker_cfg.get("tracker_yaml"):
+                pkg_share = Path(get_package_share_directory("real2usd"))
+                tracking_kwargs["tracker"] = str((pkg_share / "config" / tracker_cfg["tracker_yaml"]).resolve())
+            if tracker_cfg.get("track_conf") is not None:
+                tracking_kwargs["conf"] = float(tracker_cfg["track_conf"])
+            if tracker_cfg.get("track_iou") is not None:
+                tracking_kwargs["iou"] = float(tracker_cfg["track_iou"])
+            if tracker_cfg.get("retina_masks") is not None:
+                tracking_kwargs["retina_masks"] = bool(tracker_cfg["retina_masks"])
+            if tracker_cfg.get("imgsz") is not None:
+                tracking_kwargs["imgsz"] = int(tracker_cfg["imgsz"])
+            self.get_logger().info("Tracking config enabled: %s" % tracking_kwargs)
+
         # prompted model
         model_path = "models/yoloe-11l-seg.pt"
         # prompt free model
         # model_path = "models/yoloe-11l-seg-pf.pt"
-        self.segment = Segmentation(model_path)
+        self.segment = Segmentation(model_path, tracking_kwargs=tracking_kwargs)
 
         # Unitree Go2 front camera extrinsics to odom body frame
         self.T_cam_in_odom = np.array([0.285, 0., 0.01])
@@ -70,6 +93,16 @@ class LidarDriverNode(Node):
         # utlidar: ~8-10,000 points per second
         self.points = PointCloudBuffer(max_points=1000000, voxel_size=0.01)
         self.points.clear()
+
+    def _load_tracking_config(self):
+        pkg_share = Path(get_package_share_directory("real2usd"))
+        cfg_path = pkg_share / "config" / "tracking_filter.json"
+        try:
+            with open(cfg_path) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self.get_logger().warn("Failed to load tracking config %s: %s" % (cfg_path, e))
+            return {}
 
     def lidar_listener_callback(self, msg):
         """Extract the points from the PointCloud2 message

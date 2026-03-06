@@ -212,6 +212,14 @@ class TimingNode(Node):
                 }
             else:
                 topic_frequencies[topic] = {"n": n, "mean_period_ms": None, "std_period_ms": None, "mean_hz": None, "std_hz": None, "effective_hz": None}
+        # Add "how long it takes" (latency) per topic where we have stamp-based duration (StringIdPose = e2e)
+        if "/usd/StringIdPose" in topic_frequencies and len(self.e2e_latencies) >= 1:
+            arr_ms = np.array(self.e2e_latencies, dtype=float) * 1000
+            topic_frequencies["/usd/StringIdPose"]["mean_latency_ms"] = round(float(np.mean(arr_ms)), 3)
+            topic_frequencies["/usd/StringIdPose"]["std_latency_ms"] = (
+                round(float(np.std(arr_ms)), 3) if len(arr_ms) > 1 else 0.0
+            )
+            topic_frequencies["/usd/StringIdPose"]["n_latency"] = len(arr_ms)
 
         node_durations_ms = {}
         for node_name, dur_deque in self.durations.items():
@@ -264,16 +272,35 @@ class TimingNode(Node):
             "out_of_order_count": self.string_id_pose_out_of_order_count,
         }
 
+        # "How long it takes" (duration/latency in ms) in one place; period = time between messages
+        durations_ms = {
+            "per_object_e2e": e2e,
+            "per_frame": frame_latency_ms,
+            "per_node": node_durations_ms,
+        }
+        if "/usd/StringIdPose" in topic_frequencies and "mean_latency_ms" in topic_frequencies["/usd/StringIdPose"]:
+            durations_ms["per_topic_StringIdPose"] = {
+                "mean_ms": topic_frequencies["/usd/StringIdPose"]["mean_latency_ms"],
+                "std_ms": topic_frequencies["/usd/StringIdPose"]["std_latency_ms"],
+                "n": topic_frequencies["/usd/StringIdPose"]["n_latency"],
+            }
+
         return {
             "schema_version": 1,
             "run_id": self.run_id,
             "start_time_iso": self.run_start_time.isoformat() + "Z",
             "last_update_time_iso": now.isoformat() + "Z",
+            "durations_ms": durations_ms,
             "topic_frequencies": topic_frequencies,
             "node_durations_ms": node_durations_ms,
             "e2e_latency_ms": e2e,
             "frame_latency_ms": frame_latency_ms,
             "string_id_pose_order_check": string_id_pose_order,
+            "_interpretation": (
+                "durations_ms = how long it takes (per object, per frame, per node, per topic where available). "
+                "topic_frequencies[*].mean_latency_ms = how long from message start (stamp) to receive, when available. "
+                "topic_frequencies[*].mean_period_ms = time between consecutive messages (throughput), not duration."
+            ),
         }
 
     def write_timing_report(self):
@@ -290,69 +317,53 @@ class TimingNode(Node):
 
     def report_callback(self):
         self.get_logger().info("========== Timing report ==========")
+        self.get_logger().info("--- How long it takes (duration / latency ms) ---")
 
-        # Frequencies (mean ± std) for each output topic
-        for topic in self.recv_times:
-            stats = self._freq_stats(self.recv_times[topic])
-            n = len(self.recv_times[topic])
-            if stats is not None:
-                mean_p, std_p, mean_hz, std_hz, effective_hz = stats
-                self.get_logger().info(
-                    f"  {topic} (n={n}): "
-                    f"period {mean_p*1000:.1f} ± {std_p*1000:.1f} ms, "
-                    f"effective_hz {effective_hz:.2f}, mean(1/period)_hz {mean_hz:.2f} ± {std_hz:.2f}"
-                )
-            else:
-                self.get_logger().info(f"  {topic} (n={n}): (need ≥2 samples)")
+        # End-to-end latency (per object: stamp → StringIdPose received)
+        if len(self.e2e_latencies) >= 1:
+            e2e_arr = np.array(self.e2e_latencies, dtype=float) * 1000
+            mean_e2e_ms = float(np.mean(e2e_arr))
+            std_e2e_ms = float(np.std(e2e_arr)) if len(e2e_arr) > 1 else 0.0
+            self.get_logger().info(
+                f"  per_object_e2e (CropImgDepth stamp -> StringIdPose received): {mean_e2e_ms:.1f} ± {std_e2e_ms:.1f} ms  n={len(e2e_arr)}"
+            )
+        else:
+            self.get_logger().info("  per_object_e2e: (no samples)")
 
-        # Per-node processing time (mean ± std)
-        self.get_logger().info("--- Per-node processing time (s) ---")
+        # Per-frame latency
+        if len(self.frame_latencies) >= 1:
+            arr = np.array(self.frame_latencies, dtype=float) * 1000
+            self.get_logger().info(
+                f"  per_frame (frame stamp -> last pose for that frame): {float(np.mean(arr)):.1f} ± {float(np.std(arr)) if len(arr) > 1 else 0:.1f} ms  n={len(arr)}"
+            )
+        else:
+            self.get_logger().info("  per_frame: (no samples)")
+
+        # Per-node processing time
         for node_name, dur_deque in self.durations.items():
             stats = self._duration_stats(dur_deque)
             n = len(dur_deque)
             if stats is not None:
                 mean_s, std_s = stats
                 self.get_logger().info(
-                    f"  {node_name} (n={n}): {mean_s*1000:.1f} ± {std_s*1000:.1f} ms"
+                    f"  {node_name}: {mean_s*1000:.1f} ± {std_s*1000:.1f} ms  n={n}"
                 )
             else:
-                self.get_logger().info(f"  {node_name} (n={n}): (no samples)")
+                self.get_logger().info(f"  {node_name}: (no samples)")
 
-        # End-to-end latency (frame stamp → StringIdPose received)
-        if len(self.e2e_latencies) >= 1:
-            e2e_arr = np.array(self.e2e_latencies, dtype=float) * 1000
-            mean_e2e_ms = float(np.mean(e2e_arr))
-            std_e2e_ms = float(np.std(e2e_arr)) if len(e2e_arr) > 1 else 0.0
-            e2e_effective_hz = 1000.0 / mean_e2e_ms if mean_e2e_ms > 0 else 0.0
-            e2e_hz_per_sample = 1000.0 / np.maximum(e2e_arr, 1e-6)
-            e2e_mean_hz = float(np.mean(e2e_hz_per_sample))
-            e2e_std_hz = float(np.std(e2e_hz_per_sample)) if len(e2e_hz_per_sample) > 1 else 0.0
-            self.get_logger().info(
-                f"--- End-to-end (CropImgDepth → StringIdPose) (n={len(e2e_arr)}) ---"
-            )
-            self.get_logger().info(
-                f"  mean ± std: {mean_e2e_ms:.1f} ± {std_e2e_ms:.1f} ms  →  effective_hz {e2e_effective_hz:.3f}, mean_hz {e2e_mean_hz:.3f} ± {e2e_std_hz:.3f}"
-            )
-        else:
-            self.get_logger().info("--- End-to-end: (no samples; ensure header.stamp propagates to StringIdPose)")
-
-        # Per-frame latency (frame stamp → last StringIdPose for that frame)
-        if len(self.frame_latencies) >= 1:
-            arr = np.array(self.frame_latencies, dtype=float) * 1000
-            mean_ms = float(np.mean(arr))
-            std_ms = float(np.std(arr)) if len(arr) > 1 else 0.0
-            eff_hz = 1000.0 / mean_ms if mean_ms > 0 else 0.0
-            hz_per = 1000.0 / np.maximum(arr, 1e-6)
-            mean_hz = float(np.mean(hz_per))
-            std_hz = float(np.std(hz_per)) if len(hz_per) > 1 else 0.0
-            self.get_logger().info(
-                f"--- Per-frame (CropImgDepth frame → last StringIdPose for frame) (n={len(arr)}) ---"
-            )
-            self.get_logger().info(
-                f"  mean ± std: {mean_ms:.1f} ± {std_ms:.1f} ms  →  effective_hz {eff_hz:.3f}, mean_hz {mean_hz:.3f} ± {std_hz:.3f}"
-            )
-        else:
-            self.get_logger().info("--- Per-frame: (no samples; need same stamp per frame in lidar_cam_node)")
+        self.get_logger().info("--- Topic throughput (time between consecutive messages) ---")
+        for topic in self.recv_times:
+            stats = self._freq_stats(self.recv_times[topic])
+            n = len(self.recv_times[topic])
+            if stats is not None:
+                mean_p, std_p, mean_hz, std_hz, effective_hz = stats
+                line = f"  {topic} (n={n}): period {mean_p*1000:.1f} ± {std_p*1000:.1f} ms, effective_hz {effective_hz:.2f}"
+                if topic == "/usd/StringIdPose" and len(self.e2e_latencies) >= 1:
+                    arr_ms = np.array(self.e2e_latencies, dtype=float) * 1000
+                    line += f"  | latency (how long) {float(np.mean(arr_ms)):.1f} ± {float(np.std(arr_ms)) if len(arr_ms) > 1 else 0:.1f} ms"
+                self.get_logger().info(line)
+            else:
+                self.get_logger().info(f"  {topic} (n={n}): (need ≥2 samples)")
 
         # StringIdPose order check (stamp older than previous message = out of order)
         self.get_logger().info(

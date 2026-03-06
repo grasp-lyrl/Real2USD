@@ -75,6 +75,8 @@ class USDBufferNode(Node):
         self.cluster_centers = {}  # Maps cluster_id to center position
         self.next_cluster_id = 0
         self.last_processed_buffer_size = 0
+        # track_id -> buffer index: when a pose arrives for an existing track_id, update that entry instead of appending
+        self.track_id_to_idx = {}
         
         # Point cloud data structures
         self.point_cloud_points = np.empty((0, 3))
@@ -142,10 +144,13 @@ class USDBufferNode(Node):
 
     def update_object_buffer(self, obj_id, usd_file_path, position, quatWXYZ):
         """
-        Add new object to buffer and update spatial clustering.
-        
+        Add new object to buffer or update existing one by track_id.
+
+        When obj_id (track_id) >= 0 and already in the buffer, the existing entry
+        is updated (position, orientation, USD path). Otherwise a new entry is appended.
+
         Args:
-            obj_id: Unique identifier for the object
+            obj_id: Unique identifier for the object (track_id from pipeline)
             usd_file_path: Path to the USD file
             position: [x, y, z] position in world coordinates
             quatWXYZ: [w, x, y, z] quaternion orientation
@@ -153,35 +158,47 @@ class USDBufferNode(Node):
         euler = R.from_quat([quatWXYZ[1], quatWXYZ[2], quatWXYZ[3], quatWXYZ[0]]).as_euler('xyz')
         position = np.array(position)
 
-        # Get semantic label for the new object
-        object_label = self.get_object_label(usd_file_path)
+        # Update existing entry by track_id (one instance per track)
+        if obj_id >= 0 and obj_id in self.track_id_to_idx:
+            obj_idx = self.track_id_to_idx[obj_id]
+            obj = self.object_buffer[obj_idx]
+            obj['usd'] = usd_file_path
+            obj['position'] = position
+            obj['quatWXYZ'] = np.array(quatWXYZ)
+            obj['orientation'] = np.array(euler)
+            obj['label'] = self.get_object_label(usd_file_path)
+            self.object_positions[obj_idx] = position
+            if obj.get('cluster_id') is not None:
+                self.cluster_centers[obj['cluster_id']] = position
+            self.object_tree = KDTree(self.object_positions)
+            return
 
-        # Create new object entry
+        # New object: add to buffer and clustering
+        object_label = self.get_object_label(usd_file_path)
         new_obj = {
+            'track_id': obj_id,
             'usd': usd_file_path,
             'position': position,
             'quatWXYZ': np.array(quatWXYZ),
             'orientation': np.array(euler),
-            'cluster_id': None,  # Will be set by spatial clustering
+            'cluster_id': None,
             'matched': False,
             'points_in_hull': None,
             'occupancy_score': 0.0,
             'label': object_label
         }
 
-        # Add to object buffer
         obj_idx = len(self.object_buffer)
         self.object_buffer.append(new_obj)
+        if obj_id >= 0:
+            self.track_id_to_idx[obj_id] = obj_idx
 
-        # Update spatial tracking
         self.object_positions = np.vstack((self.object_positions, position))
         self.object_tree = KDTree(self.object_positions)
 
-        # Find nearby objects and update clustering
         if len(self.object_positions) > 1:
             self._update_clustering(obj_idx, position, object_label)
         else:
-            # No existing clusters, create new cluster
             self._create_new_cluster(obj_idx, position)
 
     def _update_clustering(self, obj_idx, position, object_label):

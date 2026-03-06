@@ -33,9 +33,12 @@ class RetrievalNode(Node):
         # Declare and get parameter for Gemini usage
         self.declare_parameter('use_gemini', False)
         self.declare_parameter('faiss_index_path', "/data/FAISS/FAISS")
+        self.declare_parameter('skip_untracked_detections', False)
         self.use_gemini = self.get_parameter('use_gemini').value
         self.faiss_index_path = self.get_parameter('faiss_index_path').value
+        self.skip_untracked_detections = self.get_parameter('skip_untracked_detections').value
         self.get_logger().info(f"Using Gemini for comparison: {self.use_gemini}")
+        self.get_logger().info(f"Skip untracked detections (track_id == -1): {self.skip_untracked_detections}")
         self.get_logger().info(f"Using FAISS index: {self.faiss_index_path}")
 
         self.bridge = CvBridge()
@@ -96,14 +99,19 @@ class RetrievalNode(Node):
 
     def _retrieval_callback_impl(self, msg):
         # decompose the msg
+        track_id = msg.track_id
+        if self.skip_untracked_detections and track_id < 0:
+            # Limit detections: only process objects with a valid track_id (skip untracked / first-frame)
+            return
+
         imgs_crop = self.bridge.imgmsg_to_cv2(msg.rgb_image, desired_encoding="bgr8")
         seg_pts = np.array(msg.seg_points).reshape(-1, 2)
         depth_image = self.bridge.imgmsg_to_cv2(msg.depth_image, desired_encoding="16UC1")
         cam_info = self.cam_info_callback(msg.camera_info)
         odom_info = self.odom_callback(msg.odometry)
-        track_ids = msg.track_id
+        track_ids = track_id
         labels = msg.label
-        
+
         # compute 3d points in world and publish the point cloud
         lidar_world = self.projection.twoDtoThreeD(seg_pts, depth_image, cam_info, odom_info)
         lidar_world = self.filter_ground_plane(lidar_world)

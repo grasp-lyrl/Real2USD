@@ -25,10 +25,12 @@ setup(
     entry_points={
         "console_scripts": [
             "lidar_cam_node = real2usd.lidar_cam_node:main",
+            "realsense_cam_node = real2usd.realsense_cam_node:main",
             "retrieval_node = real2usd.retrieval_node:main",
             "isaac_lidar_node_preprocessed = real2usd.isaac_lidar_node_preprocessed:main",
             "registration_node = real2usd.registration_node:main",
             "usd_buffer_node = real2usd.usd_buffer_node:main",
+            "simple_scene_buffer_node = real2usd.simple_scene_buffer_node:main",
             "navigator_llm_node = real2usd.navigator_llm_node:main",
             "overlay_node = real2usd.usd_overlay_node:main",
             "vid_recorder_node = real2usd.vid_recorder_node:main",

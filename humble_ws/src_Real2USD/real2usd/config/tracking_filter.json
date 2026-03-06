@@ -1,0 +1,13 @@
+{
+  "tracker": {
+    "tracker_yaml": "botsort_lenient_go2.yaml",
+    "track_conf": 0.5,
+    "track_iou": 0.2,
+    "retina_masks": true,
+    "imgsz": 1024
+  },
+  "sensor_depth_reliability": {
+    "realsense_min_depth_m": 0.2,
+    "realsense_max_depth_m": 5.0
+  }
+}

@@ -24,6 +24,8 @@ _SEG_DEVICE = _infer_device()
 from ultralytics import SAM, FastSAM, YOLO, YOLOE
 from ultralytics import settings
 
+from scripts_r2u.track_id_utils import track_ids_from_boxes_id as _track_ids_from_boxes_id
+
 """
 author: Christopher D. Hsu
 email: chsu8@seas.upenn.edu
@@ -34,8 +36,9 @@ pip install ultralytics
 """
 
 class Segmentation:
-    def __init__(self, model_path):
+    def __init__(self, model_path, tracking_kwargs=None):
         model_name = os.path.basename(model_path)
+        self._tracking_kwargs = dict(tracking_kwargs or {})
         if model_name.startswith("FastSAM"):
             self.model = FastSAM(model_path)
         elif model_name.startswith("sam2.1"):
@@ -50,6 +53,11 @@ class Segmentation:
         self.track_id_counter = 999  # Counter for generating unique IDs
 
         self.model.set_classes(self.classes, self.model.get_text_pe(self.classes))
+
+    @staticmethod
+    def track_ids_from_boxes_id(boxes_id, num_boxes):
+        """Delegate to track_id_utils (no ultralytics in tests)."""
+        return _track_ids_from_boxes_id(boxes_id, num_boxes)
 
     def crop_img_w_bbox(self, image, retina_masks=True, imgsz=1024, conf=0.8, iou=0.9):
         """
@@ -74,10 +82,14 @@ class Segmentation:
 
         # track segmentation
         # self.model.set_classes(self.classes)
-        results = self.model.track(
-            image, retina_masks=retina_masks, imgsz=imgsz, conf=conf, iou=iou, verbose=False, persist=True,
-            device=_SEG_DEVICE,
-        )
+        track_kwargs = dict(self._tracking_kwargs)
+        track_kwargs.setdefault("retina_masks", retina_masks)
+        track_kwargs.setdefault("imgsz", imgsz)
+        track_kwargs.setdefault("conf", conf)
+        track_kwargs.setdefault("iou", iou)
+        track_kwargs.setdefault("verbose", False)
+        track_kwargs.setdefault("persist", True)
+        results = self.model.track(image, **track_kwargs)
         # results is a list because you can feed in multiple images
         result = results[0]
 
@@ -105,8 +117,8 @@ class Segmentation:
                 class_names = [""] * len(box_xyxy)
                 class_names_usd = [""] * len(box_xyxy)
 
-            # Then try to get track IDs separately
-            track_ids = result.boxes.id.int().cpu().tolist()
+            # Track IDs: can be None when tracker doesn't assign (e.g. first frame, lost association)
+            track_ids = self.track_ids_from_boxes_id(result.boxes.id, len(box_xyxy))
 
         except:
             # If no detections at all, return empty lists
