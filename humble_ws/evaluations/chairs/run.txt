@@ -1,1 +1,0 @@
-python3 scripts/merge_glb_usd_for_comparison.py --input-dir chairs --out chairs/comparison.glb --spacing 0.5 --no-depth --usd-scale 1.3
