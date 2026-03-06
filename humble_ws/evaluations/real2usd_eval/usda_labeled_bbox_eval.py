@@ -10,6 +10,39 @@ from shapely.geometry import Polygon
 from scipy.spatial.distance import cosine
 from label_mapped_metrics import calculate_mean_metrics, print_metrics
 
+# Expand door XY bounding boxes by this amount (m) in all directions for evaluation
+DOOR_BBOX_PADDING_M = 0.5
+
+
+def _apply_door_bbox_padding(data_dict, padding_m, door_label="door"):
+    """
+    Expand XY extent of bounding boxes for all objects with the given label (default 'door').
+    data_dict: { label: [ box, ... ] } (usda_data or supervisely_data). Mutates boxes in place.
+    """
+    if padding_m <= 0.0:
+        return
+    door_norm = (door_label or "door").strip().lower()
+    for label, boxes in data_dict.items():
+        if (label or "").strip().lower() != door_norm:
+            continue
+        for box in boxes:
+            if "bbox_min" in box and "bbox_max" in box:
+                mn = np.asarray(box["bbox_min"], dtype=np.float64)
+                mx = np.asarray(box["bbox_max"], dtype=np.float64)
+                mn[0] -= padding_m
+                mn[1] -= padding_m
+                mx[0] += padding_m
+                mx[1] += padding_m
+                box["bbox_min"] = mn.tolist()
+                box["bbox_max"] = mx.tolist()
+                if "dimensions" in box:
+                    box["dimensions"] = (np.asarray(box["bbox_max"]) - np.asarray(box["bbox_min"])).tolist()
+            elif "position" in box and "dimensions" in box:
+                dims = np.asarray(box["dimensions"], dtype=np.float64)
+                dims[0] += 2.0 * padding_m
+                dims[1] += 2.0 * padding_m
+                box["dimensions"] = dims.tolist()
+
 
 def compute_bbox_overlap(bbox1, bbox2):
     """
@@ -293,6 +326,12 @@ def main():
         usda_data = parse_usda_data(usda_file)
         print("\nParsing Supervisely file (ground truth)...")
         supervisely_data = parse_cuboid_data(supervisely_file)
+
+        # Expand door XY bounding boxes by DOOR_BBOX_PADDING_M for both USDA and GT
+        if DOOR_BBOX_PADDING_M > 0.0:
+            _apply_door_bbox_padding(usda_data, DOOR_BBOX_PADDING_M)
+            _apply_door_bbox_padding(supervisely_data, DOOR_BBOX_PADDING_M)
+            print(f"\nApplied door bbox padding: {DOOR_BBOX_PADDING_M} m (XY) to USDA and Supervisely data")
         
         # Continue with evaluation using parsed data
         metrics = evaluate_bboxes(usda_data, supervisely_data)

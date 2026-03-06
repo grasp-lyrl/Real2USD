@@ -1,7 +1,7 @@
 import json
 import ast
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -153,7 +153,12 @@ def load_predictions_scene_graph(
     embedding_min_score: float,
     label_source: str = "prefer_retrieved_else_label",
     normalize_yaw_rad: float = 0.0,
+    base_dir: Optional[str] = None,
 ) -> List[Dict]:
+    """
+    base_dir: If set, relative data_path in objects are resolved against this dir (e.g. run_dir
+    when prediction JSON lives in run_dir). Required for scene_graph_labeled.json from write_labeled_scene_glb.
+    """
     raw_to_zup = _raw_to_zup_matrix()
     T_norm = _yaw_normalization_matrix(normalize_yaw_rad)
     with open(scene_graph_json) as f:
@@ -204,7 +209,10 @@ def load_predictions_scene_graph(
             )
 
         try:
-            verts = _load_mesh_vertices(obj["data_path"])
+            data_path = obj.get("data_path") or ""
+            if base_dir and data_path and not Path(data_path).is_absolute():
+                data_path = str(Path(base_dir) / data_path)
+            verts = _load_mesh_vertices(data_path)
             if obj.get("transform_odom_from_raw") is not None:
                 T = np.asarray(obj["transform_odom_from_raw"], dtype=np.float64)
             else:

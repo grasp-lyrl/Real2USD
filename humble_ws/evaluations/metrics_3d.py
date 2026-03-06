@@ -186,6 +186,7 @@ UNLABELED_CLASS = "__unlabeled__"
 
 
 def _sim_pred_task(pred: Dict, task_label: str) -> float:
+    """Binary only: 1.0 if pred label equals task label, else 0.0. No continuous similarity (e.g. no embedding)."""
     return 1.0 if (pred.get("label_canonical") or "").strip() == (task_label or "").strip() else 0.0
 
 
@@ -196,7 +197,8 @@ def open_set_metrics(
     iou_mode: str = "aabb",
     similarity_threshold: float = 0.9,
 ) -> Dict[str, float]:
-    """Open-set Recall (osR) and Precision (osP). Task = GT class; similarity = label match (1/0). Excludes unknown/unlabeled from tasks."""
+    """Open-set Recall (osR) and Precision (osP). Task = GT class. Similarity is binary (1/0 label match only);
+    similarity_threshold thus filters to preds whose label equals some task (e.g. 0.9 => only 1.0 passes). Excludes unknown/unlabeled from tasks."""
     # Only labeled GTs form tasks; exclude unknown and empty
     def _valid_task(lbl: str) -> bool:
         s = (lbl or "").strip()
@@ -205,7 +207,7 @@ def open_set_metrics(
     task_labels = list({(gt.get("label_canonical") or UNLABELED_CLASS).strip() for gt in gts})
     task_labels = [t for t in task_labels if _valid_task(t)]
     if not task_labels:
-        return {"osR_strict": 0.0, "osR_relaxed": 0.0, "osP_strict": 0.0, "osP_relaxed": 0.0, "F1_os": 0.0}
+        return {"osR_strict": 0.0, "osR_relaxed": 0.0, "osP_strict": 0.0, "osP_relaxed": 0.0, "F1_os": 0.0, "F1_os_strict": 0.0, "F1_os_relaxed": 0.0}
 
     gt_by_task: Dict[str, List[int]] = {}
     for gi, gt in enumerate(gts):
@@ -274,5 +276,14 @@ def open_set_metrics(
         osP_strict = strict_ok / len(relevant_preds)
         osP_relaxed = relaxed_ok / len(relevant_preds)
 
-    F1_os = 2.0 * osR_relaxed * osP_relaxed / (osR_relaxed + osP_relaxed) if (osR_relaxed + osP_relaxed) > 0 else 0.0
-    return {"osR_strict": float(osR_strict), "osR_relaxed": float(osR_relaxed), "osP_strict": float(osP_strict), "osP_relaxed": float(osP_relaxed), "F1_os": float(F1_os)}
+    F1_os_relaxed = 2.0 * osR_relaxed * osP_relaxed / (osR_relaxed + osP_relaxed) if (osR_relaxed + osP_relaxed) > 0 else 0.0
+    F1_os_strict = 2.0 * osR_strict * osP_strict / (osR_strict + osP_strict) if (osR_strict + osP_strict) > 0 else 0.0
+    return {
+        "osR_strict": float(osR_strict),
+        "osR_relaxed": float(osR_relaxed),
+        "osP_strict": float(osP_strict),
+        "osP_relaxed": float(osP_relaxed),
+        "F1_os": float(F1_os_relaxed),
+        "F1_os_strict": float(F1_os_strict),
+        "F1_os_relaxed": float(F1_os_relaxed),
+    }

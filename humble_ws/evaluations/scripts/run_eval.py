@@ -25,7 +25,7 @@ from eval_common import (
     load_predictions_scene_graph,
     load_supervisely_gt,
 )
-from label_matching import load_label_configs, load_learned_aliases
+from label_matching import load_label_configs, load_learned_aliases, resolve_label_with_learning
 from metrics_3d import greedy_match, pair_iou_3d, strict_relaxed_from_aabb, open_set_metrics, UNLABELED_CLASS
 
 import numpy as np
@@ -50,6 +50,33 @@ def _load_eval_config(config_path: str, eval_dir: str) -> Dict:
             if not Path(rel).is_absolute():
                 cfg["paths"][key] = str((base / rel).resolve())
     return cfg
+
+
+def _apply_door_bbox_padding(boxes: List[Dict], padding_m: float, door_label: str = "door") -> None:
+    """Expand XY extent of AABB and OBB for boxes with label_canonical == door_label. Mutates in place."""
+    if padding_m <= 0.0:
+        return
+    door_norm = (door_label or "door").strip().lower()
+    for box in boxes:
+        lbl = (box.get("label_canonical") or "").strip().lower()
+        if lbl != door_norm:
+            continue
+        # AABB: expand XY by padding_m in all directions
+        if "aabb_min" in box and "aabb_max" in box:
+            mn = np.asarray(box["aabb_min"], dtype=np.float64)
+            mx = np.asarray(box["aabb_max"], dtype=np.float64)
+            mn[0] -= padding_m
+            mn[1] -= padding_m
+            mx[0] += padding_m
+            mx[1] += padding_m
+            box["aabb_min"] = mn.tolist()
+            box["aabb_max"] = mx.tolist()
+        # OBB: grow footprint dimensions (dx, dy) by 2*padding_m each
+        if "obb_dimensions" in box:
+            dims = np.asarray(box["obb_dimensions"], dtype=np.float64)
+            dims[0] += 2.0 * padding_m
+            dims[1] += 2.0 * padding_m
+            box["obb_dimensions"] = dims.tolist()
 
 
 def _filter_predictions_by_config(preds: List[Dict], config: Dict) -> Tuple[List[Dict], Dict]:
@@ -382,8 +409,8 @@ def evaluate(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run evaluation for one prediction set, write by_run JSON.")
-    parser.add_argument("--prediction-type", default="scene_graph", choices=("scene_graph", "clio"))
-    parser.add_argument("--prediction-path", default=None, help="scene_graph.json or CLIO graphml")
+    parser.add_argument("--prediction-type", default="scene_graph", choices=("scene_graph", "clio", "usda"))
+    parser.add_argument("--prediction-path", default=None, help="scene_graph.json, CLIO graphml, or USDA file (.usda)")
     parser.add_argument("--prediction-json", default=None, help="Alias for --prediction-path (for backward compat)")
     parser.add_argument("--gt-json", required=True)
     parser.add_argument("--run-dir", default=None, help="Run directory (for registration diagnostics; default: parent of prediction-path)")
@@ -431,6 +458,8 @@ def main() -> None:
     gt_global_yaw_rad = estimate_supervisely_global_yaw(args.gt_json) if frame_norm == "gt_global_yaw" else 0.0
 
     if args.prediction_type == "scene_graph":
+        # Resolve mesh data_path relative to prediction file dir (e.g. run_dir when using scene_graph_labeled.json)
+        pred_base_dir = str(Path(pred_path).resolve().parent)
         preds_all = load_predictions_scene_graph(
             pred_path,
             canonical=canonical,
@@ -443,7 +472,27 @@ def main() -> None:
             embedding_min_score=embedding_min,
             label_source=config.get("prediction", {}).get("label_source", "prefer_retrieved_else_label"),
             normalize_yaw_rad=gt_global_yaw_rad,
+            base_dir=pred_base_dir,
         )
+    elif args.prediction_type == "usda":
+        from parse_usda import parse_usda_data
+        from usda_to_prediction_boxes import usda_data_to_prediction_boxes
+        usda_data = parse_usda_data(pred_path)
+        preds_all = usda_data_to_prediction_boxes(usda_data, normalize_yaw_rad=gt_global_yaw_rad)
+        for p in preds_all:
+            raw = p.get("label") or p.get("label_canonical") or ""
+            resolved, _ = resolve_label_with_learning(
+                raw,
+                canonical=canonical,
+                alias_map=alias_map,
+                contains_rules=contains_rules,
+                learned_alias_map=learned_aliases,
+                use_embedding_for_unresolved=use_embedding,
+                learn_new_aliases=False,
+                learned_alias_path=learned_aliases_path,
+                embedding_min_score=embedding_min,
+            )
+            p["label_canonical"] = resolved if resolved else raw
     else:
         preds_all = load_predictions_clio_graphml(
             pred_path,
@@ -473,7 +522,23 @@ def main() -> None:
         normalize_yaw_rad=gt_global_yaw_rad,
     )
 
+    # Optional: expand XY bounding box for door-labeled objects (GT and predictions)
+    door_padding_m = float(config.get("matching", {}).get("door_bbox_padding_m", 0.0))
+    if door_padding_m > 0.0:
+        _apply_door_bbox_padding(gts, door_padding_m)
+        _apply_door_bbox_padding(preds, door_padding_m)
+        print(f"[run_eval] Applied door bbox padding: {door_padding_m} m (XY) to GT and predictions")
+
     result = evaluate(preds, gts, config, run_dir=run_dir)
+    result.setdefault("matching", {})["door_bbox_padding_m"] = door_padding_m
+    # Optional: USDA-style many-to-many 2D overlap metrics for comparison to usda_labeled_bbox_eval
+    if config.get("matching", {}).get("compute_usda_style_metrics", False):
+        from usda_style_metrics import compute_usda_style_metrics
+        result["usda_style_metrics"] = compute_usda_style_metrics(
+            result["instances"]["predictions"],
+            result["instances"]["gts"],
+            require_label_match=result["matching"]["require_label_match"],
+        )
     result["prediction_filter"] = pred_filter
     result["metadata"] = {
         "scene": args.scene,

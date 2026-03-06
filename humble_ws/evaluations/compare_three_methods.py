@@ -80,6 +80,8 @@ def _extract_row(method: str, d: Dict) -> Dict:
         "osP_strict": bench.get("osP_strict", 0.0),
         "osP_relaxed": bench.get("osP_relaxed", 0.0),
         "F1_os": bench.get("F1_os", 0.0),
+        "F1_os_strict": bench.get("F1_os_strict", 0.0),
+        "F1_os_relaxed": bench.get("F1_os_relaxed", 0.0),
         "fp_wrong_label": fp.get("wrong_label", 0),
         "fp_low_iou": fp.get("low_iou", 0),
         "fp_no_overlap": fp.get("no_overlap", 0),
