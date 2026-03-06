@@ -1,7 +1,10 @@
 std_msgs/Header header
 
-# RGB image
+# RGB image (unmasked crop, full context; for CLIP, retrieval, SAM3D job, etc.)
 sensor_msgs/Image rgb_image
+
+# Masked RGB crop (grey background + segment mask), same bbox as rgb_image
+sensor_msgs/Image rgb_image_masked
 
 # Segmentation points as flat array [u1,v1,u2,v2,...]
 int32[] seg_points  # Flattened array of u,v coordinates from numpy array
