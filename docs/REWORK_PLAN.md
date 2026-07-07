@@ -255,6 +255,17 @@ Scan2CAD lineage; TEASER++; FoundationPose/Any6D; mesh-quality-vs-pose study 240
   Scan2CAD-grade placement metrics + downstream robot task.
 - Keep the honest speed framing (offline/near-online asset mapping; Clio-class systems
   are real-time but produce boxes, not sim-ready assets).
+- **Representation positioning (defuses the "why USD over JSON?" complaint):** the
+  contribution is the asset-centric scene graph (assets + Sim(3) poses + labels +
+  confidence). JSON is its canonical serialization and the LLM-context format
+  (token-lean); USD is the *simulation export* — Isaac-native loading for the physics
+  settle + sim-usability eval, materials/physics schemas, instancing of repeated assets.
+  Never argue USD-as-LLM-representation (v1's weakest claim; the README itself concedes
+  buffer.json works as context). Consider renaming the system after the method, not the
+  file format. Note: no prior work evaluates asset placement on Replica (asset lineage is
+  ScanNet-anchored: Scan2CAD/ROCA/DiffCAD, MetaScenes, LiteReality arXiv 2507.02861 —
+  add LiteReality to must-cites); reporting on Replica is a first, and ScanNet/Scan2CAD
+  remains the differentiating table.
 
 ---
 
