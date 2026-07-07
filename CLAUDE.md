@@ -9,18 +9,42 @@ register it into the metric scene (ICP) → reconcile and export USD/GLB.
 
 The paper was rejected from IROS 2026 and is being reworked for resubmission.
 
+- **`docs/STATUS.md` is the live progress tracker — read it first to know where we are;
+  `docs/ACTION_ITEMS.md` is the explicit list of things only the human can do.**
 - **Read `docs/REWORK_PLAN.md` (strategy) and `docs/PHASE_SPECS.md` (interfaces,
   resolved decisions, defaults, definitions of done) before changing anything in
-  `real2sam3d`** — the plan contains
+  `real2sam3d` or `r2s3d_core`** — the plan contains
   the full assessment of v1 and the phased v2 redesign (ObjectTrack multi-view fusion,
   Sim(3) registration, multi-view refinement, public-benchmark evaluation).
+- v2 core logic lives in the ROS-free `humble_ws/src_Real2USD/r2s3d_core/` uv package
+  (Phase 0+); ROS2 nodes become thin wrappers over it.
 - `v2-rework` branch: all rework happens here. `main` + tag `v1-iros2026` are the frozen
   paper state (kept for reproducibility and an *optional* "vs v1" ablation row — never a
   blocker). A frozen v1 worktree may exist at `../Real2USD-v1`.
 - Baselines and evaluation run on **public datasets** (Replica first, then
   ScanNet/Scan2CAD) through the `SequenceSource` adapter — not on v1's custom-bag
-  outputs. The number to beat is SAM3D's own predicted layout (`make_scene()`).
+  outputs. The number to beat is SAM3D's own predicted layout (`make_scene()` lives in
+  the external `sam-3d-objects` repo; in-repo the stand-in is `sam3d_layout`).
 - Future docs go in `docs/`.
+
+## Documentation discipline (keep these current AS YOU BUILD)
+
+These docs are load-bearing for continuity across sessions — treat updating them as part
+of "done", not an afterthought:
+
+- **`docs/STATUS.md`** — update at the end of every milestone/session: the phase
+  dashboard, current focus, what is *verified* (not just written), and blockers. "Done"
+  means tests pass / numbers produced.
+- **`docs/ACTION_ITEMS.md`** — the moment you hit something only the human can do (dataset
+  access, gated checkpoints, licenses, credentials/logins, policy or IP decisions), add an
+  explicit item (what / why it blocks / how / where) AND surface it in chat. Check items
+  off when resolved; leave them for provenance.
+- **`docs/PHASE_SPECS.md`** — when a resolved decision or default changes in practice,
+  update it there and note it in the run record. It is not immutable.
+- Keep the split clean: REWORK_PLAN = *why/strategy*, PHASE_SPECS = *how/interfaces*,
+  STATUS = *where we are*, ACTION_ITEMS = *what the human must do*. Link, don't duplicate.
+- Every eval run writes `results/<phase>_<name>/run.json`; tables/plots regenerate from
+  those, never hand-edited.
 
 ## Layout
 
@@ -42,7 +66,9 @@ The paper was rejected from IROS 2026 and is being reworked for resubmission.
 - Build: `colcon build` inside the container, then `source install/setup.bash`.
 - Typical run: play a ros2 bag + `ros2 launch real2sam3d real2sam3d.launch.py`; the SAM3D
   worker is started separately in its `sam3d-objects` conda env (`sam3d_setup.sh`).
-- Data lives under `/data` (FAISS index, sam3d_queue, bags, preprocessed USD pkls).
+- Data: v1/robot pipeline expects `/data`, but **this desktop has no writable `/data`** —
+  v2 datasets live under `~/Data/datasets/` (`r2s3d_core` resolves `$R2S3D_DATA` else that;
+  SAM3D queue at `~/Data/datasets/sam3d_queue`).
 
 ## Gotchas
 

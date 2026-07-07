@@ -1,9 +1,11 @@
 # r2s3d_core
 
-ROS-free core library for R2S3D v2 (see `docs/REWORK_PLAN.md`,
-`docs/PHASE_SPECS.md` at the repo root). ROS2 nodes import this package; it never
-imports ROS. Python 3.10 (pinned to match ROS Humble so it installs editable in the
-docker container).
+ROS-free core library for R2S3D v2. ROS2 nodes import this package; it never imports
+ROS. Python 3.10 (pinned to match ROS Humble so it installs editable in the docker
+container).
+
+Repo docs: `docs/STATUS.md` (where we are) · `docs/ACTION_ITEMS.md` (human to-dos) ·
+`docs/REWORK_PLAN.md` (strategy) · `docs/PHASE_SPECS.md` (interfaces).
 
 ## Install
 

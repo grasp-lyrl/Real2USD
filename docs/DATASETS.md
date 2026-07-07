@@ -1,19 +1,15 @@
 # Datasets for the v2 benchmark campaign
 
-## Do-first human checklist (access latency is the campaign's critical path)
+This is the *how-to* for each dataset. The **actionable human checklist** (what to do,
+what it blocks, current status) lives in `ACTION_ITEMS.md` — that is the single source of
+truth; the sections here are the instructions those items link to.
 
-- [ ] ScanNet ToS: sign PDF, email per https://github.com/ScanNet/ScanNet
-- [ ] Scan2CAD: request form at https://scan2cad.org
-- [ ] ShapeNetCore.v2: accept license on HF (https://huggingface.co/datasets/ShapeNet/ShapeNetCore)
-- [ ] MetaScenes: Google Form on https://meta-scenes.github.io
-- [ ] Meta SAM 3 checkpoint: request access on HuggingFace (gated, like sam-3d-objects)
-- [ ] Replica: no gate — `bash scripts/datasets/download_replica.sh` (can run unattended)
-
-Target layout on the workstation (matches the pipeline's `/data` convention):
+Data root on this desktop is **`~/Data/datasets/`** (no writable `/data`; override with
+`$R2S3D_DATA`). Target layout:
 
 ```
-/data/datasets/
-  replica/        # NICE-SLAM posed RGB-D renders (Phase 0)
+~/Data/datasets/
+  replica/        # NICE-SLAM posed RGB-D renders + replica_semantic/ GT (Phase 0) — DONE
   scannet/        # ScanNet v2 scans (.sens extracted)
   scan2cad/       # Scan2CAD alignments + ShapeNetCore CAD models
   clio/           # Clio's office/apartment/cubicle/building rosbags
@@ -30,10 +26,17 @@ bash scripts/datasets/download_replica.sh /data/datasets/replica
 ```
 
 (~12 GB zip.) GT semantics/instance meshes for metrics come from the original Replica
-repo (https://github.com/facebookresearch/Replica-Dataset) — the `*_semantic.ply` /
-per-scene `habitat/info_semantic.json` files; the download script fetches the 8
-eval scenes' semantic assets too if the URLs are reachable, otherwise grab them per the
-Replica repo README.
+repo (https://github.com/facebookresearch/Replica-Dataset) — the `habitat/mesh_semantic.ply`
+(per-face `object_id`) + `info_semantic.json` files. Fetch them with:
+
+```bash
+bash scripts/datasets/download_replica_semantic.sh ~/Data/datasets/replica
+```
+
+(~34 GB compressed / ~100 GB extracted to `replica_semantic/<scene>/habitat/`; the
+`.part??` files can be deleted after extraction.) The `r2s3d_core` Replica backend reads
+GT from there automatically and caches per-scene npz. **Status: done** (see
+`ACTION_ITEMS.md`).
 
 ## 2. ScanNet v2 (placement table — **gated, human step required**)
 
