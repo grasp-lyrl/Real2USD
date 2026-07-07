@@ -271,6 +271,16 @@ Scan2CAD lineage; TEASER++; FoundationPose/Any6D; mesh-quality-vs-pose study 240
   ScanNet-anchored: Scan2CAD/ROCA/DiffCAD, MetaScenes, LiteReality arXiv 2507.02861 —
   add LiteReality to must-cites); reporting on Replica is a first, and ScanNet/Scan2CAD
   remains the differentiating table.
+- **MetaScenes positioning (closest-looking work; get this paragraph right):**
+  MetaScenes/Scan2Sim (CVPR 2025) shares our *output* (asset-replaced sim-ready scenes)
+  but not our *problem*: it curates from complete ScanNet scans with human annotators
+  ranking assets, and Scan2Sim is trained on those annotations. We are the autonomous,
+  online, robot-embodied version — partial egocentric views, no human in the loop. Use
+  MetaScenes three ways: (1) cite as problem validation; (2) its human-verified
+  asset+pose selections as GT for the placement table (grades asset choice + pose +
+  plausibility jointly); (3) Scan2Sim auto-retrieval as a baseline (it needs a complete
+  scan; we don't). Anticipate and preempt the "MetaScenes but automated" read by leading
+  with autonomy-from-partial-observation as the claim.
 
 ---
 

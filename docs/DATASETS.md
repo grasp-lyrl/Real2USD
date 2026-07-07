@@ -48,8 +48,9 @@ Replica repo README.
    (https://huggingface.co/datasets/ShapeNet/ShapeNetCore) — accept the license with
    your HF account, then `huggingface-cli download`.
 3. Alternative/adjunct with sim-ready GT: **MetaScenes** (https://meta-scenes.github.io,
-   CVPR 2025) — 706 ScanNet scenes with curated asset replacements; check its release
-   page for the access route. **[HUMAN]** if gated.
+   CVPR 2025) — 706 ScanNet scenes, 15,366 human-verified asset replacements; strong GT
+   for the placement table and Scan2Sim is a retrieval baseline. **[HUMAN]** access is
+   gated via a Google Form on the project page — submit alongside the ScanNet request.
 
 ## 4. Clio datasets (public)
 
