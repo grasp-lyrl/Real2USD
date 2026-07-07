@@ -1,0 +1,75 @@
+{
+  "git_sha": "1bfc7ba004b11704cd4275fcc51199c53c4118fa",
+  "config": {
+    "method": "oracle_noisy",
+    "source": "replica",
+    "stride": 20,
+    "iou_threshold": 0.25,
+    "compute_geometry": true,
+    "surface_points": 10000,
+    "seed": 0,
+    "trans_noise_m": 0.1,
+    "rot_noise_deg": 5.0,
+    "scale_noise": 0.05
+  },
+  "dataset": "replica",
+  "scenes": [
+    "room0"
+  ],
+  "metrics": {
+    "aggregate": {
+      "n_pred": 43.0,
+      "n_gt": 43.0,
+      "count_ratio": 1.0,
+      "iou_threshold": 0.25,
+      "tp": 20.0,
+      "fp": 23.0,
+      "fn": 23.0,
+      "precision": 0.46511627906976744,
+      "recall": 0.46511627906976744,
+      "f1": 0.46511627906976744,
+      "recall@0.5": 0.2558139534883721,
+      "duplicate_rate": 0.0,
+      "scan2cad_accuracy": 0.32558139534883723,
+      "label_accuracy": 1.0,
+      "centroid_err_median_m": 0.12787144095048716,
+      "centroid_err_mean_m": 0.13449357123094824,
+      "rotation_err_median_deg": 1.9962943029675033,
+      "rotation_err_mean_deg": 3.040452560290998,
+      "scale_err_median": 0.07110197115403766,
+      "scale_err_mean": 0.07863154154062162,
+      "chamfer_l1_median_m": 0.008849966633079877,
+      "fscore@0.05_mean": 0.9933839157513304,
+      "fscore@0.02_mean": 0.945514324272699
+    },
+    "per_scene": {
+      "room0": {
+        "n_pred": 43,
+        "n_gt": 43,
+        "count_ratio": 1.0,
+        "iou_threshold": 0.25,
+        "tp": 20,
+        "fp": 23,
+        "fn": 23,
+        "precision": 0.46511627906976744,
+        "recall": 0.46511627906976744,
+        "f1": 0.46511627906976744,
+        "recall@0.5": 0.2558139534883721,
+        "duplicate_rate": 0.0,
+        "scan2cad_accuracy": 0.32558139534883723,
+        "label_accuracy": 1.0,
+        "centroid_err_median_m": 0.12787144095048716,
+        "centroid_err_mean_m": 0.13449357123094824,
+        "rotation_err_median_deg": 1.9962943029675033,
+        "rotation_err_mean_deg": 3.040452560290998,
+        "scale_err_median": 0.07110197115403766,
+        "scale_err_mean": 0.07863154154062162,
+        "chamfer_l1_median_m": 0.008849966633079877,
+        "fscore@0.05_mean": 0.9933839157513304,
+        "fscore@0.02_mean": 0.945514324272699
+      }
+    }
+  },
+  "wall_time_s": 1.566056251525879,
+  "created_at": "2026-07-07T16:19:59"
+}

@@ -1,0 +1,5 @@
+# results binaries are not tracked; run.json (and other JSON) are.
+*
+!*/
+!*.json
+!.gitignore

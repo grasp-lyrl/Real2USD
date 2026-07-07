@@ -1,0 +1,38 @@
+[project]
+name = "r2s3d_core"
+version = "0.1.0"
+description = "R2S3D v2 core: ROS-free library for asset-centric metric-semantic mapping (SequenceSource, frames, tracks, registration, refinement, reconstruction, evaluation)."
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "numpy>=1.24,<2.0",
+    "scipy>=1.10",
+    "trimesh>=4.0",
+    "pyyaml>=6.0",
+    "opencv-python>=4.8",
+    "pillow>=10.0",
+    "tqdm>=4.66",
+    "plyfile>=1.0",
+]
+
+# Python is pinned to 3.10 to match ROS Humble so this package installs editable
+# inside the docker container. See docs/REWORK_PLAN.md "Environments".
+
+[project.optional-dependencies]
+# Heavy geometry/registration deps used by later phases and the ICP baseline variant.
+# Kept optional so metrics + harness run in a light env.
+registration = [
+    "open3d>=0.18",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/r2s3d_core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
