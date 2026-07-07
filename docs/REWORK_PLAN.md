@@ -274,7 +274,37 @@ RecGen (2604.27106); SceneComplete; ACDC (2410.07408); MetaScenes (2505.02388); 
 (2603.02133); MessyKitchens (2603.16868); URDFormer; DRAWER; FOUND-IT (2605.25371);
 Scan2CAD lineage; TEASER++; FoundationPose/Any6D; mesh-quality-vs-pose study 2408.08234.
 
-### 2.7 Paper repositioning
+### 2.7 Novelty strategy (the rejection said "stitched-together modules" — it was fair)
+
+Novelty must be constructed, not hoped for. Three compounding moves:
+
+1. **One MAP objective as the paper's spine.** Joint estimation of a set of Sim(3)-posed
+   assets from a posed RGB-D stream: per-object shape (retrieved|generated) + pose/scale;
+   measurement terms = multi-view depth residuals + silhouette consistency; scene priors
+   = gravity/upright, ground contact, pairwise non-penetration. Present pipeline stages
+   as inference steps of this model (tracking = data association, registration = init,
+   refinement = optimization, reconciliation = priors/projection). Confidence gating and
+   merge criteria are terms of the objective, not heuristics bolted on.
+2. **Algorithmic centerpiece: scene-level JOINT refinement.** Merge Phase 3's per-object
+   multi-view refinement and Phase 4's de-penetration into one differentiable
+   optimization over ALL objects simultaneously: per-object multi-view depth+silhouette
+   residuals + cross-object SDF non-penetration + ground contact, optimizing every
+   (R,t,s) together. Differentiation: Diff-DOPE is single-object/single-view; MV-SAM3D
+   is offline collision-aware fusion from curated pointmaps; physics settling elsewhere
+   (incl. our v1) is a non-differentiable afterthought. Ablation per-object vs joint
+   directly measures it (targets the chairs-intersecting-tables failure). Isaac settle
+   remains as final validation/projection, and as the ablation arm.
+3. **Measurement contribution, claimed explicitly:** quantified generative-layout-error
+   study at scene scale (Phase 0 GT-mask experiment), first Scan2CAD-grade placement
+   evaluation for robot mapping, first asset-placement numbers on Replica.
+
+Contribution list becomes: (i) formulation, (ii) joint refinement algorithm + ablations,
+(iii) layout-error study + benchmark protocol, (iv) the system as vehicle. Phase 3/4
+executors: build per-object refinement first (it's the joint optimizer with N=1 and no
+cross terms), then add cross-object terms — same code path, flag-gated
+(`refine.joint = true`).
+
+### 2.8 Paper repositioning
 
 - **Venue conversation:** "simulation-ready compositional scene reconstruction from a
   robot," not "open-vocab mapping." Contributions: (1) multi-view evidence-accumulating
@@ -361,7 +391,7 @@ MetaScenes), Clio datasets, Replica; baselines (Clio + ConceptGraphs reruns, SAM
 `make_scene`); ablation grid; real-robot scenes rerun with v2. *Accept: all four tables
 filled with mean±std.*
 
-**Phase 6 — Paper rewrite** per 2.7.
+**Phase 6 — Paper rewrite** per 2.7 (novelty strategy) + 2.8 (repositioning).
 
 **Environments:** primary dev env is a **uv project** for `r2s3d_core` (pin Python 3.10
 to match ROS Humble so the same package installs editable inside the docker container).

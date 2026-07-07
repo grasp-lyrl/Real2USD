@@ -143,6 +143,11 @@ and reduced; association decisions inspectable in a per-scene debug HTML/rerun-i
   with Adam lr 1e-2, ≤200 iters, loss = Huber depth residual (masked) +
   (1 - silhouette IoU) + 0.1·upright regularizer, summed over the track's kept views;
   early-stop on plateau. Runs offline after registration; flag-gated.
+- **Design for the joint upgrade (REWORK_PLAN 2.7):** structure the refiner as a scene
+  optimizer from the start — it takes a list of objects; per-object mode is N=1 with
+  cross-object terms disabled. `refine.joint = true` adds pairwise SDF non-penetration +
+  ground-contact terms over all objects' (R,t,s) simultaneously. Same code path, one
+  flag; the per-object-vs-joint ablation falls out.
 
 **Done when:** on Replica, v2 (teaser+refine) beats both sam3d_layout and v1_yaw_sweep
 on Scan2CAD-accuracy and centroid error, with per-stage timing in run.json.
