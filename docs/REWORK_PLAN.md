@@ -336,6 +336,43 @@ cross terms), then add cross-object terms — same code path, flag-gated
   scan; we don't). Anticipate and preempt the "MetaScenes but automated" read by leading
   with autonomy-from-partial-observation as the claim.
 
+### 2.9 Risk register & expected outcomes (be honest with ourselves)
+
+**Where we expect to win / lose:**
+- vs SAM3D layout: near-certain win (structural, not data-dependent) — hence the Phase 3
+  go/no-go.
+- vs Clio/ConceptGraphs on placement (centroid, IoU, Scan2CAD-criterion): confident win —
+  they don't estimate object pose/scale at all. They win runtime; concede it openly.
+- vs dense reconstruction on scene-level geometry fidelity: **we lose by construction**
+  (asset maps approximate surfaces; TSDFs are the surfaces). Never invite scene-level
+  Chamfer/completion comparisons; geometry metrics are per-object vs GT instances only.
+- vs ROCA/DiffCAD on Scan2CAD numbers: uncertain — report their published numbers as
+  reference with the setting caveat (they need CAD DBs + closed categories; we're
+  open-set with generated meshes). Don't claim head-to-head SOTA there.
+- Clean-data effect: benchmarks make baselines stronger than the v1 custom-scene story
+  suggested (SAM3D layout on crisp renders + GT masks will look better than on Go2
+  crops), but clean data helps us symmetrically; placement-ordering should hold because
+  baseline weaknesses are architectural. Expect the motivating-experiment effect size to
+  shrink vs the robot-data anecdotes — measure before writing claims.
+
+**Technical risks (likeliest first):**
+1. FPFH correspondences on smooth, detail-poor generated meshes may be uninformative →
+   TEASER++ starved. Fallbacks: extent-ratio init + rotation search; render-based or
+   learned features if needed. Likeliest Phase 3 stall point.
+2. **Identical-instance paradox:** CLIP re-ID fixes duplicates but falsely merges
+   near-identical neighbors (rows of same chairs) under odometry drift. Spatial gates
+   dominate for same-label association; measure BOTH duplicate rate and false-merge rate
+   (the hallway scene is exactly this case).
+3. Partial-view scale init error under heavy occlusion (front-only chair). Bounds catch
+   gross cases; report failure modes rather than hiding them.
+4. Joint refinement (N-object SDF non-penetration) instability/local minima — built
+   N=1-first, small steps, Isaac settle stays as safety net and ablation arm.
+5. Campaign wall-clock: SAM3D 10–20 s/object × hundreds of objects + baseline reruns in
+   foreign envs = days. Input-hash caching is mandatory from Phase 0; reuse published
+   numbers where the protocol matches exactly.
+6. SAM 3 may also degrade on motion-blurred robot streams — YOLOE fallback is retained
+   for the robot tier, and the detector ablation quantifies the gap.
+
 ---
 
 ## 3. Execution plan for Opus (phased, with acceptance criteria)
