@@ -9,7 +9,9 @@ register it into the metric scene (ICP) → reconcile and export USD/GLB.
 
 The paper was rejected from IROS 2026 and is being reworked for resubmission.
 
-- **Read `docs/REWORK_PLAN.md` before changing anything in `real2sam3d`** — it contains
+- **Read `docs/REWORK_PLAN.md` (strategy) and `docs/PHASE_SPECS.md` (interfaces,
+  resolved decisions, defaults, definitions of done) before changing anything in
+  `real2sam3d`** — the plan contains
   the full assessment of v1 and the phased v2 redesign (ObjectTrack multi-view fusion,
   Sim(3) registration, multi-view refinement, public-benchmark evaluation).
 - `v2-rework` branch: all rework happens here. `main` + tag `v1-iros2026` are the frozen
