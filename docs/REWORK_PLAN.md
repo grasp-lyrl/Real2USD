@@ -234,7 +234,12 @@ table:
 (the *strong* version of the generative baseline), ACDC-style retrieval+bbox-fit, and
 our own v1 pipeline. **Ablations (one row each):** view selection on/off; TEASER++ vs
 FGR vs yaw-sweep; Sim(3) vs fixed scale; multi-view refinement on/off vs per-view-fusion
-arm; retrieval vs generation vs hybrid; physics settle on/off. **Metric additions to
+arm; retrieval vs generation vs hybrid; physics settle on/off; pose-noise sensitivity
+(inject SE(3) perturbations on Replica GT poses — extends the existing
+`evaluations/pose_sensitivity_eval.py` — to preempt the "you assume localization"
+question; all target datasets ship posed RGB-D, so SequenceSource backends are thin
+loaders: iMAP/NICE-SLAM Replica renders via ConceptGraphs' script, ScanNet .sens +
+BundleFusion poses, Clio RealSense rosbags). **Metric additions to
 `evaluations/`:** rotation geodesic error, per-axis scale error, Chamfer/F-score,
 Hungarian (not greedy) matching, multi-run variance.
 
