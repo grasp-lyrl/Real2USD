@@ -260,19 +260,41 @@ Scan2CAD lineage; TEASER++; FoundationPose/Any6D; mesh-quality-vs-pose study 240
 
 ## 3. Execution plan for Opus (phased, with acceptance criteria)
 
-**Phase 0 — Harness first (½ day).** Extend `evaluations/` with rotation/scale/Chamfer/
-F-score + Hungarian matching; script to run metrics on existing v1 outputs
-(`scene_graph.json` + `scene_graph_sam3d_only.json`) so every later phase has a baseline
-number. *Accept:* v1 and sam3d-only rows in one table on one existing bag.*
+**Phase 0 — Dataset + harness + naive baseline (1 day).** The evaluation substrate is
+public data from day one; do NOT baseline against v1's outputs on the custom bags — that
+inherits the rejected evaluation. Steps:
+(a) **Data:** download Replica via ConceptGraphs' scripts (instant, posed RGB-D + GT
+instance meshes/boxes). Same day, submit access requests for ScanNet + Scan2CAD (and
+MetaScenes) — human action, longest pole in the campaign.
+(b) **`SequenceSource` adapter (structural, load-bearing):** one interface yielding
+posed RGB-D frames + intrinsics, with backends for Replica, ScanNet (later), and ros2
+bags. This decouples the pipeline from ROS/Go2 topics and lets every benchmark and the
+robot data flow through the same code.
+(c) **Harness:** extend `evaluations/` with rotation geodesic error, per-axis scale
+error, Chamfer + F-score@5cm/1cm, and Hungarian matching, computed against Replica GT.
+(d) **Naive baseline:** SAM3D per object using its *own predicted layout*, composed via
+`make_scene()` (plus a variant refined by the current v1 ICP path) on 1–2 Replica
+scenes. This row is both the paper's motivating experiment (SAM3D layout error at scene
+scale) and the number every later phase must beat.
+*Accept: one table with SAM3D-layout (+ICP variant) rows on ≥1 Replica scene, all new
+metrics computed end-to-end through the SequenceSource adapter.*
+(The `v1-iros2026` tag/worktree stays frozen; a "vs v1" ablation row is optional —
+regenerate it late by pointing v1 at the same data only if the comparison earns its
+table row. Never a blocker.)
 
-**Phase 1 — frames.py + validation + loud fallbacks (½–1 day).** 2.5 above. *Accept:
-round-trip transform tests pass; v1 numbers unchanged (regression test).*
+**Phase 1 — frames.py + validation + loud fallbacks (½–1 day).** 2.5 above. Structural
+decision: v2 core logic (tracks, frames, registration, fusion) lives in a plain Python
+library importable without ROS (e.g., `r2s3d_core`); ROS2 nodes become thin wrappers.
+This is what makes dataset runs, unit tests, and the benchmark campaign cheap. *Accept:
+round-trip transform tests pass; Phase 0 baseline numbers reproduce exactly through the
+refactored code (regression test).*
 
 **Phase 2 — ObjectTrack node (1–2 days).** `object_track_node` between camera nodes and
 job writer: association (id → centroid/IoU/CLIP), fused per-track cloud (voxel hash),
 view scoring, top-K view buffer; job writer becomes "reconstruct best view of mature
-track." *Accept: on a replayed bag, duplicate-object count drops vs v1; per-track fused
-clouds visualized in rviz; SAM3D job count ≤ v1's.*
+track." *Accept: on a Replica sequence (via SequenceSource) and a replayed bag,
+duplicate-object count drops vs the Phase 0 baseline; per-track fused clouds visualized;
+SAM3D invocations per scene decrease.*
 
 **Phase 3 — Localization stack (2–3 days).** Scale init + TEASER++(Sim(3)) + pt-to-plane
 ICP with soft gravity prior, inside `registration_node` interface; confidence gating; keep

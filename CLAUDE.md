@@ -13,8 +13,11 @@ The paper was rejected from IROS 2026 and is being reworked for resubmission.
   the full assessment of v1 and the phased v2 redesign (ObjectTrack multi-view fusion,
   Sim(3) registration, multi-view refinement, public-benchmark evaluation).
 - `v2-rework` branch: all rework happens here. `main` + tag `v1-iros2026` are the frozen
-  paper baseline (v1 must stay reproducible — it is an ablation row in the resubmission).
-  A frozen v1 worktree may exist at `../Real2USD-v1`.
+  paper state (kept for reproducibility and an *optional* "vs v1" ablation row — never a
+  blocker). A frozen v1 worktree may exist at `../Real2USD-v1`.
+- Baselines and evaluation run on **public datasets** (Replica first, then
+  ScanNet/Scan2CAD) through the `SequenceSource` adapter — not on v1's custom-bag
+  outputs. The number to beat is SAM3D's own predicted layout (`make_scene()`).
 - Future docs go in `docs/`.
 
 ## Layout
