@@ -1,5 +1,14 @@
 # Datasets for the v2 benchmark campaign
 
+## Do-first human checklist (access latency is the campaign's critical path)
+
+- [ ] ScanNet ToS: sign PDF, email per https://github.com/ScanNet/ScanNet
+- [ ] Scan2CAD: request form at https://scan2cad.org
+- [ ] ShapeNetCore.v2: accept license on HF (https://huggingface.co/datasets/ShapeNet/ShapeNetCore)
+- [ ] MetaScenes: Google Form on https://meta-scenes.github.io
+- [ ] Meta SAM 3 checkpoint: request access on HuggingFace (gated, like sam-3d-objects)
+- [ ] Replica: no gate — `bash scripts/datasets/download_replica.sh` (can run unattended)
+
 Target layout on the workstation (matches the pipeline's `/data` convention):
 
 ```
