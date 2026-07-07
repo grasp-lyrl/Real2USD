@@ -139,12 +139,36 @@ ObjectTrack {
 }
 ```
 
-**Association (the multi-view fix #1):** a new `object_track_node` associates incoming
-detections to tracks by: YOLOE track id when available → else Hungarian matching on
-(3D centroid gate from mask-median depth, projected-mask IoU, CLIP cosine). CLIP re-ID is
-what heals track breaks and kills the duplicate-object problem. Merge tracks post-hoc when
-fused clouds overlap (mesh-IoU > 0.3 with same label family) — this replaces the current
-NMS-by-timer.
+**Association (the multi-view fix #1, and the duplicate-instance fix):** a new
+`object_track_node` associates incoming detections to tracks by: detector track id when
+available → else Hungarian matching on (3D centroid gate from mask-median depth,
+projected-mask IoU, CLIP cosine). CLIP re-ID is what heals track breaks (occlusion,
+exit/re-entry, detector flicker — the failure modes a live ROS2 stream has and curated
+dataset frames don't). Duplicates die in three layers: (1) association at ingest;
+(2) generation-once-per-mature-track, so a missed association costs a redundant
+lightweight track, not a redundant mesh; (3) **late merge at reconciliation** — before
+export, merge tracks whose fused clouds/meshes overlap (mesh-IoU > 0.3, compatible label
+family), offline, with all evidence in the common odom frame. The hard streaming case is
+revisits under odometry drift: use a drift-aware association gate (radius grows with
+time-since-last-observation) and rely on CLIP re-ID + layer (3) as the backstop. Track
+duplicate rate (predicted/GT count) as a headline metric — it was v1's main visible
+failure.
+
+**Detector choice:** primary = **Meta SAM 3** (concept-promptable open-vocab detection +
+segmentation + *video tracking*, released with SAM 3D and natively paired with it) with
+a broad noun-phrase prompt list — better track persistence on a jittery robot stream
+directly reduces duplicates at the source, and mask conventions match SAM 3D. YOLOE
+remains as the lightweight fallback and an ablation row ("detector choice"). If SAM 3 is
+too heavy for the robot-side node, run it in the offline/near-online tier — the
+disk-queue architecture is indifferent.
+
+**Label strategy: decouple labeling from detection; never gate generation on a label**
+(v1's silent label-substring drops were its worst semantic failure). The detector
+proposes object regions (class-agnostic or broad-prompt); the *track* accumulates label
+evidence — CLIP/SigLIP or small-VLM voting across its K best views (`label_votes`) —
+which beats any single-frame detector label and feeds retrieval, open-set metrics, and
+the LLM scene graph. Generate-everything (all masks → SAM3D) is ruled out: 10–20 s/object
+and it reconstructs walls/floor; keep an objectness/size/background filter instead.
 
 **View scoring & best-view selection (multi-view fix #2):** score every observation:
 mask area, edge-contact ratio (reuse `tracking_pre_sam3d_filter.json` logic), blur
@@ -346,7 +370,8 @@ Phases 0–3 run there entirely — no ROS. The SAM3D worker stays in its existi
 directories). ROS humble docker only for thin node wrappers, bag replay, and the Clio
 rerun (Phases 2 wrapper + 5). Isaac Sim uses its own `python.sh` (Phase 4).
 
-**Dependency notes for the executor:** TEASER++ (pip `teaserpp-python` or build), Open3D
+**Dependency notes for the executor:** Meta SAM 3 checkpoint (HF-gated like
+sam-3d-objects — request access early, human step), TEASER++ (pip `teaserpp-python` or build), Open3D
 ≥0.18 (point-to-plane, FPFH), nvdiffrast + PyTorch (in the uv env — keep the SAM3D conda
 env frozen), scipy `Rotation` (quaternion mean), ScanNet/Scan2CAD data agreements needed
 early (start downloads Phase 0), Clio datasets public, Replica via ConceptGraphs'
