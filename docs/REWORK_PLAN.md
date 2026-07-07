@@ -313,10 +313,18 @@ filled with mean±std.*
 
 **Phase 6 — Paper rewrite** per 2.7.
 
+**Environments:** primary dev env is a **uv project** for `r2s3d_core` (pin Python 3.10
+to match ROS Humble so the same package installs editable inside the docker container).
+Phases 0–3 run there entirely — no ROS. The SAM3D worker stays in its existing
+`sam3d-objects` conda env, untouched (disk-queue handoff; on datasets the queue is just
+directories). ROS humble docker only for thin node wrappers, bag replay, and the Clio
+rerun (Phases 2 wrapper + 5). Isaac Sim uses its own `python.sh` (Phase 4).
+
 **Dependency notes for the executor:** TEASER++ (pip `teaserpp-python` or build), Open3D
-≥0.18 (point-to-plane, FPFH), nvdiffrast + PyTorch (worker conda env, alongside SAM3D),
-scipy `Rotation` (quaternion mean), ScanNet/Scan2CAD data agreements needed early (start
-downloads Phase 0), Clio datasets public, Replica via ConceptGraphs' scripts.
+≥0.18 (point-to-plane, FPFH), nvdiffrast + PyTorch (in the uv env — keep the SAM3D conda
+env frozen), scipy `Rotation` (quaternion mean), ScanNet/Scan2CAD data agreements needed
+early (start downloads Phase 0), Clio datasets public, Replica via ConceptGraphs'
+scripts.
 
 **Risk fallbacks:** TEASER++ integration stalls → scaled-Umeyama on FPFH
 correspondences inside RANSAC (still Sim(3), still better than v1). nvdiffrast refinement
