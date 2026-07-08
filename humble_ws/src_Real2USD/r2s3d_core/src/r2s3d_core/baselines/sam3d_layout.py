@@ -33,60 +33,29 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 import trimesh
-from scipy.spatial.transform import Rotation
 
+from .. import frames
 from ..data.base import Frame, GTObject
 from ..eval import geometry as geo
 from ..eval.metrics import SceneObject
+from ..frames import validate
 
 log = logging.getLogger(__name__)
 
-# Frame-conversion constants (row-vector convention, from the SAM3D worker's
-# ply_frame_utils.py). We apply them in column-vector form (transpose) below.
-_R_FLIP_Z = np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]], dtype=np.float64)
-_R_YUP_TO_ZUP = np.array([[-1, 0, 0], [0, 0, 1], [0, 1, 0]], dtype=np.float64)
-_R_PYTORCH3D_TO_CAM = np.array([[-1, 0, 0], [0, -1, 0], [0, 0, 1]], dtype=np.float64)
-
-
 # --------------------------------------------------------------- placement math
-
-def raw_to_cam_affine(scale, quat_wxyz, translation) -> Tuple[np.ndarray, np.ndarray]:
-    """Affine (A, b) mapping a raw SAM3D mesh vertex (column) into the OpenCV
-    camera frame:  ``v_cam = A @ v_raw + b``.
-
-    Reproduces the worker chain raw -> pointmap -> camera, translated from the
-    row-vector form ``v @ M`` to column form ``M.T @ v``::
-
-        v_pm  = t + Rrot.T @ diag(s) @ R_yup2zup.T @ R_flipz.T @ v_raw
-        v_cam = R_p3d2cam.T @ v_pm
-    """
-    s = np.asarray(scale, dtype=np.float64).reshape(-1)
-    if s.size == 1:
-        s = np.repeat(s, 3)
-    q = np.asarray(quat_wxyz, dtype=np.float64).reshape(4)
-    Rrot = Rotation.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()  # wxyz -> xyzw
-    t = np.asarray(translation, dtype=np.float64).reshape(3)
-
-    lin_pm = Rrot.T @ np.diag(s) @ _R_YUP_TO_ZUP.T @ _R_FLIP_Z.T
-    A = _R_PYTORCH3D_TO_CAM.T @ lin_pm
-    b = _R_PYTORCH3D_TO_CAM.T @ t
-    return A, b
-
 
 def place_from_sam3d(mesh_raw: trimesh.Trimesh, scale, quat_wxyz, translation,
                      T_world_cam: np.ndarray) -> Tuple[trimesh.Trimesh, np.ndarray, np.ndarray]:
     """Place a raw SAM3D mesh into the world using its predicted layout.
 
-    Returns ``(posed_mesh_world, T_world_obj, extents)`` where the box pose/extents
-    come from the min-volume OBB of the posed mesh (scale may be anisotropic, so
-    the placement is a general affine, not a rigid transform).
+    Uses the consolidated frame chain (``frames.T_cam_raw``) composed with the
+    camera pose. Returns ``(posed_mesh_world, T_world_obj, extents)`` where the box
+    pose/extents come from the min-volume OBB of the posed mesh (scale may be
+    anisotropic, so the placement is a general affine, not a rigid transform).
     """
-    A, b = raw_to_cam_affine(scale, quat_wxyz, translation)
-    Rwc = T_world_cam[:3, :3]
-    twc = T_world_cam[:3, 3]
-    # v_world = Rwc @ (A v_raw + b) + twc
-    Aw = Rwc @ A
-    bw = Rwc @ b + twc
+    T_world_raw = np.asarray(T_world_cam, dtype=np.float64) @ frames.T_cam_raw(scale, quat_wxyz, translation)
+    Aw = T_world_raw[:3, :3]
+    bw = T_world_raw[:3, 3]
 
     v = np.asarray(mesh_raw.vertices, dtype=np.float64)
     v_world = (Aw @ v.T).T + bw
@@ -315,11 +284,17 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
             pending += 1
             continue
         mesh_raw, pose = result
+        # validate SAM3D outputs at the boundary; stamp provenance, don't drop silently
+        val = validate.check_sam3d_scale(pose["sam3d_scale"], raise_on_fail=False)
+        val = val or validate.check_translation(pose["sam3d_translation"], raise_on_fail=False)
+        if val:
+            log.warning("instance %d (%s): suspect SAM3D output — %s", g.instance_id, g.label, val)
         posed, T_world_obj, extents = place_from_sam3d(
             mesh_raw, pose["sam3d_scale"], pose["sam3d_rotation"], pose["sam3d_translation"],
             frame.T_world_cam,
         )
         prov = {"source": "sam3d", "registration": "layout", "view_index": vi,
+                "validation": val,
                 "instance_id": g.instance_id}
 
         if use_icp:

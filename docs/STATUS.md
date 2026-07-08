@@ -15,7 +15,7 @@ _Last updated: 2026-07-07 (end of Phase 0)._
 | Phase | Title | State | Notes |
 |------|-------|-------|-------|
 | 0 | Dataset + harness + naive baseline | 🟢 **done** | harness verified on 8 Replica scenes; SAM3D worker validated + real `sam3d_layout` row on room0 (variant B / all-scene aggregate pending) |
-| 1 | frames.py + validation + loud fallbacks | ⬜ not started | fully unblocked — recommended next |
+| 1 | frames.py + validation + loud fallbacks | 🟢 **done** | `frames/` matches v1 `ply_frame_utils` to 1e-9; Phase 0 numbers reproduce exactly; ROS-node dedup deferred to the Phase 2 wrapper |
 | 2 | ObjectTrack node | ⬜ not started | SAM 3 detector access ([AI-6](ACTION_ITEMS.md)) helps but YOLOE fallback exists |
 | 3 | Localization stack (TEASER++ / ICP / refine) | ⬜ not started | go/no-go gate: must beat sam3d_layout |
 | 4 | Reconciliation + export | ⬜ not started | needs Isaac Sim |
@@ -33,8 +33,15 @@ rotation/scale are now axis-labeling-invariant (min-volume OBB axes are unordere
 naive R-vs-R comparison had inflated rotation 110°→28°, scale 107%→54%). Placement
 composition validated independently (posed mesh sits 3.8 cm from its own depth cloud).
 
-Remaining Phase-0 niceties (optional): `sam3d_layout_icp` (variant B, needs open3d) and
-the all-8-scene aggregate. Next major work: **Phase 1** (`frames.py`).
+Variant B (`sam3d_layout_icp`) done: rigid ICP improves rotation (28→14°)/position but not
+scale → Scan2CAD still ~0, motivating Phase 3 Sim(3). Phase 1 done: `r2s3d_core/frames/`
+is now the single source of frame transforms (SAM3D shape chain + Go2 body chain),
+verified equal to v1 `ply_frame_utils` at 1e-9, with `config/go2_calibration.yaml`,
+boundary validation (`frames/validate.py`), and round-trip/regression tests; Phase 0
+numbers reproduce exactly. Deferred: repointing the 3 ROS nodes + `ply_frame_utils` at
+`frames/` (do it when the Phase 2 ROS wrapper is built — touches the ROS package).
+
+Next major work: **Phase 2** (ObjectTrack node) or the all-8-scene baseline aggregate.
 
 ## Phase 0 — detail
 

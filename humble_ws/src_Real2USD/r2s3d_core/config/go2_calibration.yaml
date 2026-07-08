@@ -1,0 +1,10 @@
+# Unitree Go2 camera extrinsic (front camera pose in the odom body frame).
+# v1 hardcoded this same value in three ROS nodes (lidar_cam_node.py:126,
+# realsense_cam_node.py:45, sam3d_glb_registration_bridge_node.py:37) and in
+# ply_frame_utils (t_world_to_camera). Single source now; frames.T_odom_cam_go2
+# reads it, ROS wrappers should too.
+go2:
+  # camera translation in the odom body frame (meters)
+  t_body_cam: [0.285, 0.0, 0.01]
+  # odom orientation quaternion order as published by the Go2 driver
+  odom_quat: xyzw   # xyzw (ROS default) | wxyz
