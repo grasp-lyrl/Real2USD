@@ -144,8 +144,10 @@ def evaluate(preds: List[SceneObject], gts: List[SceneObject],
         p, g = preds[pi], gts[gi]
         c_err = float(np.linalg.norm(p.T_world_obj[:3, 3] - g.T_world_obj[:3, 3]))
         sym = symmetry_for_label(g.label)
-        r_err = geo.rotation_error_deg(p.T_world_obj[:3, :3], g.T_world_obj[:3, :3], sym)
-        s_err = geo.scale_ratio_error(p.extents, g.extents)
+        # axis-labeling-invariant orientation + scale (min-volume OBB axes are
+        # unordered; naive R-vs-R comparison overstates rotation error massively).
+        r_err, s_err = geo.box_pose_error(
+            p.T_world_obj[:3, :3], p.extents, g.T_world_obj[:3, :3], g.extents, sym)
         s_err_max = float(np.max(s_err))
         centroid_err.append(c_err)
         rot_err.append(r_err)

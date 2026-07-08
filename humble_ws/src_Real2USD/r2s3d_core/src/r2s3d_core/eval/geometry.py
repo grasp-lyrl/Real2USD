@@ -138,6 +138,55 @@ def scale_ratio_error(extents_pred: np.ndarray, extents_gt: np.ndarray) -> np.nd
     return np.abs(pred / gt - 1.0)
 
 
+def _cube_rotations() -> list:
+    """The 24 proper rotations of a cube (signed permutation matrices, det +1)."""
+    import itertools
+
+    mats = []
+    for perm in itertools.permutations(range(3)):
+        for signs in itertools.product((1, -1), repeat=3):
+            M = np.zeros((3, 3))
+            for i, p in enumerate(perm):
+                M[i, p] = signs[i]
+            if abs(np.linalg.det(M) - 1.0) < 1e-6:
+                mats.append(M)
+    return mats
+
+
+_CUBE_ROTATIONS = _cube_rotations()
+
+
+def box_pose_error(R_pred, ext_pred, R_gt, ext_gt, symmetry: str = "none"):
+    """Axis-labeling-invariant orientation + scale error for two oriented boxes.
+
+    A box's principal axes have no intrinsic labels/signs, so the min-volume OBB of a
+    predicted mesh may name its axes in any order relative to canonical GT axes.
+    Comparing raw rotation matrices then wildly overstates the error (e.g. a correctly
+    oriented object reads as ~180 deg). This resolves the correspondence by choosing
+    the cube symmetry g that best aligns the predicted frame to GT (on top of the
+    class's yaw symmetry group), and reports the per-axis scale ratio error under that
+    same correspondence — so rotation and scale stay physically consistent.
+
+    Returns ``(rotation_deg, scale_err_per_axis)``.
+    """
+    Rp = np.asarray(R_pred, dtype=np.float64)
+    Rg = np.asarray(R_gt, dtype=np.float64)
+    ep = np.asarray(ext_pred, dtype=np.float64)
+    eg = np.maximum(np.asarray(ext_gt, dtype=np.float64), 1e-9)
+    yaws = _SYMMETRY_YAWS.get(symmetry, _SYMMETRY_YAWS["none"])
+    Rg_sym = [Rg @ _Rz(t) for t in yaws]
+
+    best_rot, best_ext = 180.0, np.abs(ep)
+    for g in _CUBE_ROTATIONS:
+        Ra = Rp @ g
+        rot = min(rotation_geodesic_deg(Ra, Rgs) for Rgs in Rg_sym)
+        if rot < best_rot:
+            best_rot = rot
+            best_ext = np.abs(g.T @ ep)  # extents reordered to GT axes
+    scale_err = np.abs(best_ext / eg - 1.0)
+    return best_rot, scale_err
+
+
 # ---------------------------------------------------------- Chamfer / F-score
 
 def sample_surface(mesh, n: int = 10000, seed: int = 0) -> np.ndarray:

@@ -88,6 +88,27 @@ def test_scale_ratio_error():
     np.testing.assert_allclose(err, [1.0, 0.0, 0.0], atol=1e-9)
 
 
+def test_box_pose_error_relabel_invariant():
+    # same physical box with axes relabeled by a cube rotation -> ~0 rot & scale error
+    eg = np.array([2.0, 1.0, 0.5])
+    g = np.array([[0, 0, 1.0], [1, 0, 0], [0, 1, 0]])  # cyclic perm, det +1
+    Rp = np.eye(3) @ g
+    ep = np.abs(g.T @ eg)
+    rot, serr = geo.box_pose_error(Rp, ep, np.eye(3), eg, "none")
+    assert rot < 1e-6
+    assert serr.max() < 1e-6
+
+
+def test_box_pose_error_wrong_aspect_penalized_by_scale():
+    # 90deg-rotated elongated box: rotation resolves small, but scale error stays large
+    Rg, eg = np.eye(3), np.array([2.0, 1.0, 0.5])
+    th = np.radians(90)
+    Rp = np.array([[np.cos(th), -np.sin(th), 0], [np.sin(th), np.cos(th), 0], [0, 0, 1.0]])
+    ep = np.array([2.0, 1.0, 0.5])  # labels NOT swapped -> long axis now along world y
+    rot, serr = geo.box_pose_error(Rp, ep, Rg, eg, "none")
+    assert serr.max() > 0.5  # mismatch shows up as scale error
+
+
 # ----------------------------------------------------------- Chamfer/F-score
 
 def test_chamfer_identical_mesh():

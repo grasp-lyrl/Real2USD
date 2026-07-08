@@ -18,15 +18,40 @@ Tip: for interactive logins/commands, you can run them in this session by typing
 ### [ ] AI-1 — Set up the SAM 3D worker on this desktop
 **Blocks:** Phase 0 `sam3d_layout` / `sam3d_layout_icp` numbers (the paper's motivating
 layout-error experiment) and Phase 2/3 mesh generation.
-**Why Claude can't:** the checkpoint is HF-gated and needs your account; the conda env +
-external repo aren't on this desktop (`conda env list` empty, no repo clone).
-**Do:**
-1. Clone the fork used in v1: `christopher-hsu/sam-3d-objects` (repo expects `notebook/`
-   + `checkpoints/`).
-2. Create the `sam3d-objects` conda env (`sam3d_setup.sh`).
-3. Obtain the gated SAM 3D (sam-3d-objects, arXiv 2511.16624) checkpoint on HuggingFace.
-4. Tell Claude the paths; Claude will run the worker against the queue at
-   `~/Data/datasets/sam3d_queue` and fill the baseline rows (outputs are input-hash cached).
+**Why Claude can't:** the checkpoint is HF-gated and needs your account (accept license +
+token). Everything else Claude can do locally.
+
+**GPU note:** this desktop has an **RTX 5090 (Blackwell / sm_120, 32 GB)** — the stock
+`environments/default.yml` (CUDA 12.1 / torch 2.5 cu121) will NOT run on it. Use the
+repo's **"installation with 5090"** recipe: torch 2.8.0 cu128 + `sam3d-objects-single.yml`
+(root of the clone; uses `cuda-nvcc 12.8.93`, `spconv-cu120`, `gsplat 1.5.3` wheel; drops
+`flash_attn`/`xformers`/`kaolin` from hard deps). `sam3d_setup.sh` is the OLD cu121 flow —
+do not use as-is.
+
+**Done (Claude, 2026-07-08):**
+- Clone present at `real2sam3d/sam-3d-objects/` (correct fork).
+- Installed miniforge → `~/miniforge3` (conda 26.3.2 + mamba 2.5.0, `conda init bash`).
+  `hf` CLI in miniforge base (`~/miniforge3/bin/hf`).
+- **`sam3d-objects` env fully built + validated on the RTX 5090**: torch 2.8 cu128 +
+  `single.yml` (spconv-cu120, gsplat, MoGe, …) + pytorch3d 0.7.8 built from source.
+  Worker import path verified (`from inference import Inference, …` loads clean, GPU seen).
+- kaolin skipped (patched out — see below). `sam3d_setup.sh` rewritten to the 5090 recipe.
+- **[human]** HF login done (`chrishsu`); gated checkpoint downloading → `checkpoints/hf/`.
+
+**Fork patches committed + pushed** to `christopher-hsu/sam-3d-objects` main (commit
+`20081af`): `notebook/inference.py` (kaolin viz imports optional), `flexicubes.py` (kaolin
+`check_tensor` → new `sam3d_objects/utils/kaolin_compat.py` shim). Fresh clones get them.
+
+**Checkpoint downloaded**: `checkpoints/hf/` (13 GB, `pipeline.yaml` present).
+
+**End-to-end smoke test PASSED (2026-07-08):** loaded pipeline from `checkpoints/hf`
+(72s) + inference on the kidsroom sample (32s) → full output (scale/rotation/translation/
+mesh/glb/gs). Env + checkpoint + kaolin/pytorch3d patches confirmed working on the 5090.
+
+**Remaining:**
+1. **[Claude]** Run the worker against `~/Data/datasets/sam3d_queue` and fill the
+   `sam3d_layout` baseline rows (input-hash cached, so reruns are free). This needs real
+   queue jobs, which come from a Phase-0 eval run feeding the queue.
 
 ### [ ] AI-2 — ScanNet v2 access  *(start early: days-long latency)*
 **Blocks:** Phase 5 placement table. **Do:** sign the ScanNet ToS PDF and email per

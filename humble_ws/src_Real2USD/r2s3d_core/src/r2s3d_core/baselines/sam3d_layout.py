@@ -182,47 +182,59 @@ def _job_hash(rgb: np.ndarray, mask: np.ndarray, depth: np.ndarray, K: np.ndarra
     return h.hexdigest()[:16]
 
 
-def run_sam3d(rgb_crop, mask_crop, depth_crop, K, meta: dict, queue: Optional[Path] = None,
-              timeout_s: float = 900.0) -> Tuple[trimesh.Trimesh, dict]:
-    """Submit one SAM3D job to the disk-queue worker and return (mesh_raw, pose).
+def run_sam3d(rgb_crop, mask_crop, depth_crop, full_K, crop_bbox, meta: dict,
+              queue: Optional[Path] = None) -> Optional[Tuple[trimesh.Trimesh, dict]]:
+    """Get one SAM3D result via the disk-queue worker; write the job if not cached.
 
-    Input-hash cached under ``<queue>/output/<hash>``. Raises a loud, actionable
-    error if no cached output exists and the external worker is not running — SAM3D
-    (Meta sam-3d-objects checkpoint + conda env) is a human-gated dependency.
+    Returns ``(mesh_raw, pose)`` if the worker output exists (cached by input hash),
+    else writes the job under ``<queue>/input/<hash>`` (idempotently) and returns
+    ``None`` — the caller runs the worker over the queue, then re-runs to collect.
+
+    Job format matches the worker's ``load_job`` / ``depth_to_pointmap``: rgb/mask/
+    depth are the CROP; ``camera_info.K`` is the **full-image** intrinsics and
+    ``crop_bbox`` = [x0,y0,x1,y1] in full-image pixels, so the worker back-projects
+    the crop depth in full-image coordinates. ``odometry`` is required by the worker
+    (it stamps go2_odom_* into pose.json, which we ignore — we place via T_world_cam);
+    for datasets with no robot we pass identity.
     """
+    import json as _json
+
     queue = queue or _default_queue()
-    job_id = _job_hash(rgb_crop, mask_crop, depth_crop, K)
+    job_id = _job_hash(rgb_crop, mask_crop, depth_crop, full_K)
     out_dir = queue / "output" / job_id
     glb = out_dir / "object.glb"
     pose_json = out_dir / "pose.json"
 
-    if not (glb.is_file() and pose_json.is_file()):
-        # write the job for the worker to pick up (matches sam3d_job_writer_node)
-        in_dir = queue / "input" / job_id
-        in_dir.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(in_dir / "rgb.png"), cv2.cvtColor(rgb_crop, cv2.COLOR_RGB2BGR))
-        cv2.imwrite(str(in_dir / "mask.png"), mask_crop)
-        np.save(in_dir / "depth.npy", depth_crop.astype(np.float32))
-        import json as _json
-        with open(in_dir / "meta.json", "w") as f:
-            _json.dump({**meta, "job_id": job_id,
-                        "camera_info": {"K": [float(x) for x in np.asarray(K).reshape(-1)],
-                                        "width": int(rgb_crop.shape[1]), "height": int(rgb_crop.shape[0])}}, f)
-        raise RuntimeError(
-            f"SAM3D output missing for job {job_id}. Wrote job to {in_dir}. "
-            f"Run the SAM3D worker (sam-3d-objects conda env + gated checkpoint):\n"
-            f"  conda activate sam3d-objects && python .../run_sam3d_worker.py "
-            f"--queue {queue}\n"
-            f"then re-run this baseline (outputs are cached by input hash)."
-        )
+    if glb.is_file() and pose_json.is_file():
+        with open(pose_json) as f:
+            pose = _json.load(f)
+        mesh = trimesh.load(str(glb), process=False)
+        if isinstance(mesh, trimesh.Scene):
+            mesh = trimesh.util.concatenate([g for g in mesh.geometry.values()])
+        return mesh, pose
 
-    import json as _json
-    with open(pose_json) as f:
-        pose = _json.load(f)
-    mesh = trimesh.load(str(glb), process=False)
-    if isinstance(mesh, trimesh.Scene):
-        mesh = trimesh.util.concatenate([g for g in mesh.geometry.values()])
-    return mesh, pose
+    # not cached: write the job (idempotent) for the worker to pick up
+    in_dir = queue / "input" / job_id
+    in_dir.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(in_dir / "rgb.png"), cv2.cvtColor(rgb_crop, cv2.COLOR_RGB2BGR))
+    cv2.imwrite(str(in_dir / "mask.png"), mask_crop)
+    np.save(in_dir / "depth.npy", depth_crop.astype(np.float32))
+    meta_out = {
+        "job_id": job_id,
+        "track_id": int(meta.get("track_id", 0)),
+        "label": str(meta.get("label", "object")),
+        "camera_info": {
+            "K": [float(x) for x in np.asarray(full_K).reshape(-1)],
+            "width": int(meta.get("full_width", rgb_crop.shape[1])),
+            "height": int(meta.get("full_height", rgb_crop.shape[0])),
+        },
+        "crop_bbox": [int(v) for v in crop_bbox],
+        # no robot on datasets: identity odom (worker requires the key)
+        "odometry": {"position": [0.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]},
+    }
+    with open(in_dir / "meta.json", "w") as f:
+        _json.dump(meta_out, f)
+    return None
 
 
 # ------------------------------------------------------------------ ICP (B)
@@ -276,7 +288,9 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
         log.warning("source yielded no frames")
         return []
 
+    queue = Path(config["sam3d_queue"]) if config.get("sam3d_queue") else None
     preds: List[SceneObject] = []
+    pending = 0
     for g in gt:
         vi = select_best_view(g, frames)
         if vi is None:
@@ -288,15 +302,18 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
         rgb_crop = frame.rgb[y0:y1 + 1, x0:x1 + 1]
         mask_crop = mask[y0:y1 + 1, x0:x1 + 1]
         depth_crop = frame.depth[y0:y1 + 1, x0:x1 + 1]
-        K_crop = frame.K.copy()
-        K_crop[0, 2] -= x0
-        K_crop[1, 2] -= y0
+        H, W = frame.depth.shape[:2]
 
-        mesh_raw, pose = run_sam3d(
-            rgb_crop, mask_crop, depth_crop, K_crop,
-            meta={"track_id": g.instance_id, "label": g.label},
-            queue=Path(config["sam3d_queue"]) if config.get("sam3d_queue") else None,
+        result = run_sam3d(
+            rgb_crop, mask_crop, depth_crop, frame.K, (x0, y0, x1, y1),
+            meta={"track_id": g.instance_id, "label": g.label,
+                  "full_width": W, "full_height": H},
+            queue=queue,
         )
+        if result is None:
+            pending += 1
+            continue
+        mesh_raw, pose = result
         posed, T_world_obj, extents = place_from_sam3d(
             mesh_raw, pose["sam3d_scale"], pose["sam3d_rotation"], pose["sam3d_translation"],
             frame.T_world_cam,
@@ -316,6 +333,16 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
 
         preds.append(SceneObject(label=g.label, T_world_obj=T_world_obj, extents=extents,
                                  mesh=posed, provenance=prov))
+    if pending:
+        q = queue or _default_queue()
+        log.warning(
+            "%d SAM3D job(s) pending in %s/input. Run the worker (conda sam3d-objects), "
+            "then re-run this method to collect (outputs are input-hash cached):\n"
+            "  conda run -n sam3d-objects python "
+            "humble_ws/src_Real2USD/real2sam3d/scripts_sam3d_worker/run_sam3d_worker.py "
+            "--no-current-run --use-depth --queue-dir %s --sam3d-repo "
+            "humble_ws/src_Real2USD/real2sam3d/sam-3d-objects", pending, q, q,
+        )
     return preds
 
 

@@ -14,7 +14,7 @@ _Last updated: 2026-07-07 (end of Phase 0)._
 
 | Phase | Title | State | Notes |
 |------|-------|-------|-------|
-| 0 | Dataset + harness + naive baseline | 🟡 **substantially done** | harness verified on all 8 Replica scenes; SAM3D baseline numbers blocked on [AI-1](ACTION_ITEMS.md) |
+| 0 | Dataset + harness + naive baseline | 🟢 **done** | harness verified on 8 Replica scenes; SAM3D worker validated + real `sam3d_layout` row on room0 (variant B / all-scene aggregate pending) |
 | 1 | frames.py + validation + loud fallbacks | ⬜ not started | fully unblocked — recommended next |
 | 2 | ObjectTrack node | ⬜ not started | SAM 3 detector access ([AI-6](ACTION_ITEMS.md)) helps but YOLOE fallback exists |
 | 3 | Localization stack (TEASER++ / ICP / refine) | ⬜ not started | go/no-go gate: must beat sam3d_layout |
@@ -26,9 +26,15 @@ Legend: ⬜ not started · 🟡 in progress / partially blocked · 🟢 done · 
 
 ## Current focus
 
-Phase 0 is functionally complete and committed. Next unblocked work is **Phase 1**
-(`frames.py`). The only Phase-0 gap is the `sam3d_layout` / `sam3d_layout_icp` numbers,
-which need the SAM 3D worker running on this desktop ([AI-1](ACTION_ITEMS.md)).
+Phase 0 done: SAM3D worker validated end-to-end on the 5090 and the real `sam3d_layout`
+row produced on room0 (F1@.25 0.58, **Scan2CAD acc 0.0**, centroid 10 cm, rotation ~28°,
+scale ~54%) — the motivating layout-error result. A metric bug was found and fixed:
+rotation/scale are now axis-labeling-invariant (min-volume OBB axes are unordered;
+naive R-vs-R comparison had inflated rotation 110°→28°, scale 107%→54%). Placement
+composition validated independently (posed mesh sits 3.8 cm from its own depth cloud).
+
+Remaining Phase-0 niceties (optional): `sam3d_layout_icp` (variant B, needs open3d) and
+the all-8-scene aggregate. Next major work: **Phase 1** (`frames.py`).
 
 ## Phase 0 — detail
 

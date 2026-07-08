@@ -1,5 +1,5 @@
 {
-  "git_sha": "1bfc7ba004b11704cd4275fcc51199c53c4118fa",
+  "git_sha": "e05b8dd3266c29c29afc3b1e37602573f85e2417",
   "config": {
     "method": "oracle",
     "source": "replica",
@@ -35,7 +35,7 @@
       "centroid_err_median_m": 0.0,
       "centroid_err_mean_m": 0.0,
       "rotation_err_median_deg": 0.0,
-      "rotation_err_mean_deg": 6.547326172861329e-07,
+      "rotation_err_mean_deg": 6.266531226413484e-07,
       "scale_err_median": 0.0,
       "scale_err_mean": 0.0,
       "chamfer_l1_median_m": 0.0058916743756322575,
@@ -61,7 +61,7 @@
         "centroid_err_median_m": 0.0,
         "centroid_err_mean_m": 0.0,
         "rotation_err_median_deg": 0.0,
-        "rotation_err_mean_deg": 6.547326172861329e-07,
+        "rotation_err_mean_deg": 6.266531226413484e-07,
         "scale_err_median": 0.0,
         "scale_err_mean": 0.0,
         "chamfer_l1_median_m": 0.0058916743756322575,
@@ -70,6 +70,6 @@
       }
     }
   },
-  "wall_time_s": 1.8133761882781982,
-  "created_at": "2026-07-07T16:19:58"
+  "wall_time_s": 2.0940163135528564,
+  "created_at": "2026-07-08T14:21:56"
 }
