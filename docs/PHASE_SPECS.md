@@ -62,27 +62,53 @@ class GTObject(NamedTuple):
 
 ## Phase 0 — dataset + harness + naive baseline
 
-**Resolved design decision:** the SAM3D-layout baseline uses **GT instance masks**
-(project GT instance ids into each frame; take the rendered semantic/instance images if
-present, else rasterize GT meshes). This isolates *layout error* from detection error —
-it is the motivating experiment ("even with perfect masks, SAM3D placement is off by X").
-A detector-driven variant is Phase 2+ material, not Phase 0.
+**Resolved design decision:** the SAM3D-layout baseline uses **GT instance masks** to
+isolate *layout error* from detection error — the motivating experiment ("even with
+perfect masks, SAM3D placement is off by X"). A detector-driven variant is Phase 2+.
 
-Baseline procedure per scene: sample every 20th frame; for each GT instance pick the
-single best mask (largest visible area, not touching image border); run SAM3D on that
-crop+mask; place the mesh via SAM3D's predicted layout composed with that frame's
-T_world_cam; variant B additionally refines with the v1-style ICP against masked depth.
-Cache SAM3D outputs per (scene, instance) — they're expensive; the cache is keyed by
-input hash so reruns are free.
+*Masks are always rendered, not provided.* The NICE-SLAM Replica release ships no
+instance/semantic images, so `render_instance_mask` rasterizes each GT object's mesh
+into a frame (project faces with z>0, `cv2.fillPoly`). Caveat: this is the object's full
+silhouette — occlusion by *other* objects is not modeled (occlusion-aware masking is a
+possible refinement; it did not bite in Phase 0).
+
+*One view per object, on purpose.* An object is visible in ~100 sampled frames;
+`select_best_view` picks the **single best** (largest visible mask area, excluding views
+whose mask touches the image border; falls back to largest-area if all touch it) and
+SAM3D runs **once** on that crop. Phase 0 does **not** fuse multiple views — single-best-
+view is exactly the v1 weakness that **Phase 2 (ObjectTrack multi-view fusion)** exists to
+beat. So the Phase 0 number is the "best single view + SAM3D layout" baseline.
+
+Baseline procedure per scene: sample every 20th frame; select best view per GT instance
+(above); run SAM3D via the disk-queue worker on that crop+mask (+depth pointmap); place
+the mesh via SAM3D's predicted layout composed with that frame's `T_world_cam` (variant A);
+variant B additionally refines with the v1-style ICP against masked depth. SAM3D outputs
+are cached by **input hash** under `$SAM3D_QUEUE` — reruns are free. The eval writes all
+pending jobs in one pass and reports partial results with a loud pending message; run the
+worker (`conda run -n sam3d-objects ...`) then re-run to collect.
+
+Job/worker contract (learned the hard way): the worker builds the depth pointmap from the
+crop using the **full-image K + `crop_bbox`** (not a crop-adjusted K) and **requires** a
+`meta.odometry` field (identity for datasets with no robot). The worker reads
+`CONDA_PREFIX`, so launch it via `conda run`/activation, not the env's python directly.
 
 **Metric definitions (r2s3d_core/eval/metrics.py):**
 - Matching: Hungarian on 3D oriented-box IoU, threshold 0.25 (report 0.5 as secondary).
   Label-agnostic matching by default; label correctness reported separately (this
   decouples geometry from semantics — v1 conflated them).
-- Per matched pair: centroid L2 (m); rotation geodesic error (deg) with **symmetry
-  handling** — per-class symmetry group (Scan2CAD convention: e.g. round tables C∞ →
-  yaw-invariant, rectangular tables C2); per-axis scale ratio error; Chamfer-L1 and
-  F-score@5cm (and @2cm) on 10k surface-sampled points in world frame.
+- Per matched pair: centroid L2 (m); rotation error (deg) and per-axis scale ratio error,
+  both **axis-labeling-invariant** (`geo.box_pose_error`); Chamfer-L1 and F-score@5cm (and
+  @2cm) on 10k surface-sampled points in world frame.
+  - **Why labeling-invariant (load-bearing, cost us a scare):** predicted orientation
+    comes from the min-volume OBB of the posed mesh, whose principal-axis *order and sign
+    are arbitrary*. Naively comparing that rotation matrix to the canonically-labeled GT
+    axes inflated rotation error massively (~110° where the object was actually ~28° off)
+    and scale likewise. `box_pose_error` resolves the correspondence over the 24 cube
+    symmetries (composed with the class's yaw-symmetry group), then reports scale error
+    under that *same* alignment — so a genuinely 90°-flipped elongated box reads as low
+    rotation + high scale (and still fails IoU/Scan2CAD, correctly). IoU/F1 were always
+    labeling-invariant. General lesson: rotations on boxes are only defined up to the box's
+    symmetry — never compare raw OBB rotation matrices.
 - Scan2CAD alignment accuracy: fraction of GT with a prediction within 20cm ∧ 20° ∧
   20% scale.
 - Scene-level: precision/recall/F1 at IoU 0.25; **duplicate rate** = (matched
@@ -92,6 +118,20 @@ input hash so reruns are free.
 **Done when:** `python -m r2s3d_core.eval.run --source replica --scene room0 --method
 sam3d_layout` produces run.json with all metrics on ≥1 scene, plus variant B; a table
 script renders both rows.
+
+**Verified (room0, 43 objects, perfect GT masks + depth) — the motivating result:**
+F1@.25 0.58, R@.5 0.05, **Scan2CAD acc 0.00**, centroid 10 cm, rotation ~28°, scale ~54%.
+SAM3D is a strong shape prior but a weak metric localizer: depth anchors *position* well,
+but rotation and (especially) scale are far past the 20°/20% gates, so 0/43 objects meet
+the Scan2CAD criterion. Placement composition validated independently (posed SAM3D mesh
+sits **3.8 cm median** from its own masked-depth cloud → the frame math is correct; the
+error is SAM3D's, not ours). Every later phase must beat this.
+
+**Inspection exports:** `r2s3d_core/recon/scene_glb.py` writes viewable pred/gt/compare
+GLBs. SAM3D meshes are ~650k faces each (a full room ≈ 400 MB), so exports default to a
+**lite** version — decimated to ~6k faces/object (`fast-simplification`, `uv sync --extra
+viz`) → ~5–8 MB, pose/shape preserved. Rule: **debug views = lite by default, full-
+fidelity opt-in** for figures/deliverables. Exported `.glb` stay gitignored.
 
 ## Phase 1 — frames + validation
 
