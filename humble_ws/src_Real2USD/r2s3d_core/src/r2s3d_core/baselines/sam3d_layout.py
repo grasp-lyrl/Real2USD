@@ -36,6 +36,7 @@ import trimesh
 from scipy.spatial.transform import Rotation
 
 from ..data.base import Frame, GTObject
+from ..eval import geometry as geo
 from ..eval.metrics import SceneObject
 
 log = logging.getLogger(__name__)
@@ -322,12 +323,17 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
                 "instance_id": g.instance_id}
 
         if use_icp:
+            # source points are already placed in world (posed via the layout), so ICP
+            # refines from identity and returns a world-frame delta (source -> target).
             target = _masked_depth_cloud(frame, mask)
-            src_pts = np.asarray(posed.sample(2000)) if len(posed.faces) else posed.vertices
-            T_ref, info = refine_icp(src_pts, target, T_world_obj)
-            delta = T_ref @ np.linalg.inv(T_world_obj)
+            if len(posed.faces):
+                src_pts = geo.sample_surface(posed, 2000, seed=g.instance_id)  # seeded -> reproducible
+            else:
+                src_pts = posed.vertices
+            delta, info = refine_icp(src_pts, target, np.eye(4))
             posed.apply_transform(delta)
-            T_world_obj = T_ref
+            T_world_obj = delta @ T_world_obj
+            extents = np.asarray(posed.bounding_box_oriented.primitive.extents, dtype=np.float64)
             prov["registration"] = "layout+icp"
             prov["icp"] = info
 
