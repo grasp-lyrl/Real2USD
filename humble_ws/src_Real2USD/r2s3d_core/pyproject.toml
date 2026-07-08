@@ -26,6 +26,10 @@ registration = [
 dev = [
     "pytest>=8.0",
 ]
+# mesh decimation for lite GLB inspection exports (recon/scene_glb.py)
+viz = [
+    "fast-simplification>=0.1",
+]
 
 [build-system]
 requires = ["hatchling"]
