@@ -63,6 +63,15 @@ def run(args: argparse.Namespace) -> Path:
         "scale_noise": args.scale_noise,
         "full_frame": args.full_frame,
         "icp_accumulate": args.icp_accumulate,
+        # object_track (Phase 2)
+        "detections": args.detections,
+        "reid": args.reid,
+        "late_merge": args.late_merge,
+        "v1_dedup": args.v1_dedup,
+        "icp": args.icp,
+        "debug_html": args.debug_html,
+        "corrupt": {"dropout": args.det_dropout, "jitter_px": args.det_jitter,
+                    "track_break": args.det_track_break, "split": args.det_split_prob},
     }
 
     per_scene = {}
@@ -79,11 +88,16 @@ def run(args: argparse.Namespace) -> Path:
         m = evaluate(preds, gts, iou_threshold=args.iou_threshold,
                      compute_geometry=config["compute_geometry"],
                      surface_points=args.surface_points)
+        # merge any method-reported scene stats (e.g. object_track SAM3D invocations,
+        # fragmentation) into the scene metrics so they land in run.json + aggregate.
+        m.update(config.get("_method_stats", {}).get(scene, {}))
         per_scene[scene] = m
         print(f"[{scene}] pred={m['n_pred']} gt={m['n_gt']} "
               f"F1={m['f1']:.3f} S2C={m['scan2cad_accuracy']:.3f} "
               f"cent={m['centroid_err_median_m']:.3f}m rot={m['rotation_err_median_deg']:.1f}deg "
-              f"dup={m['duplicate_rate']:.2f}")
+              f"dup={m['duplicate_rate']:.2f}"
+              + (f" sam3d={m['sam3d_invocations']} tracks/gt={m.get('tracks_per_gt', float('nan')):.2f}"
+                 if "sam3d_invocations" in m else ""))
 
     # aggregate across scenes (mean of per-scene metrics that are scalar and finite)
     agg = {}
@@ -97,7 +111,7 @@ def run(args: argparse.Namespace) -> Path:
 
     record = {
         "git_sha": _git_sha(),
-        "config": config,
+        "config": {k: v for k, v in config.items() if not k.startswith("_")},
         "dataset": args.source,
         "scenes": list(args.scene),
         "metrics": {"aggregate": agg, "per_scene": per_scene},
@@ -106,7 +120,7 @@ def run(args: argparse.Namespace) -> Path:
     }
 
     name = args.name or f"{args.source}_{args.method}"
-    out_dir = Path(args.out) if args.out else DEFAULT_RESULTS / f"phase0_{name}"
+    out_dir = Path(args.out) if args.out else DEFAULT_RESULTS / f"{args.phase}_{name}"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "run.json"
     with open(out_path, "w") as f:
@@ -126,6 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-geometry", action="store_true", help="skip Chamfer/F-score (faster)")
     p.add_argument("--surface-points", type=int, default=10000)
     p.add_argument("--name", default=None, help="results subdir name")
+    p.add_argument("--phase", default="phase0", help="results subdir prefix (e.g. phase2)")
     p.add_argument("--out", default=None, help="explicit output dir")
     # sam3d_layout: full frame (default) vs tight crop fed to SAM3D
     p.add_argument("--crop", dest="full_frame", action="store_false",
@@ -135,6 +150,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--icp-accumulate", action="store_true",
                    help="sam3d_layout_icp: fuse the object's masked depth over ALL views as "
                         "the ICP target (default single best view). Proto multi-view fusion.")
+    # object_track (Phase 2): detector-driven tracks
+    p.add_argument("--detections", default=None,
+                   help="dir of cached DetectionSets (from `python -m r2s3d_core.detect.run`)")
+    p.add_argument("--reid", dest="reid", action="store_true", default=None,
+                   help="force re-ID (step-2 association) on")
+    p.add_argument("--no-reid", dest="reid", action="store_false",
+                   help="force re-ID off (object_track_naive default)")
+    p.add_argument("--late-merge", dest="late_merge", action="store_true", default=None,
+                   help="force late-merge on")
+    p.add_argument("--no-late-merge", dest="late_merge", action="store_false",
+                   help="force late-merge off")
+    p.add_argument("--v1-dedup", action="store_true",
+                   help="object_track_naive: add v1's 0.5 m same-label position suppression")
+    p.add_argument("--icp", action="store_true",
+                   help="object_track: refine each track against its fused multi-view cloud")
+    p.add_argument("--det-dropout", type=float, default=0.0, help="corruption: drop-detection prob")
+    p.add_argument("--det-jitter", type=int, default=0, help="corruption: bbox/mask jitter px")
+    p.add_argument("--det-track-break", type=float, default=0.0, help="corruption: id-break prob")
+    p.add_argument("--det-split-prob", type=float, default=0.0,
+                   help="corruption: split one detection into two (fragmentation stress)")
+    p.add_argument("--debug-html", default=None,
+                   help="object_track: dir to write per-scene association/merge debug HTML")
     # oracle_noisy knobs
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--trans-noise-m", type=float, default=0.05)

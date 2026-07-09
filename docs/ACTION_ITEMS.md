@@ -72,9 +72,13 @@ license at https://huggingface.co/datasets/ShapeNet/ShapeNetCore. See `DATASETS.
 **Blocks:** Phase 5 (alt sim-ready GT + Scan2Sim baseline). **Do:** Google Form on
 https://meta-scenes.github.io. See `DATASETS.md §3`.
 
-### [ ] AI-6 — Meta SAM 3 checkpoint (detector)
-**Blocks:** Phase 2 primary detector (YOLOE is the fallback, so not hard-blocking). **Do:**
-request access on HuggingFace (gated, like sam-3d-objects). See `DATASETS.md`.
+### [ ] AI-6 — Meta SAM 3 checkpoint (detector)  *(not blocking — YOLOE is live)*
+**Blocks:** nothing hard. Phase 2 runs on **YOLOE** (ungated `ultralytics`, auto-downloads
+weights, installed via the `detector` uv extra + torch cu128; validated on the 5090
+2026-07-08). SAM 3 is the *gated upgrade* — better track persistence on jittery streams,
+mask conventions matching SAM 3D — and a detector-ablation row. **Do:** request access on
+HuggingFace (gated, like sam-3d-objects). See `DATASETS.md`. Until then, YOLOE (gt/generic/
+prompt-free) is the detector for the degradation study.
 
 ---
 

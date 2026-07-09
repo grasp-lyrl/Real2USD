@@ -3,7 +3,14 @@
 __pycache__/
 .pytest_cache/
 
-# eval artifacts: keep run.json (tables regenerate from it); drop large regenerable meshes/plots
+# eval artifacts: keep run.json (tables regenerate from it); drop large regenerable meshes/plots.
+# NOTE: results/.gitignore already governs results/ (ignore `*`, re-include dirs + `*.json`),
+# so meshes/npz caches are dropped and run.json/meta.json provenance is kept. These lines are a
+# belt-and-suspenders for anyone running from a subdir.
 results/**/*.glb
 results/**/*.ply
 results/**/*.html
+results/**/*.npz
+# model weights (YOLOE / mobileclip) auto-download; never commit
+*.pt
+*.ts

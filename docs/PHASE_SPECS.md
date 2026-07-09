@@ -148,6 +148,36 @@ fidelity opt-in** for figures/deliverables. Exported `.glb` stay gitignored.
 
 ## Phase 2 — ObjectTrack
 
+**Resolved decisions (2026-07-08, in practice):**
+- **Detector-in-sim, not GT masks.** Phase 0 fed SAM3D perfect GT masks (1 call/GT
+  instance → zero duplicates by construction). Phase 2 drives the tracker with a **real
+  detector (YOLOE) run over the Replica RGB frames** so we can (a) measure placement
+  degradation vs the GT-mask ceiling, (b) study detector prompting, and (c) show
+  multi-view association + late-merge collapsing detector fragmentation. Realistic
+  corruptions (`detect/corrupt.py`) are an optional stress-amplifier on top.
+- **Detector = YOLOE** (`ultralytics`, ungated, auto-downloads weights). SAM 3 ([AI-6])
+  is the gated upgrade path, not a blocker. Runs as a standalone caching step
+  (`detect/run.py`, `detector` uv extra: torch cu128 for the 5090) → per-scene
+  `DetectionSet` on disk; tracker/eval/tests import no torch (mirrors the SAM3D queue).
+- **Prompt modes** (the prompting study): `gt` (scene GT label vocabulary — oracle-vocab
+  upper bound), `generic` (fixed broad indoor noun-phrases), `pf` (prompt-free native
+  vocab, `yoloe-11l-seg-pf.pt`). Diagnose reports GT detection-recall + mask IoU per mode.
+- **Appearance/re-ID = masked-crop HSV color histogram** (`tracks/appearance.py`), behind
+  an `Appearance` interface; replaces PHASE_SPECS's `clip_cos`. Swap CLIP/SigLIP in later
+  without touching the associator.
+- **Late-merge deviation:** the spec's registered-*mesh*-IoU criterion needs Phase-3
+  registration; Phase 2 substitutes fused-cloud geometry (AABB-IoU > 0.3 ∨ voxel-overlap
+  > 0.5 ∧ appearance_cos > 0.85). Recorded in run provenance; mesh-IoU merge lands with
+  Phase 3.
+- **Placement reuses Phase 0.** Mature tracks feed their best view to
+  `sam3d_layout.{run_sam3d, place_from_sam3d, refine_icp}`; the ICP variant registers
+  against the track's **fused multi-view cloud** (the natural upgrade of Phase-0
+  `--icp-accumulate`). Methods: `object_track` (re-ID + late-merge on),
+  `object_track_naive` (both off; `--v1-dedup` adds v1's 0.5 m same-label suppression).
+  Scene stats (`sam3d_invocations`, `n_mature`, `tracks_per_gt`, `n_merged`) land in
+  run.json — these are the fragmentation-cleanup headline and are computable from the
+  detector cache alone (no SAM3D worker needed).
+
 - Lifecycle: TENTATIVE (created on unmatched detection) → ACTIVE (≥3 associated
   observations) → mature (≥6 kept views or sequence end) → RECONSTRUCTED → REGISTERED;
   MERGED/REJECTED are terminal. Only ACTIVE+ tracks accumulate clouds; only mature

@@ -30,6 +30,25 @@ dev = [
 viz = [
     "fast-simplification>=0.1",
 ]
+# Phase 2 detector step (detect/yoloe.py). Heavy (torch); kept optional so the core
+# tracker/eval/tests stay torch-free. torch is pulled from the CUDA 12.8 index because
+# this desktop's RTX 5090 (sm_120 / Blackwell) needs cu128 — see [[sam3d-5090-env]].
+detector = [
+    "ultralytics>=8.3.60",
+    # pin the known-good cu128 pair for the RTX 5090 (torch 2.8 / torchvision 0.23);
+    # letting these float pulled a mismatched torchvision (torchvision::nms missing).
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

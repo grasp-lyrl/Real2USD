@@ -20,9 +20,14 @@ def get_method(name: str) -> Callable:
         from .sam3d_layout import sam3d_layout, sam3d_layout_icp
 
         return {"sam3d_layout": sam3d_layout, "sam3d_layout_icp": sam3d_layout_icp}[name]
+    if name in ("object_track", "object_track_naive"):
+        from .object_track import object_track, object_track_naive
+
+        return {"object_track": object_track, "object_track_naive": object_track_naive}[name]
     raise ValueError(
-        f"unknown method {name!r} (have: oracle, oracle_noisy, sam3d_layout, sam3d_layout_icp)"
+        f"unknown method {name!r} (have: {', '.join(AVAILABLE)})"
     )
 
 
-AVAILABLE = ["oracle", "oracle_noisy", "sam3d_layout", "sam3d_layout_icp"]
+AVAILABLE = ["oracle", "oracle_noisy", "sam3d_layout", "sam3d_layout_icp",
+             "object_track", "object_track_naive"]
