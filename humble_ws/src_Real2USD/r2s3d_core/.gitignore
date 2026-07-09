@@ -2,3 +2,8 @@
 *.egg-info/
 __pycache__/
 .pytest_cache/
+
+# eval artifacts: keep run.json (tables regenerate from it); drop large regenerable meshes/plots
+results/**/*.glb
+results/**/*.ply
+results/**/*.html

@@ -61,6 +61,8 @@ def run(args: argparse.Namespace) -> Path:
         "trans_noise_m": args.trans_noise_m,
         "rot_noise_deg": args.rot_noise_deg,
         "scale_noise": args.scale_noise,
+        "full_frame": args.full_frame,
+        "icp_accumulate": args.icp_accumulate,
     }
 
     per_scene = {}
@@ -125,6 +127,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--surface-points", type=int, default=10000)
     p.add_argument("--name", default=None, help="results subdir name")
     p.add_argument("--out", default=None, help="explicit output dir")
+    # sam3d_layout: full frame (default) vs tight crop fed to SAM3D
+    p.add_argument("--crop", dest="full_frame", action="store_false",
+                   help="feed SAM3D a tight bbox crop instead of the full frame "
+                        "(default full frame; crop over-predicts scale — see STATUS.md)")
+    p.set_defaults(full_frame=True)
+    p.add_argument("--icp-accumulate", action="store_true",
+                   help="sam3d_layout_icp: fuse the object's masked depth over ALL views as "
+                        "the ICP target (default single best view). Proto multi-view fusion.")
     # oracle_noisy knobs
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--trans-noise-m", type=float, default=0.05)

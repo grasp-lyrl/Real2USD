@@ -268,14 +268,25 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
             continue
         frame = frames[vi]
         mask = render_instance_mask(g.mesh, frame)
-        x0, y0, x1, y1 = crop_bbox_from_mask(mask)
-        rgb_crop = frame.rgb[y0:y1 + 1, x0:x1 + 1]
-        mask_crop = mask[y0:y1 + 1, x0:x1 + 1]
-        depth_crop = frame.depth[y0:y1 + 1, x0:x1 + 1]
         H, W = frame.depth.shape[:2]
 
+        # Framing fed to SAM3D. Default is the FULL frame: an ablation (room0, 43 obj)
+        # showed feeding the whole image + whole-scene depth pointmap cuts GT scale error
+        # 0.32 -> 0.10 (better on 38/43) vs a tight bbox crop, which starves SAM3D's
+        # pointmap normalization of scene context. `config["full_frame"]=False` restores
+        # the crop for comparison. See results/ablation_full_vs_crop/ + STATUS.md.
+        if config.get("full_frame", True):
+            rgb_in, mask_in, depth_in = frame.rgb, mask, frame.depth
+            bbox_in = (0, 0, W - 1, H - 1)
+        else:
+            x0, y0, x1, y1 = crop_bbox_from_mask(mask)
+            rgb_in = frame.rgb[y0:y1 + 1, x0:x1 + 1]
+            mask_in = mask[y0:y1 + 1, x0:x1 + 1]
+            depth_in = frame.depth[y0:y1 + 1, x0:x1 + 1]
+            bbox_in = (x0, y0, x1, y1)
+
         result = run_sam3d(
-            rgb_crop, mask_crop, depth_crop, frame.K, (x0, y0, x1, y1),
+            rgb_in, mask_in, depth_in, frame.K, bbox_in,
             meta={"track_id": g.instance_id, "label": g.label,
                   "full_width": W, "full_height": H},
             queue=queue,
@@ -300,7 +311,22 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
         if use_icp:
             # source points are already placed in world (posed via the layout), so ICP
             # refines from identity and returns a world-frame delta (source -> target).
+            # target defaults to the best-view masked depth (partial, ~20k pts). With
+            # config["icp_accumulate"], fuse the object's masked depth over ALL views
+            # (~28x more pts, closer to the full surface — proto multi-view ObjectTrack).
             target = _masked_depth_cloud(frame, mask)
+            if config.get("icp_accumulate"):
+                extra = [target]
+                for fr in frames:
+                    if fr is frame:
+                        continue
+                    m = render_instance_mask(g.mesh, fr)
+                    if m is not None and int((m > 0).sum()) > 50:
+                        extra.append(_masked_depth_cloud(fr, m))
+                target = np.concatenate(extra, axis=0)
+                prov["icp_target"] = f"accumulated_{len(extra)}views"
+            else:
+                prov["icp_target"] = "singleview"
             if len(posed.faces):
                 src_pts = geo.sample_surface(posed, 2000, seed=g.instance_id)  # seeded -> reproducible
             else:

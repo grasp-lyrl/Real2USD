@@ -15,7 +15,7 @@ Tip: for interactive logins/commands, you can run them in this session by typing
 
 ## Open
 
-### [ ] AI-1 — Set up the SAM 3D worker on this desktop
+### [x] AI-1 — Set up the SAM 3D worker on this desktop  ✅ DONE 2026-07-08
 **Blocks:** Phase 0 `sam3d_layout` / `sam3d_layout_icp` numbers (the paper's motivating
 layout-error experiment) and Phase 2/3 mesh generation.
 **Why Claude can't:** the checkpoint is HF-gated and needs your account (accept license +
@@ -48,10 +48,12 @@ do not use as-is.
 (72s) + inference on the kidsroom sample (32s) → full output (scale/rotation/translation/
 mesh/glb/gs). Env + checkpoint + kaolin/pytorch3d patches confirmed working on the 5090.
 
-**Remaining:**
-1. **[Claude]** Run the worker against `~/Data/datasets/sam3d_queue` and fill the
-   `sam3d_layout` baseline rows (input-hash cached, so reruns are free). This needs real
-   queue jobs, which come from a Phase-0 eval run feeding the queue.
+**COMPLETE:** the worker ran on real Replica room0 jobs (`~/Data/datasets/sam3d_queue`,
+44 job outputs with real `object.glb`/`pose.json`) and both baseline rows are produced:
+`results/phase0_replica_sam3d_layout/` (F1@.25 0.58, rot 28°, scale 0.54, Scan2CAD 0.0)
+and `.../sam3d_layout_icp/` (F1 0.84, rot 14°). See STATUS.md Phase 0. The only leftover is
+Claude-doable, not human-gated: extend `sam3d_layout` from room0 to the all-8-scene
+aggregate (tracked in STATUS.md, not here).
 
 ### [ ] AI-2 — ScanNet v2 access  *(start early: days-long latency)*
 **Blocks:** Phase 5 placement table. **Do:** sign the ScanNet ToS PDF and email per

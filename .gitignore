@@ -3,6 +3,10 @@ humble_ws/build
 humble_ws/install
 humble_ws/log
 
+# External Meta SAM3D fork clone (its own git repo + gated ~13GB checkpoints; see
+# real2sam3d/sam3d_setup.sh to (re)create). Never vendored into this repo.
+humble_ws/src_Real2USD/real2sam3d/sam-3d-objects/
+
 # Gemini API key
 humble_ws/src_Real2USD/real2usd/config/gemini_key.py
 humble_ws/src_Real2USD/real2sam3d/config/gemini_key.py

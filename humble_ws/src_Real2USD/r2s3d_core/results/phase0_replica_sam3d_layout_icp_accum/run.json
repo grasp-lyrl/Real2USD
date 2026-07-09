@@ -1,0 +1,77 @@
+{
+  "git_sha": "2b025c36f3bc98b964e396412efe507230a6b407",
+  "config": {
+    "method": "sam3d_layout_icp",
+    "source": "replica",
+    "stride": 20,
+    "iou_threshold": 0.25,
+    "compute_geometry": true,
+    "surface_points": 10000,
+    "seed": 0,
+    "trans_noise_m": 0.05,
+    "rot_noise_deg": 5.0,
+    "scale_noise": 0.05,
+    "full_frame": true,
+    "icp_accumulate": true
+  },
+  "dataset": "replica",
+  "scenes": [
+    "room0"
+  ],
+  "metrics": {
+    "aggregate": {
+      "n_pred": 43.0,
+      "n_gt": 43.0,
+      "count_ratio": 1.0,
+      "iou_threshold": 0.25,
+      "tp": 37.0,
+      "fp": 6.0,
+      "fn": 6.0,
+      "precision": 0.8604651162790697,
+      "recall": 0.8604651162790697,
+      "f1": 0.8604651162790697,
+      "recall@0.5": 0.4883720930232558,
+      "duplicate_rate": 0.06976744186046512,
+      "scan2cad_accuracy": 0.18604651162790697,
+      "label_accuracy": 0.972972972972973,
+      "centroid_err_median_m": 0.03182933753735907,
+      "centroid_err_mean_m": 0.059740815085214546,
+      "rotation_err_median_deg": 9.492841127627536,
+      "rotation_err_mean_deg": 16.409205089226674,
+      "scale_err_median": 0.30307018865421775,
+      "scale_err_mean": 0.4123294845646928,
+      "chamfer_l1_median_m": 0.05068410005648295,
+      "fscore@0.05_mean": 0.8109219582595345,
+      "fscore@0.02_mean": 0.5743102868225481
+    },
+    "per_scene": {
+      "room0": {
+        "n_pred": 43,
+        "n_gt": 43,
+        "count_ratio": 1.0,
+        "iou_threshold": 0.25,
+        "tp": 37,
+        "fp": 6,
+        "fn": 6,
+        "precision": 0.8604651162790697,
+        "recall": 0.8604651162790697,
+        "f1": 0.8604651162790697,
+        "recall@0.5": 0.4883720930232558,
+        "duplicate_rate": 0.06976744186046512,
+        "scan2cad_accuracy": 0.18604651162790697,
+        "label_accuracy": 0.972972972972973,
+        "centroid_err_median_m": 0.03182933753735907,
+        "centroid_err_mean_m": 0.059740815085214546,
+        "rotation_err_median_deg": 9.492841127627536,
+        "rotation_err_mean_deg": 16.409205089226674,
+        "scale_err_median": 0.30307018865421775,
+        "scale_err_mean": 0.4123294845646928,
+        "chamfer_l1_median_m": 0.05068410005648295,
+        "fscore@0.05_mean": 0.8109219582595345,
+        "fscore@0.02_mean": 0.5743102868225481
+      }
+    }
+  },
+  "wall_time_s": 290.3888895511627,
+  "created_at": "2026-07-08T21:50:52"
+}
