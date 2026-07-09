@@ -16,6 +16,23 @@ import trimesh
 log = logging.getLogger(__name__)
 
 
+def _apply_tint(g, tint) -> None:
+    """Color a mesh with a glTF PBR **material** (baseColorFactor), not per-vertex
+    colors. Many viewers ignore COLOR_0 vertex colors and render a default gray
+    material — baseColorFactor is respected everywhere. Alpha < 255 -> BLEND mode.
+    """
+    from trimesh.visual.material import PBRMaterial
+
+    r, gg, b, a = (int(x) for x in (tint if tint is not None else [180, 180, 185, 255]))
+    mat = PBRMaterial(
+        baseColorFactor=[r / 255.0, gg / 255.0, b / 255.0, a / 255.0],
+        metallicFactor=0.0, roughnessFactor=0.85, doubleSided=True,
+        alphaMode="BLEND" if a < 255 else "OPAQUE",
+    )
+    # TextureVisuals carries the material even with no UVs (flat color on export).
+    g.visual = trimesh.visual.TextureVisuals(material=mat)
+
+
 def _make_lite(mesh, max_faces: int, tint):
     """Strip textures (the bulk of SAM3D GLB weight) and optionally decimate.
 
@@ -34,8 +51,7 @@ def _make_lite(mesh, max_faces: int, tint):
         except Exception as e:
             log.warning("decimation unavailable (%s); lite mesh keeps %d faces — "
                         "run `uv sync --extra viz`", e, len(g.faces))
-    color = np.asarray(tint if tint is not None else [180, 180, 185, 255], np.uint8)
-    g.visual = trimesh.visual.ColorVisuals(g, face_colors=np.tile(color, (len(g.faces), 1)))
+    _apply_tint(g, tint)
     return g
 
 
@@ -55,8 +71,7 @@ def export_scene_glb(meshes: Iterable, path, tint=None, lite: bool = False,
         else:
             g = m.copy()
             if tint is not None:
-                g.visual = trimesh.visual.ColorVisuals(
-                    g, face_colors=np.tile(np.asarray(tint, np.uint8), (len(g.faces), 1)))
+                _apply_tint(g, tint)
         scene.add_geometry(g, node_name=f"obj_{i}")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
