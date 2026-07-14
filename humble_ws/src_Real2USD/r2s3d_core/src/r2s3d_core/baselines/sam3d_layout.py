@@ -33,6 +33,7 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 import trimesh
+from scipy.spatial.transform import Rotation as _Rot
 
 from .. import frames
 from ..data.base import Frame, GTObject
@@ -524,7 +525,15 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
             "T_world_mesh": (post @ T_world_raw).tolist(),             # raw object.glb verts -> world
             "mesh": f"output/{_jid}/object.glb",                       # relative to sam3d_queue
             "job_id": _jid, "registration": prov["registration"],
+            # the best-view camera that generated this mesh (pose the mesh was created from;
+            # also a good navigation viewpoint for "go observe this object"). cam->world,
+            # OpenCV-optical camera (x-right, y-down, z-forward) in Z-up world.
             "best_frame_id": int(frame.frame_id), "view_index": int(vi),
+            "cam_position": np.asarray(frame.T_world_cam, float)[:3, 3].tolist(),
+            "cam_quat_xyzw": _Rot.from_matrix(
+                np.asarray(frame.T_world_cam, float)[:3, :3]).as_quat().tolist(),
+            "T_world_cam": np.asarray(frame.T_world_cam, float).tolist(),  # full 4x4 (unambiguous)
+            "camera_K": np.asarray(frame.K, float).tolist(),
             "scale_fit": prov.get("scale_fit"), "icp": prov.get("icp"),
         })
     if pending:

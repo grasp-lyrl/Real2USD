@@ -56,7 +56,10 @@ scene graph for downstream inference (navigation etc.). Header: `scene, source, 
 label_source` (`gt` for GT-detector `sam3d_layout*`, `detector` for `object_track`), `frame`
 (Z-up world, meters), `sam3d_queue`. Each object: `id, label, center, extents, T_world_obj,
 T_world_mesh` (raw `object.glb` verts → world, incl scale-fit + ICP), `mesh` (relative path),
-`job_id`, per-object `scale_fit`/`icp`. Any visualizer/metric rebuilds the posed prediction —
+`job_id`, per-object `scale_fit`/`icp`, plus the **best-view camera that generated the mesh**
+(`cam_position` + `cam_quat_xyzw` ROS/TF-ready, full `T_world_cam`, `camera_K`) — also a good
+nav viewpoint for "go observe object X" (stand at `cam_position`, face per the quat, look-at
+= `center`). Any visualizer/metric rebuilds the posed prediction —
 `trimesh.load(<queue>/<mesh>)`, apply `T_world_mesh` — **without re-running placement**
 (round-trip verified). Off with `--no-placements`. Reduces (not removes) the AI-8 Mesh-rows
 re-run: geometry vs real GT meshes still needs a pass; reviz/inspection no longer does.
