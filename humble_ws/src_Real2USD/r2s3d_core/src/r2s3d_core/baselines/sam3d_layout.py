@@ -279,8 +279,53 @@ def _masked_depth_cloud(frame: Frame, mask: np.ndarray) -> np.ndarray:
 
 # ----------------------------------------------------------------- entry points
 
+def _observed_obb_extent(target_pts: np.ndarray):
+    """Sorted (desc) OBB extents of a point cloud, or None if degenerate."""
+    if len(target_pts) < 30:
+        return None
+    try:
+        e = np.asarray(trimesh.points.PointCloud(target_pts).bounding_box_oriented.primitive.extents)
+    except Exception:
+        e = np.asarray(target_pts).max(0) - np.asarray(target_pts).min(0)
+    return np.sort(e)[::-1]
+
+
+def _fast_obb(mesh: trimesh.Trimesh, n: int = 3000, seed: int = 0):
+    """(transform, extents) of the mesh OBB from sampled surface points — much faster than
+    ``mesh.bounding_box_oriented`` on SAM3D meshes (up to ~1M faces; the OBB is called
+    several times per object in the scale/registration path)."""
+    pts = geo.sample_surface(mesh, n, seed=seed) if len(mesh.faces) else np.asarray(mesh.vertices)
+    p = trimesh.points.PointCloud(pts).bounding_box_oriented.primitive
+    return np.asarray(p.transform, dtype=np.float64), np.asarray(p.extents, dtype=np.float64)
+
+
+def _fit_scale_to_extent(posed: trimesh.Trimesh, target_extent_sorted: np.ndarray,
+                         clamp=(0.25, 4.0)):
+    """World transform that rescales ``posed`` so its OBB extents match the (metric,
+    depth-derived) ``target_extent_sorted``, per axis, about the mesh's OBB centre.
+
+    Depth gives the object's true metric size (verified: masked-depth extent == GT to
+    ~1-2% on observed axes, thin axis recovered by multi-view fusion), so matching the
+    SPAN sets scale correctly — unlike ICP (can't rescale) or TEASER point-NN (shrinks
+    onto the partial cloud). Anisotropic + axis-sorted; scale factors clamped for safety.
+    """
+    T, ext_m = _fast_obb(posed)
+    R, c = T[:3, :3], T[:3, 3]
+    tgt = np.sort(np.asarray(target_extent_sorted, float))[::-1]
+    order = np.argsort(ext_m)[::-1]          # mesh axes, largest -> smallest
+    scales = np.ones(3)
+    for rank, ax in enumerate(order):
+        scales[ax] = np.clip(tgt[rank] / max(ext_m[ax], 1e-6), *clamp)
+    A = R @ np.diag(scales) @ R.T            # scale along mesh OBB axes, about centre c
+    M = np.eye(4)
+    M[:3, :3] = A
+    M[:3, 3] = c - A @ c
+    return M, {"scales": scales.tolist(), "mesh_ext": ext_m.tolist(), "target_ext": tgt.tolist()}
+
+
 def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) -> List[SceneObject]:
-    """registration: "none" (layout only) | "icp" (rigid SE(3)) | "teaser" (Sim(3), scale)."""
+    """registration: "none" | "icp" (rigid) | "teaser" (Sim3) | "scale" (depth-extent
+    scale-fit) | "scale_icp" (scale-fit + rigid ICP for pose)."""
     if not gt:
         return []
     frames = list(source)
@@ -372,13 +417,15 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                 "validation": val, "mask_src": mask_src,
                 "instance_id": g.instance_id}
 
-        if registration in ("icp", "teaser"):
+        if registration != "none":
             # Registration target = the object's masked sensor depth, back-projected to
             # world. Default is the best-view sliver (~20k pts); config["icp_accumulate"]
             # fuses masked depth over ALL views (~28x more pts, a fuller surface — proto
             # multi-view ObjectTrack). TEASER wants the fuller cloud for scale + FPFH, so
             # it accumulates by default.
-            accumulate = config.get("icp_accumulate") or registration == "teaser"
+            # scale-fit + teaser want the fuller multi-view cloud (thin axis recovery).
+            accumulate = (config.get("icp_accumulate")
+                          or registration in ("teaser", "scale", "scale_icp"))
             target = _masked_depth_cloud(frame, mask)
             if accumulate:
                 extra = [target]
@@ -392,17 +439,35 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                 prov["reg_target"] = f"accumulated_{len(extra)}views"
             else:
                 prov["reg_target"] = "singleview"
-            src_pts = (geo.sample_surface(posed, 2000, seed=g.instance_id)
-                       if len(posed.faces) else np.asarray(posed.vertices))
 
-            if registration == "icp":
+            do_scale = registration in ("scale", "scale_icp")
+            do_icp = registration in ("icp", "scale_icp")
+
+            if do_scale:
+                # Set metric scale from the depth-cloud extent (the observed metric size),
+                # then rigid ICP (if any) fixes pose only. This is the scale lever ICP lacks.
+                tgt_ext = _observed_obb_extent(target)
+                if tgt_ext is not None:
+                    M, sinfo = _fit_scale_to_extent(posed, tgt_ext)
+                    posed.apply_transform(M)
+                    prov["scale_fit"] = sinfo
+                else:
+                    prov["scale_fit"] = {"skipped": "degenerate_target"}
+
+            if do_icp:
                 # rigid: recovers pose only (cannot rescale). Delta is a world-frame SE(3).
+                src_pts = (geo.sample_surface(posed, 2000, seed=g.instance_id)
+                           if len(posed.faces) else np.asarray(posed.vertices))
                 delta, info = refine_icp(src_pts, target, np.eye(4))
                 posed.apply_transform(delta)
-                T_world_obj = delta @ T_world_obj
-                prov["registration"] = "layout+icp"
                 prov["icp"] = info
-            else:  # teaser — Sim(3): also estimates SCALE (the ICP-can't-fix residual)
+
+            if do_scale or do_icp:
+                prov["registration"] = "layout+" + registration
+
+            if registration == "teaser":  # Sim(3): also estimates SCALE (ICP-can't-fix residual)
+                src_pts = (geo.sample_surface(posed, 2000, seed=g.instance_id)
+                           if len(posed.faces) else np.asarray(posed.vertices))
                 from ..registration.teaser import register_teaser
                 from scipy.spatial import cKDTree
                 voxel = float(config.get("teaser_voxel", 0.03))
@@ -420,10 +485,6 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                     info["resid_before_m"], info["resid_after_m"] = r_before, r_after
                     if r_after < r_before:
                         posed.apply_transform(delta)
-                        # delta carries scale -> re-derive OBB pose from the mesh, not
-                        # delta @ T_world_obj (which would bake scale into the rotation).
-                        T_world_obj = np.asarray(posed.bounding_box_oriented.primitive.transform,
-                                                 dtype=np.float64)
                         accepted = True
                     teaser_stats.append((accepted, info.get("scale"), r_before, r_after,
                                          info.get("n_corr")))
@@ -434,7 +495,10 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                 info["accepted"] = accepted
                 prov["registration"] = "layout+teaser" if accepted else "layout(teaser_rejected)"
                 prov["teaser"] = info
-            extents = np.asarray(posed.bounding_box_oriented.primitive.extents, dtype=np.float64)
+
+            # One OBB (from sampled points) after all transforms -> pose + extents. delta
+            # may carry scale, so re-derive the OBB pose rather than composing with delta.
+            T_world_obj, extents = _fast_obb(posed, seed=g.instance_id)
 
         preds.append(SceneObject(label=g.label, T_world_obj=T_world_obj, extents=extents,
                                  mesh=posed, provenance=prov))
@@ -483,3 +547,13 @@ def sam3d_layout_icp(source, gt, config) -> List[SceneObject]:
 def sam3d_layout_teaser(source, gt, config) -> List[SceneObject]:
     """SAM3D layout + TEASER++ Sim(3) registration (recovers scale, unlike rigid ICP)."""
     return _run(source, gt, config, registration="teaser")
+
+
+def sam3d_layout_scale(source, gt, config) -> List[SceneObject]:
+    """SAM3D layout + depth-extent scale-fit (set metric scale from the masked-depth OBB)."""
+    return _run(source, gt, config, registration="scale")
+
+
+def sam3d_layout_scale_icp(source, gt, config) -> List[SceneObject]:
+    """SAM3D layout + depth-extent scale-fit + rigid ICP for pose (the full scale+pose fix)."""
+    return _run(source, gt, config, registration="scale_icp")

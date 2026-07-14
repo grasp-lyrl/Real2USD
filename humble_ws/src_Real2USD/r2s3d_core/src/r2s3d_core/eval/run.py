@@ -120,6 +120,14 @@ def run(args: argparse.Namespace) -> Path:
             except Exception as e:  # never let viz failure kill a metrics run
                 print(f"[{scene}] WARNING: GLB export failed: {e}")
 
+        # release backend resources (e.g. the AI2-THOR renderer) so processes don't leak
+        # across scenes; without this each scene left a lingering thor-Linux64 process.
+        if hasattr(src, "close"):
+            try:
+                src.close()
+            except Exception:
+                pass
+
     # aggregate across scenes (mean of per-scene metrics that are scalar and finite)
     agg = {}
     scene_metrics = [m for m in per_scene.values() if "error" not in m]

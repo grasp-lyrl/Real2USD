@@ -55,6 +55,33 @@ _THOR_EXCLUDE_TYPES = {
 # docs/ACTION_ITEMS.md). Split defaults to "train"; override via kwarg once confirmed.
 PROCTHOR_SCENES = ["137", "200", "428", "534", "569", "573", "683", "771", "912"]
 
+# ProcTHOR-10k DatasetDict, loaded ONCE per process. `prior.load_dataset` pings
+# api.github.com for the dataset revision on every call, so calling it per-scene both
+# wastes time and turns a transient DNS blip into a mid-run crash (observed). Memoize +
+# retry so the network is touched at most a few times total.
+_PROCTHOR10K = None
+
+
+def _load_procthor10k(retries: int = 3):
+    global _PROCTHOR10K
+    if _PROCTHOR10K is not None:
+        return _PROCTHOR10K
+    import time as _time
+
+    import prior
+    last = None
+    for attempt in range(retries):
+        try:
+            _PROCTHOR10K = prior.load_dataset("procthor-10k")
+            return _PROCTHOR10K
+        except Exception as e:  # transient network / DNS — retry with backoff
+            last = e
+            if attempt < retries - 1:
+                _time.sleep(2.0 * (attempt + 1))
+    raise RuntimeError(
+        f"prior.load_dataset('procthor-10k') failed after {retries} tries (needs network "
+        f"on first load to check the dataset revision): {last}")
+
 
 def intrinsics_from_fov(height: int, width: int, fov_deg: float,
                         fov_axis: str = "vertical") -> np.ndarray:
@@ -174,10 +201,7 @@ class ProcThorSource:
 
     # -- controller lifecycle ------------------------------------------------------
     def _house(self):
-        import prior
-        ds = prior.load_dataset("procthor-10k")
-        houses = ds[self.split]
-        return houses[int(self.scene)]
+        return _load_procthor10k()[self.split][int(self.scene)]
 
     def _start(self):
         if self._controller is not None:

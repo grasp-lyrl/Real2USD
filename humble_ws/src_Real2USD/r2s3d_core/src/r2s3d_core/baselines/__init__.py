@@ -16,11 +16,15 @@ def get_method(name: str) -> Callable:
         from . import oracle as _o
 
         return {"oracle": _o.oracle, "oracle_noisy": _o.oracle_noisy}[name]
-    if name in ("sam3d_layout", "sam3d_layout_icp", "sam3d_layout_teaser"):
-        from .sam3d_layout import sam3d_layout, sam3d_layout_icp, sam3d_layout_teaser
+    if name in ("sam3d_layout", "sam3d_layout_icp", "sam3d_layout_teaser",
+                "sam3d_layout_scale", "sam3d_layout_scale_icp"):
+        from .sam3d_layout import (sam3d_layout, sam3d_layout_icp, sam3d_layout_teaser,
+                                   sam3d_layout_scale, sam3d_layout_scale_icp)
 
         return {"sam3d_layout": sam3d_layout, "sam3d_layout_icp": sam3d_layout_icp,
-                "sam3d_layout_teaser": sam3d_layout_teaser}[name]
+                "sam3d_layout_teaser": sam3d_layout_teaser,
+                "sam3d_layout_scale": sam3d_layout_scale,
+                "sam3d_layout_scale_icp": sam3d_layout_scale_icp}[name]
     if name in ("object_track", "object_track_naive"):
         from .object_track import object_track, object_track_naive
 
@@ -31,4 +35,5 @@ def get_method(name: str) -> Callable:
 
 
 AVAILABLE = ["oracle", "oracle_noisy", "sam3d_layout", "sam3d_layout_icp",
-             "sam3d_layout_teaser", "object_track", "object_track_naive"]
+             "sam3d_layout_teaser", "sam3d_layout_scale", "sam3d_layout_scale_icp",
+             "object_track", "object_track_naive"]
