@@ -72,6 +72,32 @@ in the Clio repo README (https://github.com/MIT-SPARK/Clio). Chris's Clio-Eval f
 ROS1 → convert or read with `rosbags` python lib (no ROS needed) for the SequenceSource
 backend.
 
+## 5. ProcTHOR-10k / MolmoSpaces (public; scene-graph comparison side-thread)
+
+For the coworker's holistic scene-graph table (see `PHASE_SPECS.md` Phase-5 side-thread).
+**No manual download for the Objects rows** — the `procthor` uv extra pulls `ai2thor` +
+`prior`, and houses stream from the `prior` cache:
+
+```bash
+uv sync --extra procthor --extra dev            # (add --extra detector for object_track)
+uv run python -m r2s3d_core.eval.run --source procthor --scene 137 --method oracle \
+    --phase procthor --name procthor_oracle_137
+```
+
+- **Rendering:** AI2-THOR drives an embedded Unity player; needs a GPU + display. On this
+  desktop it renders against **X `:1`** (RTX 5090 / driver 580); `platform="CloudRendering"`
+  (Vulkan headless) is the fallback. First `Controller()` downloads a ~770 MB Unity build.
+- **Scenes:** ProcTHOR-10k `train`(10000)/`val`(1000)/`test`(1000); the coworker's slice is
+  ids `137, 200, 428, 534, 569, 573, 683, 771, 912` (+ a 10th, split TBD — **AI-7**).
+- **GT:** exact from THOR metadata (`objectType`, oriented + axis-aligned boxes, per-object
+  room membership; house JSON also has rooms/walls/windows/doors for future room/place
+  metrics). Per-object **GT meshes** for the Mesh rows are **not** wired yet — **AI-8**.
+- **MolmoSpaces** (https://huggingface.co/datasets/allenai/molmospaces, code
+  https://github.com/allenai/molmospaces) is the *scene source* the coworker used (built on
+  iTHOR/ProcTHOR/Holodeck; ships USD assets). Its own eval module is manipulation/navigation
+  policy eval — **not** the scene-graph metrics. Licensing: CC BY 4.0 (Objaverse subset
+  ODC-BY 1.0).
+
 ## Sanity order
 
 Replica today (unblocks Phase 0 fully) → submit ScanNet + Scan2CAD + HF ShapeNet

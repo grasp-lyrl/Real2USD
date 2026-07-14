@@ -112,13 +112,19 @@ def _view_score(mask: np.ndarray) -> Tuple[float, bool]:
     return area, border
 
 
-def select_best_view(gt_obj: GTObject, frames: List[Frame]) -> Optional[int]:
+def select_best_view(gt_obj: GTObject, frames: List[Frame], mask_fn=None) -> Optional[int]:
     """Index (into ``frames``) of the best view: largest visible area, not touching
     the image border. Falls back to largest area if all views touch the border.
+
+    ``mask_fn(gt_obj, frame) -> uint8 mask | None`` supplies the per-view mask; defaults
+    to rendering the object's mesh silhouette (``render_instance_mask``). Datasets with
+    true GT masks (e.g. ProcTHOR native instance seg) pass their own occlusion-aware fn.
     """
+    if mask_fn is None:
+        mask_fn = lambda g, fr: render_instance_mask(g.mesh, fr)
     best_i, best_area, best_i_any, best_area_any = None, -1.0, None, -1.0
     for i, fr in enumerate(frames):
-        mask = render_instance_mask(gt_obj.mesh, fr)
+        mask = mask_fn(gt_obj, fr)
         if mask is None:
             continue
         area, border = _view_score(mask)
@@ -146,19 +152,42 @@ def _default_queue() -> Path:
 
 
 def _job_hash(rgb: np.ndarray, mask: np.ndarray, depth: np.ndarray, K: np.ndarray) -> str:
+    """Content hash identifying a SAM3D job by its input pixels (disk datasets).
+
+    Used as the FALLBACK job id when the caller can't provide a stable logical key
+    (``job_key``). Fine for datasets whose frames are byte-reproducible (Replica reads
+    RGB/depth from disk). NOT safe for live-rendered datasets: AI2-THOR RGB *and* a few
+    depth edge pixels jitter across renders, so a content hash changes between the queue
+    and collect passes and misses every cached output — pass ``job_key`` for those.
+    """
     h = hashlib.sha256()
     for a in (rgb, mask, depth.astype(np.float32), K.astype(np.float64)):
         h.update(np.ascontiguousarray(a).tobytes())
     return h.hexdigest()[:16]
 
 
+def _stable_job_id(job_key: str) -> str:
+    """Readable, filesystem-safe job id from a deterministic logical key.
+
+    Keeps the queue browsable (e.g. ``procthor_137_i41_full``) and — crucially —
+    reproducible across re-renders, since it depends on scene/instance identity, not on
+    jittery rendered pixels.
+    """
+    import re
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", job_key)
+
+
 def run_sam3d(rgb_crop, mask_crop, depth_crop, full_K, crop_bbox, meta: dict,
-              queue: Optional[Path] = None) -> Optional[Tuple[trimesh.Trimesh, dict]]:
+              queue: Optional[Path] = None, job_key: Optional[str] = None
+              ) -> Optional[Tuple[trimesh.Trimesh, dict]]:
     """Get one SAM3D result via the disk-queue worker; write the job if not cached.
 
-    Returns ``(mesh_raw, pose)`` if the worker output exists (cached by input hash),
-    else writes the job under ``<queue>/input/<hash>`` (idempotently) and returns
-    ``None`` — the caller runs the worker over the queue, then re-runs to collect.
+    Job identity: a stable logical ``job_key`` when provided (required for live-rendered
+    datasets — see ``_stable_job_id``), else the pixel content hash (disk datasets).
+
+    Returns ``(mesh_raw, pose)`` if the worker output exists (cached by job id), else
+    writes the job under ``<queue>/input/<job_id>`` (idempotently) and returns ``None``
+    — the caller runs the worker over the queue, then re-runs to collect.
 
     Job format matches the worker's ``load_job`` / ``depth_to_pointmap``: rgb/mask/
     depth are the CROP; ``camera_info.K`` is the **full-image** intrinsics and
@@ -170,7 +199,7 @@ def run_sam3d(rgb_crop, mask_crop, depth_crop, full_K, crop_bbox, meta: dict,
     import json as _json
 
     queue = queue or _default_queue()
-    job_id = _job_hash(rgb_crop, mask_crop, depth_crop, full_K)
+    job_id = _stable_job_id(job_key) if job_key else _job_hash(rgb_crop, mask_crop, depth_crop, full_K)
     out_dir = queue / "output" / job_id
     glb = out_dir / "object.glb"
     pose_json = out_dir / "pose.json"
@@ -259,15 +288,40 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
         return []
 
     queue = Path(config["sam3d_queue"]) if config.get("sam3d_queue") else None
+    # Mask source: prefer the dataset's TRUE instance masks (occlusion-aware, e.g.
+    # ProcTHOR native seg) when available; else render the GT mesh silhouette.
+    if getattr(source, "native_masks", False) and hasattr(source, "native_mask"):
+        raw_mask_fn = lambda g, fr: source.native_mask(fr.frame_id, g.instance_id)
+        mask_src = "native"
+    else:
+        raw_mask_fn = lambda g, fr: render_instance_mask(g.mesh, fr)
+        mask_src = "rendered_mesh"
+
+    # Reject degenerate masks (tiny/thin objects): SAM3D needs a >=2x2 crop and a sliver
+    # mask yields garbage anyway. Objects whose every view is too small get no view and
+    # are skipped (honest: too small to reconstruct). Tunable via config.
+    min_px = int(config.get("min_mask_px", 64))
+    min_dim = int(config.get("min_mask_dim", 6))
+
+    def mask_fn(g, fr):
+        m = raw_mask_fn(g, fr)
+        if m is None:
+            return None
+        ys, xs = np.where(m > 0)
+        if len(xs) < min_px:
+            return None
+        if (xs.max() - xs.min() + 1) < min_dim or (ys.max() - ys.min() + 1) < min_dim:
+            return None
+        return m
     preds: List[SceneObject] = []
     pending = 0
     for g in gt:
-        vi = select_best_view(g, frames)
+        vi = select_best_view(g, frames, mask_fn)
         if vi is None:
             log.info("no visible view for instance %d (%s); skipping", g.instance_id, g.label)
             continue
         frame = frames[vi]
-        mask = render_instance_mask(g.mesh, frame)
+        mask = mask_fn(g, frame)
         H, W = frame.depth.shape[:2]
 
         # Framing fed to SAM3D. Default is the FULL frame: an ablation (room0, 43 obj)
@@ -285,11 +339,19 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
             depth_in = frame.depth[y0:y1 + 1, x0:x1 + 1]
             bbox_in = (x0, y0, x1, y1)
 
+        # Stable logical job id: identity by (source, scene, instance, framing), so the
+        # queue and collect passes agree even when the renderer's pixels jitter. Falls
+        # back to the pixel content hash inside run_sam3d if job_key is None.
+        scene = getattr(source, "scene", "scene")
+        framing = "full" if config.get("full_frame", True) else "crop"
+        # mask_src is part of the identity: native vs box mask feed SAM3D different inputs
+        # -> different meshes, so they must NOT collide in the cache.
+        job_key = f"{config.get('source', 'src')}_{scene}_i{g.instance_id}_{framing}_{mask_src}"
         result = run_sam3d(
             rgb_in, mask_in, depth_in, frame.K, bbox_in,
             meta={"track_id": g.instance_id, "label": g.label,
                   "full_width": W, "full_height": H},
-            queue=queue,
+            queue=queue, job_key=job_key,
         )
         if result is None:
             pending += 1
@@ -305,7 +367,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
             frame.T_world_cam,
         )
         prov = {"source": "sam3d", "registration": "layout", "view_index": vi,
-                "validation": val,
+                "validation": val, "mask_src": mask_src,
                 "instance_id": g.instance_id}
 
         if use_icp:
@@ -320,7 +382,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
                 for fr in frames:
                     if fr is frame:
                         continue
-                    m = render_instance_mask(g.mesh, fr)
+                    m = mask_fn(g, fr)
                     if m is not None and int((m > 0).sum()) > 50:
                         extra.append(_masked_depth_cloud(fr, m))
                 target = np.concatenate(extra, axis=0)

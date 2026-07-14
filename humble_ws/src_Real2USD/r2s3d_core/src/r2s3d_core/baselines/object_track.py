@@ -123,10 +123,16 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
             bbox_in = (x0, y0, x1, y1)
 
         queue = Path(config["sam3d_queue"]) if config.get("sam3d_queue") else None
+        # Stable logical job id (survives renderer pixel jitter): identity by
+        # (source, scene, track, framing). Detections are cached from disk so track ids
+        # are reproducible across runs.
+        scene = getattr(source, "scene", "scene")
+        framing = "full" if config.get("full_frame", True) else "crop"
+        job_key = f"{config.get('source', 'src')}_{scene}_t{t.track_id}_{framing}"
         result = s3d.run_sam3d(
             rgb_in, mask_in, depth_in, frame.K, bbox_in,
             meta={"track_id": t.track_id, "label": t.label(), "full_width": W, "full_height": H},
-            queue=queue,
+            queue=queue, job_key=job_key,
         )
         if result is None:
             pending += 1

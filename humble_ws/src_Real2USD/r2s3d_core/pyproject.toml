@@ -40,6 +40,14 @@ detector = [
     "torch==2.8.0",
     "torchvision==0.23.0",
 ]
+# ProcTHOR / MolmoSpaces dataset backend (data/procthor.py). AI2-THOR drives an
+# embedded Unity player to render RGB+depth+instance-seg; `prior` fetches the
+# ProcTHOR-10k house JSONs. Kept optional so the core harness stays light.
+# Rendering needs a GPU + display (X :1 here) or CloudRendering/Vulkan headless.
+procthor = [
+    "ai2thor>=5.0",
+    "prior>=1.0",
+]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }

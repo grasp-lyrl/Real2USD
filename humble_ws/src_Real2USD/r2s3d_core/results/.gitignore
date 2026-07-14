@@ -3,3 +3,6 @@
 !*/
 !*.json
 !.gitignore
+# ...but the per-run SAM3D queue is regenerable scratch — its per-job meta.json would
+# otherwise be re-included by the !*.json rule above. Re-exclude the whole queue subtree.
+sam3d_queue/

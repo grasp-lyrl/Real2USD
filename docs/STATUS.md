@@ -8,7 +8,7 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 - **Things only the human can do: `ACTION_ITEMS.md`** (Claude adds to it on every gated dependency)
 - Datasets & access: `DATASETS.md`
 
-_Last updated: 2026-07-08 (Phase 2 ObjectTrack — detector-in-sim; fragmentation cleanup verified on room0+room1)._
+_Last updated: 2026-07-13 (ProcTHOR/MolmoSpaces adapter built + validated — Phase-5 scene-graph comparison side-thread)._
 
 ## Phase dashboard
 
@@ -19,10 +19,111 @@ _Last updated: 2026-07-08 (Phase 2 ObjectTrack — detector-in-sim; fragmentatio
 | 2 | ObjectTrack node | 🟡 **in progress** | ROS-free `tracks/` + `detect/` (YOLOE) built; tracker tests pass; **detector-in-sim fragmentation cleanup verified room0+room1** (SAM3D calls ↓~4×, tracks/GT 1.3→0.33). SAM3D-mesh placement-degradation (vs GT-mask ceiling) collecting; ROS wrapper deferred |
 | 3 | Localization stack (TEASER++ / ICP / refine) | ⬜ not started | go/no-go gate: must beat sam3d_layout |
 | 4 | Reconciliation + export | ⬜ not started | needs Isaac Sim |
-| 5 | Benchmark campaign | ⬜ not started | dataset access is the long pole — [AI-2..5](ACTION_ITEMS.md) started early |
+| 5 | Benchmark campaign | 🟡 side-thread started | **ProcTHOR/MolmoSpaces scene-graph comparison adapter built + validated** (see below). Main campaign dataset access is the long pole — [AI-2..5](ACTION_ITEMS.md) started early |
 | 6 | Paper rewrite | ⬜ not started | |
 
 Legend: ⬜ not started · 🟡 in progress / partially blocked · 🟢 done · 🔴 blocked
+
+## Phase 5 side-thread — ProcTHOR / MolmoSpaces scene-graph comparison (2026-07-13)
+
+**Goal:** appear as a column in a coworker's holistic hierarchical scene-graph benchmark
+(Objects/Rooms/Places/Building/Mesh/Trajectory/Grounding; vs Hydra, DAAAM, ConceptGraphs,
+Clio, Khronos, HOV-SG, …) evaluated on a fixed slice of **ProcTHOR-10k** houses sourced
+via Ai2 **MolmoSpaces** (ids `137,200,428,534,569,573,683,771,912` + 10th TBD). Real2USD is
+object-centric → we honestly fill **only Objects + Mesh** rows (deep-but-narrow; Mesh is our
+differentiator). Rooms/Places/Building/Trajectory/Grounding await those layers (future).
+Design/interfaces: `PHASE_SPECS.md` Phase-5 side-thread. How-to: `DATASETS.md §5`.
+
+**Built + VERIFIED (adapter, not yet the method rows):**
+- `r2s3d_core/data/procthor.py` `ProcThorSource` (source keys `procthor`/`molmospaces`,
+  `procthor` uv extra = `ai2thor` 5.0 + `prior`). AI2-THOR native RGB-D + instance-seg +
+  exact GT boxes; deterministic reachable-position × yaw × horizon trajectory. Registered in
+  `data/registry.py`.
+- **Rendering works** on this desktop against **X `:1`** (RTX 5090 / driver 580); Unity build
+  auto-downloaded.
+- **Transform round-trip validated** (the load-bearing bit): Unity(LH,Y-up)→world(RH,Z-up)
+  `(x,z,y)` permutation; masked depth back-projected into GT OBBs → **median containment 0.86**,
+  vertical FOV confirmed over horizontal. `tests/test_procthor.py` (4 pure units +
+  1 gated render test), **all 53 core tests pass** (`uv run pytest -q`; the 2 backprojection
+  round-trips are the render-gated integration tests).
+- **End-to-end pipeline validated:** `eval.run --source procthor --scene 137 --method oracle`
+  → 93 objects, **F1=1.000 / S2C=1.000 / cent 0 / rot 0**; `oracle_noisy` degrades correctly
+  (F1 0.58). `__iter__` frames flow (depth valid 1.0, camera height z=1.58 m — Z-up correct).
+  Runs: `results/procthor_procthor_oracle{,_noisy}_137/`.
+
+**Runner improvements (standing requirements, reused across phases):** (a) the SAM3D
+disk-queue is now **per-experiment** (`<out_dir>/sam3d_queue`, override `--sam3d-queue`) so
+objects from different runs never mix; same-experiment reruns still hit the input-hash
+cache. (b) `eval.run` **always exports a viewable GLB** (`<out_dir>/<scene>/scene_{pred,gt,
+compare}_lite.glb` via `recon/scene_glb.export_pred_vs_gt`) unless `--no-glb` — visual
+inspection of placement is assumed for every run.
+
+**GT-detector run (in flight):** `sam3d_layout` on ProcTHOR uses GT masks by rendering
+`GTObject.mesh`; `ProcThorSource(gt_mesh="box")` attaches the OBB as a box mesh so this path
+works before real asset meshes (AI-8) — a faithful GT-box-detector ceiling for the Objects
+rows. Run those `--no-geometry` (box-vs-mesh Chamfer is meaningless). Native pixel-perfect
+THOR instance masks are a later refinement.
+
+**SAM3D job identity — content hash → stable logical key (2026-07-13, load-bearing fix):**
+AI2-THOR RGB (and a few depth edge pixels) are NOT byte-reproducible across renders, so the
+old pixel-content `_job_hash` made the collect pass miss every cached SAM3D output (all
+generations orphaned). `run_sam3d` now takes a `job_key` (`{source}_{scene}_i{instance}_
+{framing}`, object_track: `t{track_id}`) → readable, reproducible `job_id` (also makes the
+queue browsable by scene). Content hash is now only the fallback for disk datasets. Verified
+idempotent across re-renders (93 jobs, 0 dup). See [[sam3d-queue-design]].
+
+**First campaign (scene-by-scene, per Chris):** queue is per-experiment
+(`results/procthor_procthor_sam3d_layout_3scene/sam3d_queue`). Processing 137 first, then
+200 (52) + 428 (197). SAM3D worker ~24 s/job on the 5090 (reloads pipeline per job).
+
+**Native masks >> box masks (2026-07-13) — use native.** ProcTHOR scene 137, GT-detector
+`sam3d_layout`, no ICP:
+
+| | box-mask (proxy) | **native THOR mask** | Replica room0 ref |
+|---|---|---|---|
+| F1 @IoU.25 | 0.29 | **0.56** | 0.77 |
+| recall@0.5 | 0.03 | **0.29** | 0.35 |
+| Scan2CAD | 0.022 | **0.14** | 0.16 |
+| centroid med | 0.088 m | **0.047 m** | 0.058 m |
+| scale err med | 0.44 | **0.30** | 0.29 |
+| placed / GT | 93/93 | 88/93 | 43/43 |
+
+Native masks ~2× F1, 6× Scan2CAD. 137 now ≈ Replica (gap = 93 objects incl many small vs
+43). **scale_err 0.30 == Replica** → this is SAM3D's inherent scale limit, not a ProcTHOR
+artifact — motivates Phase-3 Sim(3). Runs: `results/procthor_procthor_137_{collect(box),
+native}/`; GLB per scene under `<run>/137/scene_compare_lite.glb`.
+
+**First full 3-scene ProcTHOR result (native GT-detector `sam3d_layout`, no ICP, 2026-07-13):**
+`results/procthor_procthor_sam3d_layout_3scene/` (per-scene GLBs under `<scene>/`).
+
+| scene | placed/GT | F1@.25 | recall@.5 | Scan2CAD | centroid | rot | scale err | dup |
+|---|---|---|---|---|---|---|---|---|
+| 137 | 88/93 | 0.56 | 0.28 | 0.13 | 4.7 cm | 10.0° | 0.30 | 0.01 |
+| 200 | 42/52 | 0.62 | 0.21 | 0.14 | 7.0 cm | 7.8° | 0.33 | 0.00 |
+| 428 | 175/197 | 0.64 | 0.24 | 0.10 | 6.0 cm | 8.3° | 0.30 | 0.02 |
+| **agg** | 101.7/114 | **0.61** | **0.25** | **0.12** | **5.9 cm** | **8.7°** | **0.31** | **0.01** |
+
+Consistent across scenes (F1 0.56–0.64), ~89% coverage, near-zero duplicates (GT detector).
+scale err ~0.31 everywhere = the SAM3D ceiling → Phase-3 Sim(3) target. 4 jobs quarantined
+to `input_failed/` (scene 200 i47–i50). **This is our Objects-rows column** (our metric
+defs; reconcile to the coworker's — AI-7 — before publishing). Mesh rows still need AI-8.
+
+**Two robustness bugs fixed while getting here:** (1) SAM3D worker infinite-retried a failed
+job (reloading the pipeline each time → hung the whole queue on one bad job); now failures
+quarantine to `input_failed/` (`run_sam3d_worker.py`). (2) degenerate masks (<2×2 bbox from
+tiny/occluded objects) crashed SAM3D; `sam3d_layout` now skips masks below `min_mask_px`/
+`min_mask_dim`. Also: SAM3D job identity switched from a pixel content-hash to a stable
+logical `job_key` — AI2-THOR renders aren't byte-reproducible, so the content-hash cache
+missed on collect (see [[sam3d-queue-design]]).
+
+**Open / next:** (1) **AI-7** — get the coworker's exact metric defs + 10th id + split
+(comparability-critical; our `evaluate()` uses our own matching defs for now). (2) Run the
+real method rows — `sam3d_layout` (GT-mask, full-frame) + `object_track` (YOLOE) over the
+9 scenes → the Objects rows. Needs the **SAM3D worker** running (AI-1 env is ready) +
+`--extra detector` re-synced. This is the compute campaign; Claude-doable, not gated. (3) **AI-8**
+— MolmoSpaces/THOR per-object GT meshes → activates the **Mesh** rows (Chamfer + a new
+top-down Footprint IoU). (4) Add the extra named metrics (macro-F1, many-to-one F1, matched/
+objects-per-scene, class-free geo recall) to `eval/metrics.py`, reconciled to AI-7.
 
 ## Phase 2 — detail (detector-in-sim ObjectTrack)
 

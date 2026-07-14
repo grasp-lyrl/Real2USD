@@ -39,6 +39,16 @@ data
 .ros
 .vscode
 
+# The bare `data` rule above (dataset dirs) also matches the r2s3d_core source
+# package literally named `data/` (the SequenceSource backends). Re-include it so the
+# backends are tracked — without this a fresh clone has no dataset adapters.
+!/humble_ws/src_Real2USD/r2s3d_core/src/r2s3d_core/data/
+!/humble_ws/src_Real2USD/r2s3d_core/src/r2s3d_core/data/*.py
+
+# SAM3D disk-queue contents are regenerable scratch (per-job meta/rgb/mask/depth +
+# generated meshes). Keep only the run.json records under results/<exp>/.
+sam3d_queue/
+
 # User data directory (all hidden files go here via HOME=/home/me/tmp)
 humble_ws/tmp
 *.log

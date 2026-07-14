@@ -69,6 +69,19 @@ def _move_to_processed(job_path: Path, processed_dir: Path) -> None:
     shutil.move(str(job_path), str(dest))
 
 
+def _move_to_failed(job_path: Path, failed_dir: Path) -> None:
+    """Move a FAILED job out of input/ so the queue advances (no infinite retry).
+
+    A job that raises in inference (e.g. a degenerate <2x2 mask) must not be re-picked
+    every loop — that starves every job behind it and reloads the pipeline forever.
+    Failures are quarantined here (loud) for inspection instead of silently retried."""
+    failed_dir.mkdir(parents=True, exist_ok=True)
+    dest = failed_dir / job_path.name
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.move(str(job_path), str(dest))
+
+
 def load_job(job_path: Path):
     """Load rgb, mask, depth, meta from a job directory."""
     rgb_path = job_path / "rgb.png"
@@ -516,6 +529,7 @@ def main():
     input_dir = queue_dir / "input"
     output_dir = queue_dir / "output"
     processed_dir = queue_dir / "input_processed"
+    failed_dir = queue_dir / "input_failed"
     output_dir.mkdir(parents=True, exist_ok=True)
     processed_dir.mkdir(parents=True, exist_ok=True)
     print(f"Queue dir: {queue_dir}", file=sys.stderr)
@@ -545,11 +559,12 @@ def main():
             write_demo_go2_compare=args.write_demo_go2_compare,
             use_depth=args.use_depth,
         )
-        if success and args.once:
-            _move_to_processed(job_path, processed_dir)
-            sys.exit(0)
         if success:
             _move_to_processed(job_path, processed_dir)
+        else:
+            # Quarantine failures so the queue advances instead of retrying forever.
+            print(f"[WARN] job {job_path.name} failed; moving to input_failed/", file=sys.stderr)
+            _move_to_failed(job_path, failed_dir)
         if args.once:
             sys.exit(0 if success else 1)
         time.sleep(0.5)

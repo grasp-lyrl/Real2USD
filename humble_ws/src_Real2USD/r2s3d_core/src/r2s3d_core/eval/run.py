@@ -74,6 +74,16 @@ def run(args: argparse.Namespace) -> Path:
                     "track_break": args.det_track_break, "split": args.det_split_prob},
     }
 
+    # Compute the output dir up front so the SAM3D queue and GLB exports live inside it.
+    name = args.name or f"{args.source}_{args.method}"
+    out_dir = Path(args.out) if args.out else DEFAULT_RESULTS / f"{args.phase}_{name}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Per-experiment SAM3D queue: each run is self-contained so objects from different
+    # experiments never mix in one queue. Reruns of the SAME experiment still hit the
+    # input-hash cache in this dir (collect is free). Override with --sam3d-queue to
+    # share a queue deliberately.
+    config["sam3d_queue"] = args.sam3d_queue or str(out_dir / "sam3d_queue")
+
     per_scene = {}
     t0 = time.time()
     for scene in args.scene:
@@ -99,6 +109,17 @@ def run(args: argparse.Namespace) -> Path:
               + (f" sam3d={m['sam3d_invocations']} tracks/gt={m.get('tracks_per_gt', float('nan')):.2f}"
                  if "sam3d_invocations" in m else ""))
 
+        # Always emit a viewable GLB of the placement (pred / gt / overlay) unless
+        # disabled — visual inspection is a standing requirement, reused across phases.
+        if not args.no_glb and preds:
+            try:
+                from ..recon.scene_glb import export_pred_vs_gt
+                paths = export_pred_vs_gt(preds, gts, out_dir / str(scene),
+                                          lite=True, full=args.glb_full)
+                print(f"[{scene}] GLB -> {paths.get('compare_lite')}")
+            except Exception as e:  # never let viz failure kill a metrics run
+                print(f"[{scene}] WARNING: GLB export failed: {e}")
+
     # aggregate across scenes (mean of per-scene metrics that are scalar and finite)
     agg = {}
     scene_metrics = [m for m in per_scene.values() if "error" not in m]
@@ -119,9 +140,6 @@ def run(args: argparse.Namespace) -> Path:
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
 
-    name = args.name or f"{args.source}_{args.method}"
-    out_dir = Path(args.out) if args.out else DEFAULT_RESULTS / f"{args.phase}_{name}"
-    out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "run.json"
     with open(out_path, "w") as f:
         json.dump(record, f, indent=2, default=_json_default)
@@ -142,6 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", default=None, help="results subdir name")
     p.add_argument("--phase", default="phase0", help="results subdir prefix (e.g. phase2)")
     p.add_argument("--out", default=None, help="explicit output dir")
+    p.add_argument("--sam3d-queue", default=None,
+                   help="SAM3D disk-queue dir. Default: <out_dir>/sam3d_queue so each "
+                        "experiment is self-contained. Set to share a queue deliberately.")
+    p.add_argument("--no-glb", action="store_true",
+                   help="skip the pred/gt/overlay GLB export (on by default)")
+    p.add_argument("--glb-full", action="store_true",
+                   help="also write full-texture GLBs (large) alongside the lite ones")
     # sam3d_layout: full frame (default) vs tight crop fed to SAM3D
     p.add_argument("--crop", dest="full_frame", action="store_false",
                    help="feed SAM3D a tight bbox crop instead of the full frame "

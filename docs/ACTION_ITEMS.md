@@ -72,6 +72,29 @@ license at https://huggingface.co/datasets/ShapeNet/ShapeNetCore. See `DATASETS.
 **Blocks:** Phase 5 (alt sim-ready GT + Scan2Sim baseline). **Do:** Google Form on
 https://meta-scenes.github.io. See `DATASETS.md §3`.
 
+### [ ] AI-7 — Coworker's scene-graph benchmark harness + exact metric defs  *(comparability-critical)*
+**Blocks:** publishing a *comparable* Objects/Mesh column in the coworker's ProcTHOR/
+MolmoSpaces scene-graph table (see `PHASE_SPECS.md` Phase-5 side-thread). The adapter +
+pipeline are built and validated (`ProcThorSource`, oracle=1.000 on scene 137); we can
+produce numbers now, but our `evaluate()` uses *our* matching definitions.
+**Why Claude can't:** it's an artifact only the coworker has.
+**Do (from the coworker):** (1) his metric code / exact definitions for **Micro F1,
+Many-to-one F1, Macro F1, Matched-per-scene, Objects-per-scene, Class-Free Geo Recall,
+Footprint IoU, Chamfer** (IoU threshold? label-aware? object set / which THOR types
+count?); (2) the **10th ProcTHOR id** (he named 9; the table says "slice of 10 rooms"
+≈ 10 houses); (3) the **split** those ids index (train/val/test — same integer is a
+different house per split); (4) his camera-trajectory protocol if he wants frame-set
+parity. Until then our column is "indicative, our metric defs" — flag in the caption.
+
+### [ ] AI-8 — MolmoSpaces / THOR per-object GT meshes for the Mesh rows  *(not blocking Objects)*
+**Blocks:** the **Mesh** row-group (Chamfer, Footprint IoU) — Real2USD's differentiator.
+Objects rows need none of this. **Why Claude can't:** MolmoSpaces asset download may be
+license-gated (Objaverse ODC-BY / THOR assets) and needs your account/acceptance.
+**Do:** grab the MolmoSpaces object USD/mesh assets
+(https://huggingface.co/datasets/allenai/molmospaces) so `ProcThorSource.gt()` can attach
+per-instance GT meshes (currently `mesh=None`); then Chamfer/F-score activate and we add
+top-down Footprint IoU. Alternative: extract meshes from the THOR asset db per `assetId`.
+
 ### [ ] AI-6 — Meta SAM 3 checkpoint (detector)  *(not blocking — YOLOE is live)*
 **Blocks:** nothing hard. Phase 2 runs on **YOLOE** (ungated `ultralytics`, auto-downloads
 weights, installed via the `detector` uv extra + torch cu128; validated on the 5090

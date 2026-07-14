@@ -252,3 +252,33 @@ run.json; reuse *published* numbers where the protocol matches exactly (say so i
 table caption); otherwise rerun. Order: Replica tables first (no gate), then
 Clio-protocol, then ScanNet/Scan2CAD/MetaScenes as access arrives. Real-robot bags rerun
 last with the frozen config — no per-scene tuning after benchmark numbers are locked.
+
+### Phase 5 side-thread — ProcTHOR / MolmoSpaces scene-graph comparison
+
+A coworker maintains a holistic hierarchical scene-graph benchmark (Hydra-lineage:
+Objects / Rooms / Places / Building / Mesh / Trajectory / Grounding) comparing
+Hydra, DAAAM, ConceptGraphs, Clio, Khronos, HOV-SG, OpenGraph, ConceptFusion,
+Kimera-Semantics, Memory-Over-Maps. It runs on a fixed slice of **ProcTHOR-10k** houses
+sourced through Ai2 **MolmoSpaces** (ids `137, 200, 428, 534, 569, 573, 683, 771, 912`
++ a 10th TBD). MolmoSpaces itself ships only *manipulation/navigation* eval — the
+scene-graph metrics are the coworker's own harness (get it; see AI-7).
+
+Real2USD is object-centric, so it honestly answers **only two row-groups**: **Objects**
+(P/R/F1, counts, class-free geo recall) and **Mesh** (Chamfer / footprint IoU). Rooms /
+Places / Building / Trajectory / Grounding are out of scope until those layers exist
+(future work — the plan is to keep climbing the hierarchy).
+
+**`ProcThorSource`** (`r2s3d_core/data/procthor.py`, `procthor`/`molmospaces` source key,
+`procthor` uv extra) implements the standard `SequenceSource` contract via AI2-THOR
+native rendering: loads a house by id (`prior.load_dataset("procthor-10k")[split][id]`),
+drives a deterministic reachable-position × yaw × horizon trajectory, yields posed RGB-D
+`Frame`s and OBB `GTObject`s in our Z-up OpenCV-optical world. **Transform is
+round-trip-validated** (`tests/test_procthor.py::test_backprojection_inside_gt_obb`:
+masked depth back-projected into GT OBBs, median containment 0.86, vertical FOV confirmed
+over horizontal). Unity(LH,Y-up)→world(RH,Z-up) via the `(x,z,y)` permutation `_M_WU`.
+
+Metric parity is the open comparability risk: our `evaluate()` gives micro P/R/F1, counts,
+duplicate rate, Chamfer/F-score; the table also wants macro-F1, many-to-one F1,
+matched/objects-per-scene, class-free geo recall, footprint (2D top-down) IoU — implement
+best-guess now, **reconcile to the coworker's exact definitions** (AI-7) before publishing
+the column. Split (`train`/`val`/`test`) for those ids is also TBD (defaults to `train`).

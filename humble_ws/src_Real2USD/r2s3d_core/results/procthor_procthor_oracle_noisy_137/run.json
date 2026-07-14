@@ -1,0 +1,86 @@
+{
+  "git_sha": "8515b140845c8f07f8560dcb4b0465ecc83d3f7b",
+  "config": {
+    "method": "oracle_noisy",
+    "source": "procthor",
+    "stride": 20,
+    "iou_threshold": 0.25,
+    "compute_geometry": true,
+    "surface_points": 10000,
+    "seed": 0,
+    "trans_noise_m": 0.05,
+    "rot_noise_deg": 5.0,
+    "scale_noise": 0.05,
+    "full_frame": true,
+    "icp_accumulate": false,
+    "detections": null,
+    "reid": null,
+    "late_merge": null,
+    "v1_dedup": false,
+    "icp": false,
+    "debug_html": null,
+    "corrupt": {
+      "dropout": 0.0,
+      "jitter_px": 0,
+      "track_break": 0.0,
+      "split": 0.0
+    }
+  },
+  "dataset": "procthor",
+  "scenes": [
+    "137"
+  ],
+  "metrics": {
+    "aggregate": {
+      "n_pred": 93.0,
+      "n_gt": 93.0,
+      "count_ratio": 1.0,
+      "iou_threshold": 0.25,
+      "tp": 54.0,
+      "fp": 39.0,
+      "fn": 39.0,
+      "precision": 0.5806451612903226,
+      "recall": 0.5806451612903226,
+      "f1": 0.5806451612903226,
+      "recall@0.5": 0.3118279569892473,
+      "duplicate_rate": 0.010752688172043012,
+      "scan2cad_accuracy": 0.5698924731182796,
+      "label_accuracy": 1.0,
+      "centroid_err_median_m": 0.06970272100565697,
+      "centroid_err_mean_m": 0.07170078243405552,
+      "rotation_err_median_deg": 2.905055052231633,
+      "rotation_err_mean_deg": 3.6095251311534318,
+      "scale_err_median": 0.06682758506211467,
+      "scale_err_mean": 0.07473491202152399
+    },
+    "per_scene": {
+      "137": {
+        "n_pred": 93,
+        "n_gt": 93,
+        "count_ratio": 1.0,
+        "iou_threshold": 0.25,
+        "tp": 54,
+        "fp": 39,
+        "fn": 39,
+        "precision": 0.5806451612903226,
+        "recall": 0.5806451612903226,
+        "f1": 0.5806451612903226,
+        "recall@0.5": 0.3118279569892473,
+        "duplicate_rate": 0.010752688172043012,
+        "scan2cad_accuracy": 0.5698924731182796,
+        "label_accuracy": 1.0,
+        "centroid_err_median_m": 0.06970272100565697,
+        "centroid_err_mean_m": 0.07170078243405552,
+        "rotation_err_median_deg": 2.905055052231633,
+        "rotation_err_mean_deg": 3.6095251311534318,
+        "scale_err_median": 0.06682758506211467,
+        "scale_err_mean": 0.07473491202152399,
+        "chamfer_l1_median_m": NaN,
+        "fscore@0.05_mean": NaN,
+        "fscore@0.02_mean": NaN
+      }
+    }
+  },
+  "wall_time_s": 11.62334156036377,
+  "created_at": "2026-07-13T11:16:58"
+}

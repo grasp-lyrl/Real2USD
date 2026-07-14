@@ -1,0 +1,87 @@
+{
+  "git_sha": "8515b140845c8f07f8560dcb4b0465ecc83d3f7b",
+  "config": {
+    "method": "sam3d_layout",
+    "source": "procthor",
+    "stride": 20,
+    "iou_threshold": 0.25,
+    "compute_geometry": false,
+    "surface_points": 10000,
+    "seed": 0,
+    "trans_noise_m": 0.05,
+    "rot_noise_deg": 5.0,
+    "scale_noise": 0.05,
+    "full_frame": true,
+    "icp_accumulate": false,
+    "detections": null,
+    "reid": null,
+    "late_merge": null,
+    "v1_dedup": false,
+    "icp": false,
+    "debug_html": null,
+    "corrupt": {
+      "dropout": 0.0,
+      "jitter_px": 0,
+      "track_break": 0.0,
+      "split": 0.0
+    },
+    "sam3d_queue": "/home/chris.hsu/repos/Real2USD/humble_ws/src_Real2USD/r2s3d_core/results/procthor_procthor_sam3d_layout_3scene/sam3d_queue"
+  },
+  "dataset": "procthor",
+  "scenes": [
+    "137"
+  ],
+  "metrics": {
+    "aggregate": {
+      "n_pred": 93.0,
+      "n_gt": 93.0,
+      "count_ratio": 1.0,
+      "iou_threshold": 0.25,
+      "tp": 27.0,
+      "fp": 66.0,
+      "fn": 66.0,
+      "precision": 0.2903225806451613,
+      "recall": 0.2903225806451613,
+      "f1": 0.2903225806451613,
+      "recall@0.5": 0.03225806451612903,
+      "duplicate_rate": 0.0,
+      "scan2cad_accuracy": 0.021505376344086023,
+      "label_accuracy": 1.0,
+      "centroid_err_median_m": 0.0878993752758972,
+      "centroid_err_mean_m": 0.12528599257216666,
+      "rotation_err_median_deg": 7.7536534372169825,
+      "rotation_err_mean_deg": 9.082256572906859,
+      "scale_err_median": 0.43628572768786045,
+      "scale_err_mean": 0.4417856220921337
+    },
+    "per_scene": {
+      "137": {
+        "n_pred": 93,
+        "n_gt": 93,
+        "count_ratio": 1.0,
+        "iou_threshold": 0.25,
+        "tp": 27,
+        "fp": 66,
+        "fn": 66,
+        "precision": 0.2903225806451613,
+        "recall": 0.2903225806451613,
+        "f1": 0.2903225806451613,
+        "recall@0.5": 0.03225806451612903,
+        "duplicate_rate": 0.0,
+        "scan2cad_accuracy": 0.021505376344086023,
+        "label_accuracy": 1.0,
+        "centroid_err_median_m": 0.0878993752758972,
+        "centroid_err_mean_m": 0.12528599257216666,
+        "rotation_err_median_deg": 7.7536534372169825,
+        "rotation_err_mean_deg": 9.082256572906859,
+        "scale_err_median": 0.43628572768786045,
+        "scale_err_mean": 0.4417856220921337,
+        "chamfer_l1_median_m": NaN,
+        "fscore@0.05_mean": NaN,
+        "fscore@0.02_mean": NaN
+      }
+    }
+  },
+  "wall_time_s": 68.09616160392761,
+  "created_at": "2026-07-13T14:19:46"
+}
