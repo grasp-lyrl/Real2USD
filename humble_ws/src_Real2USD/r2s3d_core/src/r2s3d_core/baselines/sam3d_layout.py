@@ -279,7 +279,8 @@ def _masked_depth_cloud(frame: Frame, mask: np.ndarray) -> np.ndarray:
 
 # ----------------------------------------------------------------- entry points
 
-def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> List[SceneObject]:
+def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) -> List[SceneObject]:
+    """registration: "none" (layout only) | "icp" (rigid SE(3)) | "teaser" (Sim(3), scale)."""
     if not gt:
         return []
     frames = list(source)
@@ -370,14 +371,15 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
                 "validation": val, "mask_src": mask_src,
                 "instance_id": g.instance_id}
 
-        if use_icp:
-            # source points are already placed in world (posed via the layout), so ICP
-            # refines from identity and returns a world-frame delta (source -> target).
-            # target defaults to the best-view masked depth (partial, ~20k pts). With
-            # config["icp_accumulate"], fuse the object's masked depth over ALL views
-            # (~28x more pts, closer to the full surface — proto multi-view ObjectTrack).
+        if registration in ("icp", "teaser"):
+            # Registration target = the object's masked sensor depth, back-projected to
+            # world. Default is the best-view sliver (~20k pts); config["icp_accumulate"]
+            # fuses masked depth over ALL views (~28x more pts, a fuller surface — proto
+            # multi-view ObjectTrack). TEASER wants the fuller cloud for scale + FPFH, so
+            # it accumulates by default.
+            accumulate = config.get("icp_accumulate") or registration == "teaser"
             target = _masked_depth_cloud(frame, mask)
-            if config.get("icp_accumulate"):
+            if accumulate:
                 extra = [target]
                 for fr in frames:
                     if fr is frame:
@@ -386,19 +388,35 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
                     if m is not None and int((m > 0).sum()) > 50:
                         extra.append(_masked_depth_cloud(fr, m))
                 target = np.concatenate(extra, axis=0)
-                prov["icp_target"] = f"accumulated_{len(extra)}views"
+                prov["reg_target"] = f"accumulated_{len(extra)}views"
             else:
-                prov["icp_target"] = "singleview"
-            if len(posed.faces):
-                src_pts = geo.sample_surface(posed, 2000, seed=g.instance_id)  # seeded -> reproducible
-            else:
-                src_pts = posed.vertices
-            delta, info = refine_icp(src_pts, target, np.eye(4))
-            posed.apply_transform(delta)
-            T_world_obj = delta @ T_world_obj
+                prov["reg_target"] = "singleview"
+            src_pts = (geo.sample_surface(posed, 2000, seed=g.instance_id)
+                       if len(posed.faces) else np.asarray(posed.vertices))
+
+            if registration == "icp":
+                # rigid: recovers pose only (cannot rescale). Delta is a world-frame SE(3).
+                delta, info = refine_icp(src_pts, target, np.eye(4))
+                posed.apply_transform(delta)
+                T_world_obj = delta @ T_world_obj
+                prov["registration"] = "layout+icp"
+                prov["icp"] = info
+            else:  # teaser — Sim(3): also estimates SCALE (the ICP-can't-fix residual)
+                from ..registration.teaser import register_teaser
+                voxel = float(config.get("teaser_voxel", 0.03))
+                delta, info = register_teaser(src_pts, target, voxel=voxel)
+                if info.get("ok"):
+                    posed.apply_transform(delta)
+                    # delta carries scale -> re-derive the OBB pose from the mesh, not
+                    # delta @ T_world_obj (which would bake scale into the rotation block).
+                    obb = posed.bounding_box_oriented
+                    T_world_obj = np.asarray(obb.primitive.transform, dtype=np.float64)
+                else:
+                    log.info("instance %d (%s): TEASER fallback (%s) — keeping layout pose",
+                             g.instance_id, g.label, info.get("reason"))
+                prov["registration"] = "layout+teaser"
+                prov["teaser"] = info
             extents = np.asarray(posed.bounding_box_oriented.primitive.extents, dtype=np.float64)
-            prov["registration"] = "layout+icp"
-            prov["icp"] = info
 
         preds.append(SceneObject(label=g.label, T_world_obj=T_world_obj, extents=extents,
                                  mesh=posed, provenance=prov))
@@ -416,8 +434,13 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, use_icp: bool) -> L
 
 
 def sam3d_layout(source, gt, config) -> List[SceneObject]:
-    return _run(source, gt, config, use_icp=False)
+    return _run(source, gt, config, registration="none")
 
 
 def sam3d_layout_icp(source, gt, config) -> List[SceneObject]:
-    return _run(source, gt, config, use_icp=True)
+    return _run(source, gt, config, registration="icp")
+
+
+def sam3d_layout_teaser(source, gt, config) -> List[SceneObject]:
+    """SAM3D layout + TEASER++ Sim(3) registration (recovers scale, unlike rigid ICP)."""
+    return _run(source, gt, config, registration="teaser")

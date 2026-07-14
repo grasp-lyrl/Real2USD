@@ -17,7 +17,7 @@ _Last updated: 2026-07-13 (ProcTHOR/MolmoSpaces adapter built + validated — Ph
 | 0 | Dataset + harness + naive baseline | 🟢 **done** | harness verified on 8 Replica scenes; SAM3D worker validated; `sam3d_layout` row on room0. **Full-frame >> crop input (F1 .58→.77, Scan2CAD 0→.16) — now the default.** all-scene aggregate + full-frame ICP pending |
 | 1 | frames.py + validation + loud fallbacks | 🟢 **done** | `frames/` matches v1 `ply_frame_utils` to 1e-9; Phase 0 numbers reproduce exactly; ROS-node dedup deferred to the Phase 2 wrapper |
 | 2 | ObjectTrack node | 🟡 **in progress** | ROS-free `tracks/` + `detect/` (YOLOE) built; tracker tests pass; **detector-in-sim fragmentation cleanup verified room0+room1** (SAM3D calls ↓~4×, tracks/GT 1.3→0.33). SAM3D-mesh placement-degradation (vs GT-mask ceiling) collecting; ROS wrapper deferred |
-| 3 | Localization stack (TEASER++ / ICP / refine) | ⬜ not started | go/no-go gate: must beat sam3d_layout |
+| 3 | Localization stack (TEASER++ / ICP / refine) | 🟡 in progress | ICP variant done (fixes pose, not scale). TEASER++ built+integrated but **degrades results as-applied** (bad FPFH corr on hallucinated mesh vs partial depth; no safety gate) — needs gate + correspondence work. See below. |
 | 4 | Reconciliation + export | ⬜ not started | needs Isaac Sim |
 | 5 | Benchmark campaign | 🟡 side-thread started | **ProcTHOR/MolmoSpaces scene-graph comparison adapter built + validated** (see below). Main campaign dataset access is the long pole — [AI-2..5](ACTION_ITEMS.md) started early |
 | 6 | Paper rewrite | ⬜ not started | |
@@ -107,6 +107,32 @@ Consistent across scenes (F1 0.56–0.64), ~89% coverage, near-zero duplicates (
 scale err ~0.31 everywhere = the SAM3D ceiling → Phase-3 Sim(3) target. 4 jobs quarantined
 to `input_failed/` (scene 200 i47–i50). **This is our Objects-rows column** (our metric
 defs; reconcile to the coworker's — AI-7 — before publishing). Mesh rows still need AI-8.
+
+**Phase-3 registration on the 3 scenes (layout / +ICP / +TEASER), agg:**
+
+| metric | layout | +ICP (rigid) | +TEASER (Sim3) |
+|---|---|---|---|
+| F1@.25 | 0.61 | **0.71** | 0.31 |
+| recall@0.5 | 0.25 | **0.33** | 0.07 |
+| Scan2CAD | 0.12 | **0.13** | 0.03 |
+| rotation err | 8.7° | **4.2°** | 18.2° |
+| scale err | 0.31 | 0.33 | 0.35 |
+
+- **ICP (`sam3d_layout_icp`) works**: fixes pose (rotation −4.5°, F1 +0.10) but rigid → can't
+  rescale (scale flat, Scan2CAD gated by the residual ~0.31 scale). Runs:
+  `results/procthor_procthor_sam3d_layout_icp_3scene/`.
+- **TEASER++ (`sam3d_layout_teaser`) DEGRADES results as-applied — do NOT use yet.** The
+  solver is correct (unit test recovers a known Sim3 scale to 3%, `tests/test_teaser.py`),
+  but FPFH correspondences between SAM3D's *hallucinated* mesh (source) and the *partial*
+  one-sided masked depth (target) are mostly outliers → garbage Sim3 (18° rot), applied
+  **unconditionally with no acceptance gate**. Runs: `results/..._teaser_3scene/`.
+  **TODO before it's usable:** (1) safety gate — accept a registration only if it reduces
+  mesh→depth residual vs layout, else keep layout (registration must never hurt); (2)
+  correspondence quality — fuller accumulated target, seed near the layout pose, or ICP-refine
+  after TEASER. Built from source (not on PyPI): local Eigen prefix + venv pybind11 →
+  `_teaserpp.cpython-310.so` copied into `.venv/.../teaserpp_python/` (a `uv sync` will drop
+  it — rebuild/copy from `~/build/TEASER-plusplus/build/python/`). `registration/teaser.py`
+  = FPFH (open3d) + robust Sim3. See [[teaser-registration-finding]].
 
 **Two robustness bugs fixed while getting here:** (1) SAM3D worker infinite-retried a failed
 job (reloading the pipeline each time → hung the whole queue on one bad job); now failures

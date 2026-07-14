@@ -16,10 +16,11 @@ def get_method(name: str) -> Callable:
         from . import oracle as _o
 
         return {"oracle": _o.oracle, "oracle_noisy": _o.oracle_noisy}[name]
-    if name in ("sam3d_layout", "sam3d_layout_icp"):
-        from .sam3d_layout import sam3d_layout, sam3d_layout_icp
+    if name in ("sam3d_layout", "sam3d_layout_icp", "sam3d_layout_teaser"):
+        from .sam3d_layout import sam3d_layout, sam3d_layout_icp, sam3d_layout_teaser
 
-        return {"sam3d_layout": sam3d_layout, "sam3d_layout_icp": sam3d_layout_icp}[name]
+        return {"sam3d_layout": sam3d_layout, "sam3d_layout_icp": sam3d_layout_icp,
+                "sam3d_layout_teaser": sam3d_layout_teaser}[name]
     if name in ("object_track", "object_track_naive"):
         from .object_track import object_track, object_track_naive
 
@@ -30,4 +31,4 @@ def get_method(name: str) -> Callable:
 
 
 AVAILABLE = ["oracle", "oracle_noisy", "sam3d_layout", "sam3d_layout_icp",
-             "object_track", "object_track_naive"]
+             "sam3d_layout_teaser", "object_track", "object_track_naive"]
