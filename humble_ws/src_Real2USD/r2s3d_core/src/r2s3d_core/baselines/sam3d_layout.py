@@ -316,6 +316,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
         return m
     preds: List[SceneObject] = []
     pending = 0
+    teaser_stats = []  # per attempt: (accepted, scale, resid_before_m, resid_after_m, n_corr)
     for g in gt:
         vi = select_best_view(g, frames, mask_fn)
         if vi is None:
@@ -403,18 +404,35 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                 prov["icp"] = info
             else:  # teaser — Sim(3): also estimates SCALE (the ICP-can't-fix residual)
                 from ..registration.teaser import register_teaser
+                from scipy.spatial import cKDTree
                 voxel = float(config.get("teaser_voxel", 0.03))
                 delta, info = register_teaser(src_pts, target, voxel=voxel)
+                accepted = False
                 if info.get("ok"):
-                    posed.apply_transform(delta)
-                    # delta carries scale -> re-derive the OBB pose from the mesh, not
-                    # delta @ T_world_obj (which would bake scale into the rotation block).
-                    obb = posed.bounding_box_oriented
-                    T_world_obj = np.asarray(obb.primitive.transform, dtype=np.float64)
+                    # SAFETY GATE: accept the Sim(3) only if it actually improves the
+                    # mesh->depth alignment vs the layout pose. FPFH corr on a hallucinated
+                    # mesh are often outliers -> garbage transforms; the gate makes bad
+                    # registrations a no-op (keep layout) so registration can't regress.
+                    tree = cKDTree(target)
+                    r_before = float(np.median(tree.query(src_pts)[0]))
+                    src_reg = (delta[:3, :3] @ src_pts.T).T + delta[:3, 3]
+                    r_after = float(np.median(tree.query(src_reg)[0]))
+                    info["resid_before_m"], info["resid_after_m"] = r_before, r_after
+                    if r_after < r_before:
+                        posed.apply_transform(delta)
+                        # delta carries scale -> re-derive OBB pose from the mesh, not
+                        # delta @ T_world_obj (which would bake scale into the rotation).
+                        T_world_obj = np.asarray(posed.bounding_box_oriented.primitive.transform,
+                                                 dtype=np.float64)
+                        accepted = True
+                    teaser_stats.append((accepted, info.get("scale"), r_before, r_after,
+                                         info.get("n_corr")))
                 else:
-                    log.info("instance %d (%s): TEASER fallback (%s) — keeping layout pose",
+                    log.info("instance %d (%s): TEASER no solution (%s) — keeping layout",
                              g.instance_id, g.label, info.get("reason"))
-                prov["registration"] = "layout+teaser"
+                    teaser_stats.append((False, None, None, None, info.get("n_corr", 0)))
+                info["accepted"] = accepted
+                prov["registration"] = "layout+teaser" if accepted else "layout(teaser_rejected)"
                 prov["teaser"] = info
             extents = np.asarray(posed.bounding_box_oriented.primitive.extents, dtype=np.float64)
 
@@ -430,6 +448,27 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
             "--no-current-run --use-depth --queue-dir %s --sam3d-repo "
             "humble_ws/src_Real2USD/real2sam3d/sam-3d-objects", pending, q, q,
         )
+
+    # Surface TEASER acceptance diagnostics into run.json (per-scene) so we can judge
+    # whether the gated Sim(3) does anything: how often it beats layout, and by how much.
+    if registration == "teaser" and teaser_stats:
+        acc = [s for s in teaser_stats if s[0]]
+        improves = [s[2] - s[3] for s in acc]  # resid_before - resid_after (m)
+        stats = {
+            "teaser_attempts": len(teaser_stats),
+            "teaser_accepted": len(acc),
+            "teaser_accept_rate": len(acc) / len(teaser_stats),
+            "teaser_scale_median_accepted": float(np.median([s[1] for s in acc])) if acc else float("nan"),
+            "teaser_resid_improve_median_m": float(np.median(improves)) if improves else 0.0,
+            "teaser_ncorr_median": float(np.median([s[4] for s in teaser_stats if s[4] is not None]))
+            if any(s[4] is not None for s in teaser_stats) else 0.0,
+        }
+        config.setdefault("_method_stats", {})[str(getattr(source, "scene", "scene"))] = stats
+        log.warning("[%s] TEASER gate: %d/%d accepted (%.0f%%), median accepted scale %.2f, "
+                    "median resid improve %.1f cm", getattr(source, "scene", "?"),
+                    stats["teaser_accepted"], stats["teaser_attempts"],
+                    100 * stats["teaser_accept_rate"], stats["teaser_scale_median_accepted"],
+                    100 * stats["teaser_resid_improve_median_m"])
     return preds
 
 

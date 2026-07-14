@@ -121,18 +121,24 @@ defs; reconcile to the coworker's — AI-7 — before publishing). Mesh rows sti
 - **ICP (`sam3d_layout_icp`) works**: fixes pose (rotation −4.5°, F1 +0.10) but rigid → can't
   rescale (scale flat, Scan2CAD gated by the residual ~0.31 scale). Runs:
   `results/procthor_procthor_sam3d_layout_icp_3scene/`.
-- **TEASER++ (`sam3d_layout_teaser`) DEGRADES results as-applied — do NOT use yet.** The
-  solver is correct (unit test recovers a known Sim3 scale to 3%, `tests/test_teaser.py`),
-  but FPFH correspondences between SAM3D's *hallucinated* mesh (source) and the *partial*
-  one-sided masked depth (target) are mostly outliers → garbage Sim3 (18° rot), applied
-  **unconditionally with no acceptance gate**. Runs: `results/..._teaser_3scene/`.
-  **TODO before it's usable:** (1) safety gate — accept a registration only if it reduces
-  mesh→depth residual vs layout, else keep layout (registration must never hurt); (2)
-  correspondence quality — fuller accumulated target, seed near the layout pose, or ICP-refine
-  after TEASER. Built from source (not on PyPI): local Eigen prefix + venv pybind11 →
-  `_teaserpp.cpython-310.so` copied into `.venv/.../teaserpp_python/` (a `uv sync` will drop
-  it — rebuild/copy from `~/build/TEASER-plusplus/build/python/`). `registration/teaser.py`
-  = FPFH (open3d) + robust Sim3. See [[teaser-registration-finding]].
+- **TEASER++ Sim(3) vs depth — TRIED, GATED, SHELVED (negative result).** `sam3d_layout_teaser`
+  (`results/..._teaser_gated_3scene/`): even with a safety gate (accept only if the Sim(3)
+  lowers mesh→depth residual vs layout) it still **loses to layout** (F1 0.52 < 0.61 < ICP
+  0.71). Gate accepts ~37% of objects and those genuinely reduce residual (~1.8 cm), but the
+  **median accepted scale is 0.67 — TEASER shrinks meshes.** Root cause is fundamental: the
+  masked depth is a **partial one-sided** view, so a scale DOF fits it best by shrinking the
+  mesh onto the visible sliver — lowers residual (gate accepts) but worsens true 3D extent/
+  IoU. This is exactly why rigid **ICP helps** (no scale DOF → only fixes pose) and **TEASER
+  hurts**. Ungated it was worse still (F1 0.31, 18° rot — bad FPFH corr on the hallucinated
+  mesh). **Conclusion: registering to partial sensor depth cannot fix SAM3D's scale error**
+  (target under-constrains the unseen extent). Scale needs a different lever: a genuinely full
+  fused surface, upstream generation (SAM 3), or a scale prior — NOT TEASER-vs-depth.
+  Solver + build verified fine (unit test recovers a known Sim3 to 3%, `tests/test_teaser.py`).
+  Built from source (not on PyPI): local Eigen prefix + venv pybind11 → `_teaserpp.so` in
+  `.venv/.../teaserpp_python/` (a `uv sync` drops it — rebuild from `~/build/TEASER-plusplus/`).
+  See [[teaser-registration-finding]].
+
+  **Phase-3 verdict: keep ICP (pose win); TEASER-Sim(3)-vs-depth shelved.**
 
 **Two robustness bugs fixed while getting here:** (1) SAM3D worker infinite-retried a failed
 job (reloading the pipeline each time → hung the whole queue on one bad job); now failures
