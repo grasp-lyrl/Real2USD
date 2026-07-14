@@ -51,13 +51,17 @@ Design/interfaces: `PHASE_SPECS.md` Phase-5 side-thread. How-to: `DATASETS.md §
   (F1 0.58). `__iter__` frames flow (depth valid 1.0, camera height z=1.58 m — Z-up correct).
   Runs: `results/procthor_procthor_oracle{,_noisy}_137/`.
 
-**`placements.json` (per run, `results/<run>/placements.json`):** each object stores
-`T_world_mesh` (raw `object.glb` verts → world, incl scale-fit + ICP) + `T_world_obj` +
-extents + `job_id` + per-object scale/ICP diagnostics. Any visualizer/metric can rebuild the
-posed prediction — `trimesh.load(<queue>/output/<job_id>/object.glb)`, apply `T_world_mesh` —
-**without re-running placement** (round-trip verified: rebuilt OBB extents match stored). Off
-with `--no-placements`. Reduces (but doesn't remove) the AI-8 Mesh-rows re-run: geometry vs
-real GT meshes still needs a pass, but reviz/inspection no longer does.
+**Per-scene `scene_graph.json` (`results/<run>/<scene>/scene_graph.json`):** an object-centric
+scene graph for downstream inference (navigation etc.). Header: `scene, source, method,
+label_source` (`gt` for GT-detector `sam3d_layout*`, `detector` for `object_track`), `frame`
+(Z-up world, meters), `sam3d_queue`. Each object: `id, label, center, extents, T_world_obj,
+T_world_mesh` (raw `object.glb` verts → world, incl scale-fit + ICP), `mesh` (relative path),
+`job_id`, per-object `scale_fit`/`icp`. Any visualizer/metric rebuilds the posed prediction —
+`trimesh.load(<queue>/<mesh>)`, apply `T_world_mesh` — **without re-running placement**
+(round-trip verified). Off with `--no-placements`. Reduces (not removes) the AI-8 Mesh-rows
+re-run: geometry vs real GT meshes still needs a pass; reviz/inspection no longer does.
+NOTE: for `sam3d_layout*`, `label` is the **ground-truth** THOR objectType (GT-detector
+ceiling); real predicted labels come from the `object_track` (YOLOE) path.
 
 **Runner improvements (standing requirements, reused across phases):** (a) the SAM3D
 disk-queue is now **per-experiment** (`<out_dir>/sam3d_queue`, override `--sam3d-queue`) so

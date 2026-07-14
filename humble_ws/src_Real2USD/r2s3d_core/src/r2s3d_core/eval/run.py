@@ -153,17 +153,28 @@ def run(args: argparse.Namespace) -> Path:
         json.dump(record, f, indent=2, default=_json_default)
     print(f"\nwrote {out_path}")
 
-    # Persist per-object placements (T_world_mesh etc.) so visualizers can rebuild posed
-    # meshes from the cached SAM3D outputs without re-running placement. Off with --no-placements.
+    # Per-scene object-centric scene graph: results/<run>/<scene>/scene_graph.json. Each
+    # object carries label + metric center/extents/pose + a ref to its cached mesh, so the
+    # scene graph is directly consumable for downstream inference (e.g. navigation) and a
+    # visualizer can rebuild posed meshes (apply T_world_mesh to the mesh) with no re-run.
     placements = config.get("_placements")
     if placements and not args.no_placements:
-        pjson = {"git_sha": record["git_sha"], "method": args.method, "source": args.source,
-                 "created_at": record["created_at"], "scenes": placements}
-        ppath = out_dir / "placements.json"
-        with open(ppath, "w") as f:
-            json.dump(pjson, f, indent=2, default=_json_default)
-        n = sum(len(v["objects"]) for v in placements.values())
-        print(f"wrote {ppath}  ({n} object placements)")
+        # GT-detector methods carry ground-truth labels; the detector path carries predicted.
+        label_source = "detector" if args.method.startswith("object_track") else "gt"
+        for scene, data in placements.items():
+            sg = {
+                "scene": scene, "source": args.source, "method": args.method,
+                "label_source": label_source,
+                "frame": "world: gravity-aligned Z-up, meters (OpenCV-optical cameras)",
+                "git_sha": record["git_sha"], "created_at": record["created_at"],
+                "sam3d_queue": data.get("sam3d_queue"),
+                "objects": data["objects"],
+            }
+            spath = out_dir / str(scene) / "scene_graph.json"
+            spath.parent.mkdir(parents=True, exist_ok=True)
+            with open(spath, "w") as f:
+                json.dump(sg, f, indent=2, default=_json_default)
+            print(f"wrote {spath}  ({len(data['objects'])} objects, labels={label_source})")
     return out_path
 
 

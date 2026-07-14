@@ -1,14 +1,15 @@
-"""Before/after HTML for the depth-extent scale-fit — reads placements.json (no re-run).
+"""Before/after HTML for the depth-extent scale-fit — reads scene_graph.json (no re-run).
 
 For each placed object, projects its SAM3D mesh silhouette into its best view BEFORE
-(layout) and AFTER (the saved scale+ICP placement), over the GT native mask. Uses
-``placements.json`` (T_world_mesh) + the cached ``object.glb``/``pose.json`` — so it does
-NOT re-run scale-fit/ICP or fuse depth. Rendering is only to fetch the best-view RGB + mask.
+(layout) and AFTER (the saved scale+ICP placement), over the GT native mask. Uses the
+per-scene ``scene_graph.json`` (T_world_mesh) + the cached ``object.glb``/``pose.json`` — so
+it does NOT re-run scale-fit/ICP or fuse depth. Rendering is only to fetch the best-view
+RGB + mask.
 
 Usage:
     uv run python scripts/viz_scale_html.py \
-        --placements results/procthor_procthor_sam3d_layout_scale_icp_3scene/placements.json \
-        --scene 137 --out results/phase3_scale_viz/scene137.html [--limit 24]
+        --scene-graph results/procthor_procthor_sam3d_layout_scale_icp_3scene/137/scene_graph.json \
+        --out results/phase3_scale_viz/scene137.html [--limit 24]
 """
 from __future__ import annotations
 
@@ -67,15 +68,14 @@ def _draw(rgb, layers, bbox, pad=12, size=260):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--placements", required=True, help="placements.json from a run")
-    ap.add_argument("--scene", default="137")
+    ap.add_argument("--scene-graph", required=True, help="per-scene scene_graph.json from a run")
     ap.add_argument("--split", default="train")
     ap.add_argument("--out", default="results/phase3_scale_viz/scene.html")
     ap.add_argument("--limit", type=int, default=24)
     args = ap.parse_args()
 
-    P = json.load(open(args.placements))
-    sc = P["scenes"][args.scene]
+    sc = json.load(open(args.scene_graph))
+    args.scene = str(sc["scene"])
     queue = Path(sc["sam3d_queue"])
     objs = sc["objects"]
 
@@ -94,7 +94,7 @@ def main():
         fr = frames_by_id.get(o["best_frame_id"])
         if fr is None:
             continue
-        mask = src.native_mask(o["best_frame_id"], o["instance_id"])
+        mask = src.native_mask(o["best_frame_id"], o["id"])
         if mask is None:
             continue
         glb = queue / "output" / o["job_id"] / "object.glb"
@@ -117,7 +117,7 @@ def main():
         img_a = _draw(fr.rgb, [(mask, (255, 255, 255)), (sa, (0, 255, 0))], bbox)
         sf = o.get("scale_fit") or {}
         scales = np.asarray(sf.get("scales", [1, 1, 1]))
-        rows.append({"label": o["label"], "id": o["instance_id"],
+        rows.append({"label": o["label"], "id": o["id"],
                      "img_b": _png_b64(img_b), "img_a": _png_b64(img_a),
                      "iou_b": _iou(sb, mask), "iou_a": _iou(sa, mask),
                      "smin": float(scales.min()), "smax": float(scales.max()),
@@ -146,7 +146,7 @@ figcaption{{color:#bbb;margin-top:4px}}.key b{{border:1px solid;padding:1px 4px;
 <p class="key">Best-view silhouette vs <b style="color:#fff">GT mask</b>:
  <b style="color:#66f;color:#66f">layout</b> &nbsp; <b style="color:#6f6">scale+ICP</b>.
  Median silhouette↔mask IoU over all {n_all}: layout <b>{med_b:.2f}</b> → scale+ICP <b>{med_a:.2f}</b>.
- Rebuilt from placements.json (no re-run of scale/ICP).</p>
+ Rebuilt from scene_graph.json (no re-run of scale/ICP).</p>
 <div class="grid">{cells}</div>"""
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

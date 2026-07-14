@@ -515,13 +515,16 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                                  mesh=posed, provenance=prov))
         # Persist enough to rebuild the posed mesh later without re-running placement:
         # load <queue>/output/<job_id>/object.glb and apply T_world_mesh (raw verts->world).
+        _jid = _stable_job_id(job_key)
         placements.append({
-            "instance_id": int(g.instance_id), "label": g.label,
-            "job_id": _stable_job_id(job_key), "registration": prov["registration"],
+            "id": int(g.instance_id), "label": g.label,
+            "center": np.asarray(T_world_obj, float)[:3, 3].tolist(),  # world OBB center
+            "extents": np.asarray(extents, float).tolist(),            # metric OBB size
+            "T_world_obj": np.asarray(T_world_obj, float).tolist(),    # OBB pose
+            "T_world_mesh": (post @ T_world_raw).tolist(),             # raw object.glb verts -> world
+            "mesh": f"output/{_jid}/object.glb",                       # relative to sam3d_queue
+            "job_id": _jid, "registration": prov["registration"],
             "best_frame_id": int(frame.frame_id), "view_index": int(vi),
-            "T_world_mesh": (post @ T_world_raw).tolist(),   # raw object.glb verts -> world
-            "T_world_obj": np.asarray(T_world_obj, float).tolist(),
-            "extents": np.asarray(extents, float).tolist(),
             "scale_fit": prov.get("scale_fit"), "icp": prov.get("icp"),
         })
     if pending:
