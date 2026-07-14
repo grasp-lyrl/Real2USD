@@ -72,25 +72,50 @@ license at https://huggingface.co/datasets/ShapeNet/ShapeNetCore. See `DATASETS.
 **Blocks:** Phase 5 (alt sim-ready GT + Scan2Sim baseline). **Do:** Google Form on
 https://meta-scenes.github.io. See `DATASETS.md §3`.
 
-### [ ] AI-7 — Coworker's scene-graph benchmark harness + exact metric defs  *(comparability-critical)*
-**Blocks:** publishing a *comparable* Objects/Mesh column in the coworker's ProcTHOR/
-MolmoSpaces scene-graph table (see `PHASE_SPECS.md` Phase-5 side-thread). The adapter +
-pipeline are built and validated (`ProcThorSource`, oracle=1.000 on scene 137); we can
-produce numbers now, but our `evaluate()` uses *our* matching definitions.
-**Why Claude can't:** it's an artifact only the coworker has.
-**Do (from the coworker):** (1) his metric code / exact definitions for **Micro F1,
-Many-to-one F1, Macro F1, Matched-per-scene, Objects-per-scene, Class-Free Geo Recall,
-Footprint IoU, Chamfer** (IoU threshold? label-aware? object set / which THOR types
-count?); (2) the **10th ProcTHOR id** (he named 9; the table says "slice of 10 rooms"
-≈ 10 houses); (3) the **split** those ids index (train/val/test — same integer is a
-different house per split); (4) his camera-trajectory protocol if he wants frame-set
-parity. Until then our column is "indicative, our metric defs" — flag in the caption.
-**Update (2026-07-14):** the geometric named metrics are now implemented (Option A —
-`eval/metrics.py` micro/macro F1, per-scene counts, class-free scene Chamfer + geo recall;
-see `PHASE_SPECS.md` Phase-5). What still needs the coworker: (a) confirm the exact
-definitions (object set, IoU threshold, label-aware?) so ours match; (b) his **association
-family** defs (many-to-one F1, fragmentation, merge, pairwise) to finish Option B against
-`scripts/scene_graph_metrics.py:compute_track_metrics`; plus the 10th id + split as before.
+### [~] AI-7 — Coworker's scene-graph benchmark metric defs  *(ANSWERED 2026-07-14; reconciliation in progress)*
+**Blocks:** publishing a *comparable* Objects/Mesh column. Coworker's benchmark = **SuperMap**
+(AirLab/Super Odometry, RSS'26) eval harness `fairi-sgbench`; DAAAM-lineage lexicon.
+
+**RESOLVED ANSWERS (from coworker, 2026-07-14) — two INVALIDATE our current numbers:**
+1. **Split = procthor-10k `val`** (val.jsonl), NOT train. Same integer id is a *different
+   house* per split → **every ProcTHOR result so far (train split) is on the wrong houses**
+   and must be regenerated on `val`.
+2. **Matching = Hungarian on CENTROID (Euclidean) distance ≤ τ**, default **τ=1.0 m**, swept
+   [0.25,0.5,0.75,1.0,1.5] m. **NOT** 3D OBB IoU. Our IoU@0.25 is a *new, stricter, non-
+   comparable* protocol (tiny/thin ProcTHOR objects pass a 1 m gate but fail IoU@0.25).
+3. **Object F1 (Micro/Macro) is LABEL-AWARE** (match = centroid≤τ ∧ label agreement). The
+   label-agnostic headline in their work is *class-free recall*, not a label-agnostic F1 —
+   so our label-agnostic `f1` is a NEW number, not a reproduction.
+4. **Filter GT to the same mapped ProcTHOR vocabulary as predictions** — drop STRUCTURAL
+   (background/unlabelled/void, wall/floor/curtain/…) + DAAAM-lexicon-unmatched classes on
+   BOTH sides. Their GT (val.jsonl) ≈ **74.7 objects/scene**. Counting all GT → structural
+   classes become unrecoverable FNs, asymmetrically depressing recall. **NEED the DAAAM
+   lexicon / mapping from coworker.**
+5. **Chamfer:** scene-level pooled, symmetric = mean of the two directional means
+   ((pred→gt + gt→pred)/2) — **our `scene_chamfer_mean_m` already matches.** ✓ (can also
+   report the two halves = accuracy/completeness).
+6. **Class-Free Geo Recall = 1 m object-CENTROID recall** (GT object found if ANY detection
+   within 1 m, label ignored); published Clio 0.873, MoM 0.778. This is **object-level, NOT
+   the 2/5 cm surface metric** — our `geo_recall@tau` is mislabeled: it's a surface point-
+   coverage F-score (fine, but rename; different metric). Note: saturates ~1.0 for dense
+   point-field methods → they report N/A there.
+7. **Association "detection" = per-frame instance-mask observation** (Option B): expose
+   `detection_id → (oracle/GT object id, predicted track id)` at per-mask granularity.
+8. **"Many-to-one F1" = fragment-collapsing object F1** (dominant-overlap, lets many pred
+   match one GT); `micro_f1 − many_to_one_f1` = over-segmentation penalty. Distinct from the
+   *pairwise* F1 in `scene_graph_metrics.py` (exact same-object pair F1). Label both clearly.
+9. **10th id = 434.** Canonical slice `[137,200,428,434,534,569,573,683,771,912]` — **we were
+   missing 434.** (771 has a short/sparse trajectory and is dropped in some runs — confirm.)
+10. **Split = val** (see #1).
+11. **Trajectory/camera:** GT poses; 640×480 pinhole fx=fy=320 cx=cy=(320,240) (90° HFOV);
+    depth invalid=0; dense ~10 Hz (~504–6452 frames), stride 5–10; poses in `poses.csv` ROS
+    body frame, Z-up world → OpenCV c2w via `R_BODY_OPTICAL=[[0,0,1],[-1,0,0],[0,-1,0]]`.
+    For frame-set parity we'd consume THEIR trajectory, not our AI2-THOR-rendered one.
+
+**Still to get from coworker:** (a) the **DAAAM lexicon / GT vocab filter** (#4 — needed);
+(b) verify on `ec2-ma` source: Q4 macro averaging set (GT vs GT∪pred) and Q8 exact
+many-to-one definition in `evaluate_objects`; (c) whether they want frame-set parity (#11)
+or accept our renderer (flag as "our trajectory").
 
 ### [x] AI-8 — MolmoSpaces / THOR per-object GT meshes for the Mesh rows  *(DONE 2026-07-14)*
 **RESOLVED:** downloaded `isaac/objects/thor` (~1 GB, all 9 houses are iThor assets) and

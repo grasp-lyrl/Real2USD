@@ -11,22 +11,27 @@ Metric summary (see docs/PHASE_SPECS.md Phase 0):
   * Scan2CAD accuracy: GT fraction with a prediction within 20cm & 20deg & 20% scale.
   * Scene: precision / recall / F1 @ IoU 0.25, duplicate rate, count ratio.
 
-Coworker-comparability additions (Option A; for the ProcTHOR/MolmoSpaces scene-graph
-table -- see docs/ACTION_ITEMS.md AI-7). These reconcile our output to the coworker's
-named metric list; the association / fragmentation / merge family (Option B) needs
-per-detection track provenance and is wired separately.
-  * micro_f1 / macro_f1 + per_class: LABEL-AWARE detection F1 (a match requires IoU >=
-    threshold AND the same label). Micro pools over all objects; macro averages per-class
-    F1 over the union of GT and predicted classes. (Our headline ``f1`` stays label-
-    AGNOSTIC -- geometry only -- so the two are reported side by side, not conflated.)
+Two matching protocols are reported side by side (docs/ACTION_ITEMS.md AI-7):
+  * OUR protocol (headline ``f1``/``precision``/``recall`` + ``iou``/``micro``/``macro``):
+    Hungarian on 3D OBB IoU >= threshold. Stricter; NOT what the coworker's table uses.
+  * COWORKER-COMPARABLE (``cd_*``): Hungarian on Euclidean CENTROID distance <= tau
+    (default 1 m, swept over ``centroid_f1_by_tau``/``centroid_recall_by_tau``). This is
+    the coworker's object-matching rule. ``cd_f1``/``cd_precision``/``cd_recall`` are
+    label-agnostic; ``cd_micro_f1``/``cd_macro_f1`` are label-aware (their Object Micro/
+    Macro F1). ``cd_per_class`` breaks it down.
+
+Other coworker-comparable pieces:
+  * class_free_recall_1m: their Class-Free Geo Recall = fraction of GT with ANY predicted
+    centroid within 1 m (label ignored, NOT one-to-one).
+  * scene_chamfer_mean_m: SCENE-LEVEL pooled symmetric Chamfer (their convention, confirmed).
+  * surf_recall/surf_precision/surf_fscore@tau: SURFACE-reconstruction point coverage
+    (Tanks-and-Temples heritage) -- a DIFFERENT metric from class_free_recall_1m; needs
+    meshes on both sides (NaN/absent until GT meshes attach -- AI-8).
+  * chamfer_symmetric_mean_m: per-matched-pair average Chamfer (= our chamfer_l1 / 2).
   * matched_per_scene / objects_per_scene / predictions_per_scene: named counts.
-  * chamfer_symmetric_mean_m: per-matched-pair Chamfer under the coworker's average
-    convention (= our chamfer_l1 / 2).
-  * scene_chamfer_mean_m + geo_recall/geo_precision/geo_fscore@tau: SCENE-LEVEL, class-
-    free geometry -- all predicted surface points vs all GT surface points, no matching
-    and no labels. This is the apples-to-apples counterpart to the coworker's whole-scene
-    point-cloud Chamfer and class-free geometric recall (needs meshes on both sides;
-    NaN until GT meshes are attached -- AI-8).
+Association / fragmentation / merge (Option B) needs per-detection track provenance and is
+wired separately. Still to bit-verify vs the coworker's source: macro averaging set and the
+exact "many-to-one F1" definition (AI-7).
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ from typing import List, Optional
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
 
 from ..data.base import GTObject
 from . import geometry as geo
@@ -143,22 +149,16 @@ def _duplicate_and_count(iou: np.ndarray, threshold: float, n_gt: int):
     return duplicates / n_gt
 
 
-def _label_aware_metrics(preds: List[SceneObject], gts: List[SceneObject],
-                         iou: np.ndarray, iou_threshold: float) -> dict:
-    """Label-aware micro/macro/per-class detection metrics.
+def _micro_macro_from_matches(matches, labels_pred, labels_gt) -> dict:
+    """Micro/macro/per-class F1 from a set of LABEL-AWARE matches (each pair shares a label).
 
-    A true positive requires IoU >= ``iou_threshold`` AND an exact (case-insensitive)
-    label match. Micro pools true positives over all objects; macro averages per-class
-    F1 over the union of GT and predicted classes (a class present on only one side
-    contributes an F1 of 0, penalising both misses and hallucinated categories).
+    Micro pools true positives over all objects; macro averages per-class F1 over the union
+    of GT and predicted classes (a class present on only one side contributes an F1 of 0,
+    penalising both misses and hallucinated categories -- the more defensible choice; still
+    to bit-verify against the coworker's ``evaluate_objects`` source, AI-7).
     """
-    labels_pred = [_norm_label(p.label) for p in preds]
-    labels_gt = [_norm_label(g.label) for g in gts]
-    n_pred, n_gt = len(preds), len(gts)
-
-    matches = hungarian_match(iou, iou_threshold, require_label=True,
-                              labels_pred=labels_pred, labels_gt=labels_gt)
-    tp = len(matches)  # by construction each matched pair shares a label
+    n_pred, n_gt = len(labels_pred), len(labels_gt)
+    tp = len(matches)
     micro_precision = tp / n_pred if n_pred else 0.0
     micro_recall = tp / n_gt if n_gt else 0.0
 
@@ -173,20 +173,108 @@ def _label_aware_metrics(preds: List[SceneObject], gts: List[SceneObject],
         p_c = tp_c / (tp_c + fp_c) if (tp_c + fp_c) else 0.0
         r_c = tp_c / (tp_c + fn_c) if (tp_c + fn_c) else 0.0
         f_c = _f1(p_c, r_c)
-        per_class[c] = {"tp": tp_c, "fp": fp_c, "fn": fn_c,
-                        "n_gt": n_gt_c, "n_pred": n_pred_c,
-                        "precision": p_c, "recall": r_c, "f1": f_c}
+        per_class[c] = {"tp": tp_c, "fp": fp_c, "fn": fn_c, "n_gt": n_gt_c,
+                        "n_pred": n_pred_c, "precision": p_c, "recall": r_c, "f1": f_c}
         f1s.append(f_c); precisions.append(p_c); recalls.append(r_c)
 
     return {
-        "micro_precision": micro_precision,
-        "micro_recall": micro_recall,
+        "micro_precision": micro_precision, "micro_recall": micro_recall,
         "micro_f1": _f1(micro_precision, micro_recall),
         "macro_precision": float(np.mean(precisions)) if precisions else float("nan"),
         "macro_recall": float(np.mean(recalls)) if recalls else float("nan"),
         "macro_f1": float(np.mean(f1s)) if f1s else float("nan"),
-        "label_aware_matched": tp,
-        "per_class": per_class,
+        "matched": tp, "per_class": per_class,
+    }
+
+
+def _label_aware_metrics(preds: List[SceneObject], gts: List[SceneObject],
+                         iou: np.ndarray, iou_threshold: float) -> dict:
+    """Label-aware micro/macro/per-class F1 under OUR OBB-IoU matching (a match needs
+    IoU >= threshold AND a label match). This is our stricter, non-coworker protocol;
+    the coworker-comparable centroid-matched versions are in :func:`_centroid_metrics`."""
+    labels_pred = [_norm_label(p.label) for p in preds]
+    labels_gt = [_norm_label(g.label) for g in gts]
+    matches = hungarian_match(iou, iou_threshold, require_label=True,
+                              labels_pred=labels_pred, labels_gt=labels_gt)
+    out = _micro_macro_from_matches(matches, labels_pred, labels_gt)
+    out["label_aware_matched"] = out.pop("matched")
+    return out
+
+
+def hungarian_match_centroid(dist: np.ndarray, tau: float, require_label: bool = False,
+                             labels_pred=None, labels_gt=None):
+    """One-to-one min-cost assignment on centroid distance; keep pairs with dist <= tau.
+
+    This is the coworker's object-matching rule (Hungarian on Euclidean centroid distance,
+    NOT OBB IoU -- see AI-7). Returns ``[(pred_idx, gt_idx, dist), ...]``.
+    """
+    if dist.size == 0:
+        return []
+    cost = dist.copy()
+    big = float(dist.max()) + tau + 1.0  # forbid cross-label pairs without gating them in
+    if require_label and labels_pred is not None and labels_gt is not None:
+        for i, lp in enumerate(labels_pred):
+            for j, lg in enumerate(labels_gt):
+                if lp != lg:
+                    cost[i, j] = big
+    rows, cols = linear_sum_assignment(cost)
+    matches = []
+    for r, c in zip(rows, cols):
+        if dist[r, c] <= tau and (not require_label or cost[r, c] < big):
+            matches.append((int(r), int(c), float(dist[r, c])))
+    return matches
+
+
+def _centroid_metrics(preds: List[SceneObject], gts: List[SceneObject],
+                      taus=(0.25, 0.5, 0.75, 1.0, 1.5), primary_tau: float = 1.0) -> dict:
+    """Coworker-comparable centroid-distance metrics (``cd_`` prefix).
+
+    Matching is Hungarian on Euclidean centroid distance <= tau (default 1 m), swept over
+    ``taus``. At ``primary_tau``: label-agnostic precision/recall/F1 and label-aware
+    micro/macro F1 (the coworker's Object Micro/Macro F1). ``class_free_recall_1m`` is the
+    coworker's Class-Free Geo Recall = fraction of GT with ANY predicted centroid within 1 m
+    (label ignored; NOT one-to-one). All keys are prefixed ``cd_`` so they never collide with
+    our OBB-IoU headline metrics -- the two protocols are reported side by side.
+    """
+    n_pred, n_gt = len(preds), len(gts)
+    labels_pred = [_norm_label(p.label) for p in preds]
+    labels_gt = [_norm_label(g.label) for g in gts]
+    if n_pred and n_gt:
+        pc = np.array([np.asarray(p.T_world_obj)[:3, 3] for p in preds], dtype=np.float64)
+        gc = np.array([np.asarray(g.T_world_obj)[:3, 3] for g in gts], dtype=np.float64)
+        dist = cdist(pc, gc)
+    else:
+        dist = np.zeros((n_pred, n_gt), dtype=np.float64)
+
+    def _prf(matches):
+        tp = len(matches)
+        p = tp / n_pred if n_pred else 0.0
+        r = tp / n_gt if n_gt else 0.0
+        return tp, p, r, _f1(p, r)
+
+    tp, prec, rec, f1 = _prf(hungarian_match_centroid(dist, primary_tau))
+    lbl_matches = hungarian_match_centroid(dist, primary_tau, require_label=True,
+                                           labels_pred=labels_pred, labels_gt=labels_gt)
+    mm = _micro_macro_from_matches(lbl_matches, labels_pred, labels_gt)
+
+    class_free_recall_1m = (float(np.mean(dist.min(axis=0) <= 1.0))
+                            if (n_pred and n_gt) else (0.0 if n_gt else float("nan")))
+
+    f1_by_tau, recall_by_tau = {}, {}
+    for t in taus:
+        _, _, rt, ft = _prf(hungarian_match_centroid(dist, t))
+        f1_by_tau[f"{t}"] = ft
+        recall_by_tau[f"{t}"] = rt
+
+    return {
+        "cd_tau": primary_tau,
+        "cd_precision": prec, "cd_recall": rec, "cd_f1": f1, "cd_matched": tp,
+        "cd_micro_f1": mm["micro_f1"], "cd_micro_precision": mm["micro_precision"],
+        "cd_micro_recall": mm["micro_recall"], "cd_macro_f1": mm["macro_f1"],
+        "cd_macro_precision": mm["macro_precision"], "cd_macro_recall": mm["macro_recall"],
+        "cd_per_class": mm["per_class"],
+        "class_free_recall_1m": class_free_recall_1m,
+        "centroid_f1_by_tau": f1_by_tau, "centroid_recall_by_tau": recall_by_tau,
     }
 
 
@@ -210,10 +298,12 @@ def _scene_geometry(preds: List[SceneObject], gts: List[SceneObject],
         return {}
     cf = geo.chamfer_and_fscore(np.vstack(pred_pts), np.vstack(gt_pts), taus=taus)
     out = {"scene_chamfer_mean_m": cf["chamfer_mean"]}
+    # surf_*@tau = SURFACE-reconstruction point-coverage (Tanks-and-Temples heritage), NOT the
+    # coworker's Class-Free Geo Recall (that is 1m-centroid class_free_recall_1m). Kept distinct.
     for tau in taus:
-        out[f"geo_recall@{tau}"] = cf[f"recall@{tau}"]
-        out[f"geo_precision@{tau}"] = cf[f"precision@{tau}"]
-        out[f"geo_fscore@{tau}"] = cf[f"fscore@{tau}"]
+        out[f"surf_recall@{tau}"] = cf[f"recall@{tau}"]
+        out[f"surf_precision@{tau}"] = cf[f"precision@{tau}"]
+        out[f"surf_fscore@{tau}"] = cf[f"fscore@{tau}"]
     return out
 
 
@@ -298,9 +388,13 @@ def evaluate(preds: List[SceneObject], gts: List[SceneObject],
         "fscore@0.05_mean": _agg(f5, np.mean),
         "fscore@0.02_mean": _agg(f2, np.mean),
     }
-    # label-aware micro / macro / per-class detection F1 (coworker: Micro F1 / Macro F1)
+    # label-aware micro/macro under OUR OBB-IoU matching (stricter, non-coworker protocol)
     metrics.update(_label_aware_metrics(preds, gts, iou, iou_threshold))
-    # scene-level, class-free geometry (coworker: whole-scene Chamfer + class-free geo recall)
+    # coworker-comparable centroid-distance matching (tau=1m swept): cd_* + class_free_recall_1m
+    metrics.update(_centroid_metrics(preds, gts))
+    # scene-level, class-free surface geometry (coworker: whole-scene Chamfer). NOTE: surf_*@tau
+    # is a SURFACE point-coverage F-score, NOT the coworker's Class-Free Geo Recall (which is the
+    # 1m-centroid class_free_recall_1m above) -- kept separate on purpose (AI-7).
     if compute_geometry:
         metrics.update(_scene_geometry(preds, gts, surface_points))
     return metrics

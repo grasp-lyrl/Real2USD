@@ -10,6 +10,19 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 
 _Last updated: 2026-07-14 (coworker metrics Option A + AI-8 GT-mesh loader landed: `eval/metrics.py` micro/macro F1 + class-free scene geometry; `data/thor_assets.py` reads THOR USDA→trimesh, `--gt-mesh asset` validated on scene 200; ProcTHOR scale-fit win (S2C 0.12→0.31); NEXT = perception robustness / detector-driven — the crux)._
 
+## ⚠ AI-7 ANSWERED (2026-07-14) — current ProcTHOR numbers are NOT yet comparable
+
+The coworker gave exact defs (full list in `ACTION_ITEMS.md` AI-7). **Two of them invalidate
+every ProcTHOR number produced so far:** (1) their split is **`val`**, ours defaulted to
+**`train`** — *different houses* per id, so our s200/etc. results are on the wrong scenes;
+(2) their matching is **Hungarian on centroid distance ≤ τ (default 1 m)**, NOT our OBB
+IoU@0.25 — a different matched set. Also: object F1 is **label-aware**; **Class-Free Geo
+Recall = 1 m object-centroid** (our `geo_recall@tau` is a *different* surface metric,
+mislabeled); GT must be **filtered to the shared ProcTHOR/DAAAM vocab** (≈74.7 obj/scene);
+**10th id = 434** (we were missing it). Chamfer convention already matches (✓). Reconciliation
+plan pending Chris's steer on matching (add centroid vs replace IoU) + trajectory parity.
+The code/pipeline is fine; the **numbers** need regenerating on val + centroid matching.
+
 ## ▶ NEXT SESSION — perception robustness (detector-driven ProcTHOR)
 
 **The crux (Chris, 2026-07-14):** every ProcTHOR result so far uses GT (native THOR) masks =

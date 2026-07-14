@@ -148,10 +148,9 @@ def main(argv=None):
             compute_geometry=not args.no_geometry, surface_points=args.surface_points,
             export_glb=args.export_glb, data_root=args.data_root, stride=args.stride)
         per_scene[scene] = m
-        print(f"[{scene}] f1={m['f1']:.3f} micro_f1={m['micro_f1']:.3f} "
-              f"macro_f1={m['macro_f1']:.3f} recall={m['recall']:.3f} "
-              f"scene_chamfer={m.get('scene_chamfer_mean_m')} "
-              f"geo_recall@5cm={m.get('geo_recall@0.05')}")
+        print(f"[{scene}] cd_micro_f1={m['cd_micro_f1']:.3f} cd_macro_f1={m['cd_macro_f1']:.3f} "
+              f"cd_f1@1m={m['cd_f1']:.3f} class_free_recall_1m={m['class_free_recall_1m']:.3f} "
+              f"| iou_f1@.25={m['f1']:.3f} scene_chamfer={m.get('scene_chamfer_mean_m')}")
     if args.out:
         Path(args.out).write_text(json.dumps({"rescore": per_scene}, indent=2, default=float))
         print(f"wrote {args.out}")

@@ -298,27 +298,27 @@ Disable with `cache=False` or `R2S3D_PROCTHOR_NOCACHE=1`; bump `_CACHE_VERSION` 
 changes. Tests: `tests/test_procthor_cache.py` (synthetic cache, no ai2thor). See
 [[procthor-render-cache]].
 
-Metric parity is the open comparability risk. **Option A landed (2026-07-14)** — `evaluate()`
-now also emits the geometric named metrics under reconciled definitions:
-- `micro_f1` / `macro_f1` / `per_class`: **label-aware** detection F1 (match = IoU ≥ thr ∧
-  same label). Micro pools over objects; macro = unweighted mean of per-class F1 over the
-  **union of GT and predicted classes** (a one-sided class scores F1 0). Headline `f1`,
-  `precision`, `recall` remain **label-agnostic** (geometry only) and are reported alongside.
-- `matched_per_scene` / `objects_per_scene` / `predictions_per_scene`: named counts.
-- `chamfer_symmetric_mean_m`: per-matched-pair "average chamfer" = `chamfer_l1` / 2 (matches
-  the coworker's `symmetric_chamfer_distance` convention; our `chamfer_l1_median_m` kept too).
-- `scene_chamfer_mean_m` + `geo_recall/geo_precision/geo_fscore@{0.05,0.02}`: **scene-level,
-  class-free** geometry (all pred surface points vs all GT points, no matching/labels) — the
-  apples-to-apples counterpart to the coworker's whole-scene Chamfer + class-free geo recall.
-  NaN/absent until GT meshes are attached (AI-8).
+Metric parity — **reconciled to the coworker's answered defs (2026-07-14, AI-7).** `evaluate()`
+reports **two matching protocols side by side**:
+- **Coworker-comparable (`cd_*`, THE comparison set):** Hungarian on **centroid distance ≤ τ**
+  (default 1 m; swept [0.25,0.5,0.75,1.0,1.5] in `centroid_{f1,recall}_by_tau`). `cd_f1`/`cd_
+  precision`/`cd_recall` label-agnostic; `cd_micro_f1`/`cd_macro_f1`/`cd_per_class` label-aware
+  (their Object Micro/Macro F1). `class_free_recall_1m` = their Class-Free Geo Recall (GT found
+  if ANY pred centroid ≤ 1 m, label-ignored, not one-to-one). `scene_chamfer_mean_m` = their
+  scene-level pooled symmetric Chamfer (**convention confirmed ✓**).
+- **Ours (stricter, non-coworker):** headline `f1`/`precision`/`recall` + `micro_f1`/`macro_f1`
+  on **3D OBB IoU ≥ 0.25** — kept as a harder diagnostic, NOT compared to their table.
+- `surf_{recall,precision,fscore}@{0.05,0.02}`: surface-recon point coverage (renamed from
+  the mislabeled `geo_*`; a DIFFERENT metric from `class_free_recall_1m`). NaN until GT meshes.
+- `chamfer_symmetric_mean_m` (per-pair ½·chamfer_l1), named per-scene counts.
 
-Still **best-guess pending AI-7 confirmation** on: object set / IoU threshold / label-aware
-choice, and the **Option B** association family (many-to-one F1, fragmentation, merge rate,
-pairwise P/R/F1) — the coworker's `scripts/scene_graph_metrics.py:compute_track_metrics`,
-which needs per-detection→track provenance (ObjectTrack `track_id` + GT instance id) threaded
-into eval. **Footprint (2D top-down) IoU** still to add (blocked on AI-8 meshes). Reconcile
-to the coworker's exact definitions before publishing the column. Split (`train`/`val`/`test`)
-for those ids is also TBD (defaults to `train`).
+**Still open (AI-7):** (a) GT must be **filtered to the shared ProcTHOR/DAAAM vocab** like
+predictions (≈74.7 obj/scene) — needs the coworker's lexicon; (b) verify macro averaging set +
+exact "many-to-one F1" vs `ec2-ma` source; (c) **Option B** association family (many-to-one,
+fragmentation, merge, pairwise) via `scripts/scene_graph_metrics.py:compute_track_metrics` +
+per-detection→track provenance; (d) Footprint (2D top-down) IoU. **Split = `val`** (not train);
+canonical 10 ids include **434**; trajectory parity (their `poses.csv`) deferred (Option 3 —
+render `val` ourselves for now, flag "our trajectory").
 
 ### Perception robustness — detector-driven ProcTHOR (NEXT, the crux)
 

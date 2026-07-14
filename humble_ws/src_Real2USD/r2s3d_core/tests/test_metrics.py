@@ -209,8 +209,34 @@ def test_scene_geometry_keys_present_with_meshes():
     preds = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]), mesh=box)]
     m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=True, surface_points=4000)
     assert "scene_chamfer_mean_m" in m
-    assert m["geo_recall@0.05"] > 0.99
+    assert m["surf_recall@0.05"] > 0.99   # surface coverage (renamed from geo_recall)
     assert np.isfinite(m["chamfer_symmetric_mean_m"])
+
+
+def test_centroid_matching_metrics():
+    # coworker protocol: Hungarian on centroid distance <= tau (default 1 m), not IoU.
+    gts = [M.SceneObject("chair", _pose([0, 0, 0]), np.array([1.0, 1, 1])),
+           M.SceneObject("table", _pose([5, 0, 0]), np.array([1.0, 1, 1]))]
+    preds = [M.SceneObject("chair", _pose([0.3, 0, 0]), np.array([1.0, 1, 1])),  # 0.3 m, right label
+             M.SceneObject("sofa", _pose([5.2, 0, 0]), np.array([1.0, 1, 1]))]   # 0.2 m, WRONG label
+    m = M.evaluate(preds, gts, compute_geometry=False)
+    assert m["cd_tau"] == 1.0
+    assert m["cd_f1"] == pytest.approx(1.0)             # both within 1 m (label-agnostic)
+    assert m["cd_recall"] == pytest.approx(1.0)
+    assert m["class_free_recall_1m"] == pytest.approx(1.0)
+    assert m["cd_micro_f1"] == pytest.approx(0.5)       # only the chair is label-correct
+    # tau sweep: at 0.25 m only the 0.2 m (sofa/table) pair survives -> recall 0.5
+    assert m["centroid_recall_by_tau"]["0.25"] == pytest.approx(0.5)
+    assert m["centroid_recall_by_tau"]["1.0"] == pytest.approx(1.0)
+
+
+def test_centroid_matching_far_objects_unmatched():
+    # a prediction 3 m from the only GT: outside every tau up to 1.5 -> no match
+    gts = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]))]
+    preds = [M.SceneObject("box", _pose([3.0, 0, 0]), np.array([1.0, 1, 1]))]
+    m = M.evaluate(preds, gts, compute_geometry=False)
+    assert m["cd_f1"] == pytest.approx(0.0)
+    assert m["class_free_recall_1m"] == pytest.approx(0.0)
 
 
 def test_scene_geometry_absent_without_meshes():

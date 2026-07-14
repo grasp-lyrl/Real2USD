@@ -17,18 +17,19 @@ from pathlib import Path
 from typing import List
 
 # (metric key, column header, format, lower_is_better)
+# Coworker-comparable columns use centroid matching (cd_*, tau=1m) + class_free_recall_1m;
+# f1@.25 is OUR stricter OBB-IoU protocol, shown alongside (see AI-7 / metrics.py).
 _COLUMNS = [
-    ("f1", "F1@.25", "{:.3f}", False),          # label-agnostic (geometry only)
-    ("micro_f1", "microF1", "{:.3f}", False),   # label-aware, pooled (coworker Micro F1)
-    ("macro_f1", "macroF1", "{:.3f}", False),   # label-aware, per-class mean (coworker Macro F1)
-    ("recall@0.5", "R@.5", "{:.3f}", False),
+    ("cd_micro_f1", "microF1", "{:.3f}", False),   # coworker Object Micro F1 (centroid, label-aware)
+    ("cd_macro_f1", "macroF1", "{:.3f}", False),   # coworker Object Macro F1
+    ("cd_f1", "cdF1@1m", "{:.3f}", False),         # centroid, label-agnostic
+    ("class_free_recall_1m", "cfR@1m", "{:.3f}", False),  # coworker Class-Free Geo Recall
+    ("f1", "iouF1@.25", "{:.3f}", False),          # OUR stricter OBB-IoU protocol
     ("scan2cad_accuracy", "S2C-acc", "{:.3f}", False),
     ("centroid_err_median_m", "cent(m)", "{:.3f}", True),
-    ("rotation_err_median_deg", "rot(deg)", "{:.1f}", True),
     ("scale_err_median", "scale", "{:.3f}", True),
-    ("duplicate_rate", "dup", "{:.2f}", True),
-    ("scene_chamfer_mean_m", "chamfer(m)", "{:.3f}", True),   # scene-level, class-free (coworker Chamfer)
-    ("geo_recall@0.05", "geoR@5cm", "{:.3f}", False),         # class-free geometric recall
+    ("scene_chamfer_mean_m", "chamfer(m)", "{:.3f}", True),   # scene-level pooled (coworker Chamfer)
+    ("surf_fscore@0.05", "surfF@5cm", "{:.3f}", False),       # surface-recon coverage (NOT geo recall)
 ]
 
 
