@@ -26,7 +26,7 @@
       "track_break": 0.0,
       "split": 0.0
     },
-    "sam3d_queue": "results/procthor_procthor_ot_scale_icp_s200_cached/sam3d_queue"
+    "sam3d_queue": "results/procthor_procthor_object_track_scale_icp_s200_cached/sam3d_queue"
   },
   "dataset": "procthor",
   "scenes": [
