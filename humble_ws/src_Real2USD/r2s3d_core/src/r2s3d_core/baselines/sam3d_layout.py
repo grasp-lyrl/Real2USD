@@ -38,6 +38,7 @@ from .. import frames
 from ..data.base import Frame, GTObject
 from ..eval import geometry as geo
 from ..eval.metrics import SceneObject
+from ..frames import T_cam_raw as _T_cam_raw  # direct ref: `frames` is shadowed in _run by list(source)
 from ..frames import validate
 
 log = logging.getLogger(__name__)
@@ -362,6 +363,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
     preds: List[SceneObject] = []
     pending = 0
     teaser_stats = []  # per attempt: (accepted, scale, resid_before_m, resid_after_m, n_corr)
+    placements = []    # per object: reconstruct the posed mesh from cached object.glb
     for g in gt:
         vi = select_best_view(g, frames, mask_fn)
         if vi is None:
@@ -413,6 +415,12 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
             mesh_raw, pose["sam3d_scale"], pose["sam3d_rotation"], pose["sam3d_translation"],
             frame.T_world_cam,
         )
+        # Track the raw-mesh -> world transform so a placement can be reconstructed later
+        # (load the cached object.glb, apply T_world_mesh) without re-running placement.
+        # `post` accumulates the registration deltas applied to `posed` after the layout.
+        T_world_raw = frame.T_world_cam @ _T_cam_raw(
+            pose["sam3d_scale"], pose["sam3d_rotation"], pose["sam3d_translation"])
+        post = np.eye(4)
         prov = {"source": "sam3d", "registration": "layout", "view_index": vi,
                 "validation": val, "mask_src": mask_src,
                 "instance_id": g.instance_id}
@@ -450,6 +458,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                 if tgt_ext is not None:
                     M, sinfo = _fit_scale_to_extent(posed, tgt_ext)
                     posed.apply_transform(M)
+                    post = M @ post
                     prov["scale_fit"] = sinfo
                 else:
                     prov["scale_fit"] = {"skipped": "degenerate_target"}
@@ -460,6 +469,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                            if len(posed.faces) else np.asarray(posed.vertices))
                 delta, info = refine_icp(src_pts, target, np.eye(4))
                 posed.apply_transform(delta)
+                post = delta @ post
                 prov["icp"] = info
 
             if do_scale or do_icp:
@@ -485,6 +495,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                     info["resid_before_m"], info["resid_after_m"] = r_before, r_after
                     if r_after < r_before:
                         posed.apply_transform(delta)
+                        post = delta @ post
                         accepted = True
                     teaser_stats.append((accepted, info.get("scale"), r_before, r_after,
                                          info.get("n_corr")))
@@ -502,6 +513,17 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
 
         preds.append(SceneObject(label=g.label, T_world_obj=T_world_obj, extents=extents,
                                  mesh=posed, provenance=prov))
+        # Persist enough to rebuild the posed mesh later without re-running placement:
+        # load <queue>/output/<job_id>/object.glb and apply T_world_mesh (raw verts->world).
+        placements.append({
+            "instance_id": int(g.instance_id), "label": g.label,
+            "job_id": _stable_job_id(job_key), "registration": prov["registration"],
+            "best_frame_id": int(frame.frame_id), "view_index": int(vi),
+            "T_world_mesh": (post @ T_world_raw).tolist(),   # raw object.glb verts -> world
+            "T_world_obj": np.asarray(T_world_obj, float).tolist(),
+            "extents": np.asarray(extents, float).tolist(),
+            "scale_fit": prov.get("scale_fit"), "icp": prov.get("icp"),
+        })
     if pending:
         q = queue or _default_queue()
         log.warning(
@@ -533,6 +555,16 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) 
                     stats["teaser_accepted"], stats["teaser_attempts"],
                     100 * stats["teaser_accept_rate"], stats["teaser_scale_median_accepted"],
                     100 * stats["teaser_resid_improve_median_m"])
+
+    # Hand per-object placements to the runner to persist (results/<run>/placements.json):
+    # each has T_world_mesh (raw object.glb verts -> world) so any visualizer can rebuild
+    # the posed prediction from the cached SAM3D mesh without re-running placement.
+    if placements:
+        config.setdefault("_placements", {})[str(getattr(source, "scene", "scene"))] = {
+            "sam3d_queue": str(queue) if queue else None,
+            "method": config.get("method"),
+            "objects": placements,
+        }
     return preds
 
 

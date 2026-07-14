@@ -152,6 +152,18 @@ def run(args: argparse.Namespace) -> Path:
     with open(out_path, "w") as f:
         json.dump(record, f, indent=2, default=_json_default)
     print(f"\nwrote {out_path}")
+
+    # Persist per-object placements (T_world_mesh etc.) so visualizers can rebuild posed
+    # meshes from the cached SAM3D outputs without re-running placement. Off with --no-placements.
+    placements = config.get("_placements")
+    if placements and not args.no_placements:
+        pjson = {"git_sha": record["git_sha"], "method": args.method, "source": args.source,
+                 "created_at": record["created_at"], "scenes": placements}
+        ppath = out_dir / "placements.json"
+        with open(ppath, "w") as f:
+            json.dump(pjson, f, indent=2, default=_json_default)
+        n = sum(len(v["objects"]) for v in placements.values())
+        print(f"wrote {ppath}  ({n} object placements)")
     return out_path
 
 
@@ -173,6 +185,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "experiment is self-contained. Set to share a queue deliberately.")
     p.add_argument("--no-glb", action="store_true",
                    help="skip the pred/gt/overlay GLB export (on by default)")
+    p.add_argument("--no-placements", action="store_true",
+                   help="skip writing placements.json (per-object T_world_mesh for reviz)")
     p.add_argument("--glb-full", action="store_true",
                    help="also write full-texture GLBs (large) alongside the lite ones")
     # sam3d_layout: full frame (default) vs tight crop fed to SAM3D
