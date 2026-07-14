@@ -108,6 +108,51 @@ def test_reid_heals_track_break():
     assert {1, 99} <= a_track.det_track_ids
 
 
+def test_reproj_gate_heals_alongray_depth_noise():
+    # A's detector id breaks (1 -> 99) at frame 4 AND its mask-median depth jumps
+    # 2.0 -> 2.6 m (along-ray noise). The isotropic 0.5 m world gate rejects the re-ID
+    # (0.6 m > gate) so A fragments; the anisotropic reprojection gate (loose along-ray,
+    # ratio 1.3 < 1.35) heals it. B stable throughout. late_merge OFF to isolate the gate.
+    n = 8
+    a_depths = [2.0, 2.0, 2.0, 2.0, 2.6, 2.6, 2.6, 2.6]
+    a_ids = [1, 1, 1, 1, 99, 99, 99, 99]
+
+    def _frame_ad(fid, a_depth):
+        rgb = np.zeros((H, W, 3), np.uint8)
+        depth = np.zeros((H, W), np.float32)
+        for spec in (dict(_A, depth=a_depth), _B):
+            m = _rect_mask(spec)
+            rgb[m] = spec["color"]
+            depth[m] = spec["depth"]
+        return Frame(rgb=rgb, depth=depth, K=K.copy(), T_world_cam=np.eye(4),
+                     stamp=float(fid), frame_id=fid)
+
+    frames = [_frame_ad(i, a_depths[i]) for i in range(n)]
+
+    def _build_ds():
+        ds = DetectionSet(scene="fix", height=H, width=W)
+        for i in range(n):
+            ds.detections.append(_det(i, dict(_A, depth=a_depths[i]), a_ids[i]))
+            ds.detections.append(_det(i, _B, 2))
+        return ds
+
+    base = {"reid": True, "late_merge": False}
+    iso = run_tracker(frames, _build_ds().by_frame(), dict(base))
+    rep = run_tracker(frames, _build_ds().by_frame(), dict(base, assoc_reproj=True))
+
+    assert len(_mature(iso)) == 3                        # isotropic gate: A fragments
+    assert len(_mature(rep)) == 2                        # reprojection gate: A healed
+    a_track = min(_mature(rep), key=lambda t: t.centroid[0])
+    assert {1, 99} <= a_track.det_track_ids
+
+    # the reprojection tolerances are tunable knobs (PROVISIONAL defaults, need a sweep):
+    # tightening the along-ray tolerance below the 1.3 ratio makes it reject the re-ID and
+    # re-fragment, proving config overrides actually bite.
+    tight = run_tracker(frames, _build_ds().by_frame(),
+                        dict(base, assoc_reproj=True, reproj_depth_ratio_tol=0.2))
+    assert len(_mature(tight)) == 3                       # knob override took effect
+
+
 def test_late_merge_collapses_duplicate_object():
     # reid OFF so the id break spawns two A tracks at ingest; late_merge should fold
     # them back (identical overlapping clouds). (id 3, not 2 — 2 is object B's id.)

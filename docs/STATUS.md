@@ -6,7 +6,7 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 
 - Strategy & rationale: `REWORK_PLAN.md` · Interfaces & resolved decisions: `PHASE_SPECS.md`
 - **Things only the human can do: `ACTION_ITEMS.md`** (Claude adds to it on every gated dependency)
-- Datasets & access: `DATASETS.md`
+- Datasets & access: `DATASETS.md` · In-family systems & ideas to steal: `RELATED_WORK.md`
 
 _Last updated: 2026-07-14 (coworker metrics Option A + AI-8 GT-mesh loader landed: `eval/metrics.py` micro/macro F1 + class-free scene geometry; `data/thor_assets.py` reads THOR USDA→trimesh, `--gt-mesh asset` validated on scene 200; ProcTHOR scale-fit win (S2C 0.12→0.31); NEXT = perception robustness / detector-driven — the crux)._
 
@@ -21,8 +21,24 @@ asset-centric payoff. Strategy: `REWORK_PLAN.md §2.10`; how/commands: `PHASE_SP
 §Perception robustness`. **Do in order:** (1) ✅ gap measured on scene 200 (below); extend to
 137/428; (2) per-frame vs per-track recall (headline); (3) segment-everything→track→label;
 (4) **robustify scale-fit to noisy masks — now HIGH priority (see finding)**; (5) detector
-upgrades. First: `uv sync --extra procthor --extra dev --extra detector --extra registration
+upgrades; (6) association hardening from SuperMap (RSS'26, see `RELATED_WORK.md`). First:
+`uv sync --extra procthor --extra dev --extra detector --extra registration
 --extra viz`, then `detect.run --source procthor` + `object_track_icp` (NB: icp, not scale_icp).
+
+**Landed 2026-07-14 (unit-tested, NOT yet validated on scene 200):** step 6a — anisotropic
+reprojection association gate (`config['assoc_reproj']`, default OFF) in
+`tracks/associate.py`. Replaces the isotropic 0.5 m world gate (which rejects true re-IDs
+when mask-median depth drifts along-ray → spawns duplicate fragments) with a pixel-tight /
+depth-ratio-loose gate. New unit test `test_reproj_gate_heals_alongray_depth_noise` (fragments
+3→2 mature). **TODO to call it done:** ablate `object_track_icp ± assoc_reproj` on scene 200,
+confirm fewer fragments + per-track recall ↑ + no GT-mask regression. CLI: `--assoc-reproj`
+(on/off) + `--reproj-pix-gate` / `--reproj-depth-ratio-tol` (tuning). **Gate params
+(60 px / 0.35) are first-guess but do NOT need tuning yet** — the flag is off by default, and
+the scene-200 finding above (per-track ≈ per-frame recall) says association isn't the
+bottleneck there, so 6a may buy nothing until a busier scene (137/428). Order: run the on/off
+ablation with the guessed values first; only sweep the knobs (overridable, no code edit;
+knob-override unit-tested) IF the flag is shown to help. 6b (Bayesian label fusion) specced,
+not implemented.
 
 **Gap measured — scene 200 (2026-07-14).** Detector-driven vs native-GT-mask ceiling, n_gt=52:
 

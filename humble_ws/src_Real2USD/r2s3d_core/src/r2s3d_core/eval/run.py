@@ -67,6 +67,9 @@ def run(args: argparse.Namespace) -> Path:
         "detections": args.detections,
         "reid": args.reid,
         "late_merge": args.late_merge,
+        "assoc_reproj": args.assoc_reproj,
+        "reproj_pix_gate": args.reproj_pix_gate,
+        "reproj_depth_ratio_tol": args.reproj_depth_ratio_tol,
         "v1_dedup": args.v1_dedup,
         "icp": args.icp,
         "registration": args.registration,
@@ -233,6 +236,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="force late-merge on")
     p.add_argument("--no-late-merge", dest="late_merge", action="store_false",
                    help="force late-merge off")
+    p.add_argument("--assoc-reproj", action="store_true",
+                   help="use the anisotropic reprojection association gate (PHASE_SPECS 6a); "
+                        "default off = legacy isotropic world-space gate")
+    p.add_argument("--reproj-pix-gate", type=float, default=None,
+                   help="tuning (with --assoc-reproj): perpendicular-to-ray pixel tolerance "
+                        "(default 60; PROVISIONAL, needs a sweep on scene 200)")
+    p.add_argument("--reproj-depth-ratio-tol", type=float, default=None,
+                   help="tuning (with --assoc-reproj): along-ray depth-ratio tolerance "
+                        "(default 0.35; PROVISIONAL, needs a sweep on scene 200)")
     p.add_argument("--v1-dedup", action="store_true",
                    help="object_track_naive: add v1's 0.5 m same-label position suppression")
     p.add_argument("--icp", action="store_true",

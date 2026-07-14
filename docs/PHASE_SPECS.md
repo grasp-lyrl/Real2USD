@@ -369,6 +369,41 @@ Steps (prioritized; reuse Phase-2 `detect/` + `tracks/` on the new adapter):
    fixed, detector-driven uses `object_track_icp`. See [[scale-fit-hurts-on-detector-masks]].
 5. **Detector upgrades:** SAM 3 (AI-6, gated), Grounding-DINO+SAM2, YOLOE prompt-mode study
    (generic / prompt-free vs gt-vocab — still open from Phase 2).
+6. **Association hardening (from SuperMap, RSS'26 — see `RELATED_WORK.md`).** Attacks the
+   fragmentation half of the recall problem: noisy detector masks → wrong `centroid_world` →
+   the isotropic 0.5 m world gate in `associate._pair_benefit` rejects a true match → a
+   duplicate fragment track spawns (splits per-track recall). Two flagged, ablatable changes:
+   - **6a. Reprojection-space, pose-aware gate (`assoc_reproj`, implement first).** Mask-median
+     depth error is dominated by the **along-ray** component, so an isotropic world-space ball is
+     the wrong gate shape. Project the track's fused-cloud centroid into the current frame (reuse
+     `fusion.project_cloud_mask`'s intrinsics/front math on a single point) and gate
+     **anisotropically**: pixel distance `< REPROJ_PIX_GATE` (tight ⊥-to-ray) **and** depth ratio
+     `obs_z/pred_z ∈ [1/(1+τ), 1+τ]` (loose along-ray), plus a `W_REPROJ` benefit term. This is
+     SuperMap's 3D-to-2D idea adapted — we already associate in the world frame (so ego-motion is
+     handled by good poses), so the win is noise-shaped gating, NOT ego-motion. Default **off**
+     until validated. **Accept:** on scene 200 detector-driven, fewer spawned/merged fragments
+     and per-track recall moves toward per-frame recall; F1 narrows vs the 0.638 ceiling; no
+     regression on GT-mask runs. Ablation: add `--assoc-reproj` to the step-1 `eval.run`
+     command (registration modes share the mesh cache, so no SAM3D re-queue) →
+     `object_track_icp` ± `assoc_reproj` as two rows.
+     **Gate params are first-guess and do NOT need tuning yet.** `REPROJ_PIX_GATE=60px` and
+     `DEPTH_RATIO_TOL=0.35` (60 reverse-engineered from a synthetic test) trade fragmentation
+     (too tight) vs ID-swaps/false-merges (too loose). But the flag is off by default and the
+     scene-200 finding (per-track ≈ per-frame recall) says association isn't the bottleneck
+     there — so run the on/off ablation with the guessed values FIRST. Only sweep the knobs
+     IF the flag is shown to help on a busier scene (137/428). They are overridable without a
+     code edit via `--reproj-pix-gate` / `--reproj-depth-ratio-tol` (config keys
+     `reproj_pix_gate` / `reproj_depth_ratio_tol`; knob-override unit-tested), so a sweep is a
+     shell loop when/if it's warranted — and association-quality metrics (fragment count,
+     per-track recall) come from tracks vs GT, no SAM3D worker needed for that part.
+   - **6b. Bayesian confidence-weighted label fusion (`label_bayes`).** Replace the plain
+     `label_votes` Counter (`+1` per detection, `most_common(1)`) with summed **confidence-weighted
+     log-evidence** per class (logit(det_score) as a diagonal-dominant confusion stand-in; no true
+     confusion matrix for open-vocab detectors), posterior = softmax. Correct merge = log-add (not
+     count `update()`). Exposes `label_confidence()` → stamp into `scene_graph.json` node
+     provenance; a confidence floor `REJECT`s low-confidence tracks **loudly** (matches the
+     make-fallbacks-loud directive). **Accept:** label precision on detector-driven runs, effect of
+     the confidence-reject on FP count. Second, after 6a.
 
 Note: `object_track` passes a stable `job_key` (`{source}_{scene}_t{track_id}_{framing}`) and
 honours `full_frame`. The depth-extent scale-fit is **done (2026-07-14)**: the track path reuses
