@@ -278,6 +278,19 @@ round-trip-validated** (`tests/test_procthor.py::test_backprojection_inside_gt_o
 masked depth back-projected into GT OBBs, median containment 0.86, vertical FOV confirmed
 over horizontal). Unity(LH,Y-up)→world(RH,Z-up) via the `(x,z,y)` permutation `_M_WU`.
 
+**Render cache (default-on, load-bearing for detector-driven runs).** AI2-THOR RGB is
+non-deterministic (shading/exposure re-randomized; |Δrgb|≤~205/255 across renders) while
+depth/pose/seg are stable. That RGB jitter reshuffles appearance-based re-ID → different
+tracker `track_id`s between the SAM3D queue and collect passes → cached meshes bind to the
+wrong objects (measured: bogus F1 0.10 vs 0.54). `ProcThorSource` therefore renders each
+scene **once** to disk and replays it deterministically (RGB Δ=0, stable ids, no controller
+on replay, ~1.2s). Auto path `data_root()/procthor_cache/<scene>_<params-hash>`, shared
+transparently by `detect.run` and `eval.run` (key = render params; stride/max_frames excluded,
+applied at replay; registration mode excluded so all variants reuse one mesh set). ~200MB/scene.
+Disable with `cache=False` or `R2S3D_PROCTHOR_NOCACHE=1`; bump `_CACHE_VERSION` on layout
+changes. Tests: `tests/test_procthor_cache.py` (synthetic cache, no ai2thor). See
+[[procthor-render-cache]].
+
 Metric parity is the open comparability risk: our `evaluate()` gives micro P/R/F1, counts,
 duplicate rate, Chamfer/F-score; the table also wants macro-F1, many-to-one F1,
 matched/objects-per-scene, class-free geo recall, footprint (2D top-down) IoU — implement
@@ -292,31 +305,42 @@ needs **detector-driven** numbers. Diagnosis: recall-dominated (YOLOE 35–70% o
 
 Steps (prioritized; reuse Phase-2 `detect/` + `tracks/` on the new adapter):
 
-1. **Measure the gap.** Generate YOLOE detections on ProcTHOR RGB, run
-   `object_track_scale_icp`, compare to the native-GT-mask `sam3d_layout_scale_icp` ceiling on
-   137/200/428 — both now apply the depth-extent scale-fit, so the columns differ only in mask
-   source. Commands:
+1. **Measure the gap. ✅ scene 200 done (2026-07-14); extend to 137/428.** Generate YOLOE
+   detections on ProcTHOR RGB, run the detector-driven method, compare to the native-GT-mask
+   `sam3d_layout_scale_icp` ceiling. **Use `object_track_icp`, NOT `scale_icp`** (see step 4 —
+   the scale-fit hurts on detector masks). Commands:
    ```
    uv sync --extra procthor --extra dev --extra detector --extra registration --extra viz
-   uv run python -m r2s3d_core.detect.run --source procthor --scene 137 --prompt gt --diagnose
-   uv run python -m r2s3d_core.eval.run --source procthor --scene 137 200 428 \
-       --method object_track_scale_icp --detections results/detections/procthor --no-geometry \
-       --phase procthor --name procthor_object_track_scale_icp_3scene \
-       --sam3d-queue results/procthor_procthor_object_track_scale_icp_3scene/sam3d_queue
+   uv run python -m r2s3d_core.detect.run --source procthor --scene 200 --prompt gt \
+       --out results/detections/procthor --diagnose   # detections dir resolves <out>/gt/<scene>
+   uv run python -m r2s3d_core.eval.run --source procthor --scene 200 \
+       --method object_track_icp --detections results/detections/procthor/gt --no-geometry \
+       --phase procthor --name procthor_object_track_icp_s200 \
+       --sam3d-queue results/procthor_procthor_object_track_icp_s200/sam3d_queue
+   # then run the SAM3D worker over that queue (conda sam3d-objects), then re-run eval to collect.
+   # SINGLE worker only — concurrent workers OOM the 5090 (silent per-job failures → input_failed/).
    ```
    (The track path needs the SAM3D worker for its new meshes — detector masks ≠ native masks →
-   new job keys, so the `sam3d_layout_scale_icp` queue won't hit. But registration mode is NOT
-   in the job key, so `object_track`/`_icp`/`_scale`/`_scale_icp` share one mesh cache — collect
-   once, switch modes freely.) **Accept:** detector-driven vs GT-mask ceiling table, with the
-   degradation attributed to recall vs mask-IoU vs placement.
+   new job keys, so the `sam3d_layout_scale_icp` queue won't hit. Registration mode is NOT in the
+   job key, so `object_track`/`_icp`/`_scale`/`_scale_icp` share one mesh cache — collect once,
+   ablate modes freely with no re-queue.) **Scene-200 result:** ceiling F1 0.638 (recall 0.577);
+   detector `object_track_icp` F1 0.538 (recall 0.481, TP 30→25); `scale_icp` F1 0.237. Gap with
+   icp is ~0.10 F1, recall-dominated. **Accept:** ceiling-vs-detector table, degradation
+   attributed to recall vs mask-IoU vs placement.
 2. **Multi-view recall recovery (headline).** Report **per-frame recall vs per-track recall**
    (union of detections over the trajectory via ObjectTrack association). Expect per-track ≫
    per-frame — the asset-centric/tracking payoff. **Accept:** the two recall curves + the count
-   of objects recovered only by multi-view.
+   of objects recovered only by multi-view. (Scene 200: per-track 0.48 ≈ per-frame 0.50 — few
+   objects, weak showcase; 137/428 have more objects and should separate the two.)
 3. **Segment-everything → track → label.** Class-agnostic SAM2/SAM3 masks (high object recall)
    → track → open-vocab (CLIP) label per track; decouples recall from a fixed vocabulary.
-4. **Robustify the scale-fit to noisy masks.** `_observed_obb_extent` currently trusts the mask;
-   add percentile/outlier-robust extent + measure scale-err vs mask-IoU sensitivity.
+4. **Robustify the scale-fit to noisy masks — HIGH priority (2026-07-14 finding).** The
+   depth-extent scale-fit is the GT-mask *win* but a *liability* on detector masks: scene-200
+   detector F1 layout 0.452 → +scale 0.151 → +scale_icp 0.237, vs +icp 0.538. `_observed_obb_extent`
+   trusts the mask, so noisy detector masks contaminate the fused cloud → inflated OBB extent →
+   wrong scale → boxes miss the IoU gate. Add percentile/outlier-robust extent (e.g. drop the
+   top/bottom k% per axis, or MCD/convex-hull-trim) and measure scale-err vs mask-IoU. Until
+   fixed, detector-driven uses `object_track_icp`. See [[scale-fit-hurts-on-detector-masks]].
 5. **Detector upgrades:** SAM 3 (AI-6, gated), Grounding-DINO+SAM2, YOLOE prompt-mode study
    (generic / prompt-free vs gt-vocab — still open from Phase 2).
 

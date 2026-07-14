@@ -40,13 +40,23 @@ def _diagnose(source, ds, iou_thr: float = 0.25) -> dict:
     frames = list(source)
     by_frame = ds.by_frame()
     fidx = {int(f.frame_id): i for i, f in enumerate(frames)}
+    # GT mask source must match what the ceiling pipeline uses: prefer the dataset's TRUE
+    # instance masks (occlusion-aware, RGB-aligned, e.g. ProcTHOR native seg) over a
+    # mesh-projected silhouette. On ProcTHOR the GT meshes are coarse/offset from the
+    # rendered RGB, so silhouettes barely overlap the detector's RGB-aligned masks and
+    # recall collapses to ~0 — comparing detector masks to native GT masks is the honest
+    # apples-to-apples measure. Mirror sam3d_layout._run's selection.
+    if getattr(source, "native_masks", False) and hasattr(source, "native_mask"):
+        gt_mask_fn = lambda g, fr: source.native_mask(fr.frame_id, g.instance_id)
+    else:
+        gt_mask_fn = lambda g, fr: render_instance_mask(g.mesh, fr)
     hits, ious, frag = 0, [], []
     for g in gt:
-        vi = select_best_view(g, frames)
+        vi = select_best_view(g, frames, gt_mask_fn)
         if vi is None:
             continue
         fr = frames[vi]
-        gm = render_instance_mask(g.mesh, fr)
+        gm = gt_mask_fn(g, fr)
         if gm is None:
             continue
         gm = gm > 0

@@ -28,13 +28,23 @@ tests/test_procthor_frames.py; do not touch without re-running it):
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
+import shutil
+from pathlib import Path
 from typing import Iterator, List, Optional
 
 import numpy as np
 import trimesh
 
 from .base import Frame, GTObject
+
+log = logging.getLogger(__name__)
+
+# Bump when the cache layout / render semantics change so stale caches miss.
+_CACHE_VERSION = 1
 
 # --- Unity(left-handed, Y-up) -> our world (right-handed, Z-up) --------------------
 # W = M_WU @ p_unity  =>  (x, y, z)_W = (x, z, y)_unity.  det(M_WU) = -1 (LH->RH).
@@ -166,7 +176,8 @@ class ProcThorSource:
                  yaws=(0, 90, 180, 270), horizons=(0, 30),
                  platform: Optional[str] = None, quality: str = "Low",
                  max_frames: Optional[int] = None, gt_mesh: str = "box",
-                 native_masks: bool = True):
+                 native_masks: bool = True, cache: bool = True,
+                 cache_dir: Optional[str] = None, cache_root=None):
         self.scene = str(scene)
         self.split = split
         self.stride = stride
@@ -198,6 +209,98 @@ class ProcThorSource:
         self._inst_color: dict = {}            # instance_id -> np.array([r,g,b])
         self._objid_by_instance: dict = {}     # instance_id -> THOR objectId
         self.K = intrinsics_from_fov(height, width, 90.0)  # refreshed from metadata on start
+
+        # Render cache: AI2-THOR RGB is non-deterministic across renders (shading/exposure
+        # is re-randomized; observed |Δrgb| up to ~205/255), while depth/pose/instance-seg
+        # are stable. That RGB jitter reshuffles appearance-based re-ID and thus the
+        # tracker's sequential track_ids between the SAM3D *queue* and *collect* passes,
+        # so cached meshes (keyed by track_id) bind to the wrong objects. Caching the full
+        # render once and replaying it makes the whole pipeline deterministic (and lets the
+        # detector + eval share identical frames, and skips the controller on replay).
+        # Disable with cache=False or R2S3D_PROCTHOR_NOCACHE=1.
+        if os.environ.get("R2S3D_PROCTHOR_NOCACHE"):
+            cache = False
+        self.cache_dir = None
+        if cache:
+            self.cache_dir = str(Path(cache_dir) if cache_dir else self._default_cache_dir(cache_root))
+        self._n_frames_cached: Optional[int] = None
+
+    # -- render cache --------------------------------------------------------------
+    def _cache_key(self) -> str:
+        """Hash of every render-affecting parameter (NOT stride/max_frames, which are
+        applied at replay time so any stride reads one shared full-render cache)."""
+        parts = [_CACHE_VERSION, self.scene, self.split, self.width, self.height,
+                 self.position_stride, self.yaws, self.horizons, self.quality,
+                 self.gt_mesh, self.native_masks]
+        h = hashlib.sha256(repr(parts).encode()).hexdigest()[:12]
+        return f"{self.scene}_{self.width}x{self.height}_ps{self.position_stride}_{h}"
+
+    def _default_cache_dir(self, cache_root) -> Path:
+        if cache_root is None:
+            from .registry import data_root
+            cache_root = data_root() / "procthor_cache"
+        return Path(cache_root) / self._cache_key()
+
+    def _cache_ready(self) -> bool:
+        return bool(self.cache_dir) and (Path(self.cache_dir) / "meta.json").is_file()
+
+    def _build_cache(self) -> None:
+        """Render the full sequence live once and persist frames + seg + GT/color maps.
+        Written to a sibling ``.building`` dir and atomically renamed on completion, so a
+        crash mid-render never leaves a half-cache that reads as ready."""
+        base = Path(self.cache_dir)
+        building = base.parent / (base.name + ".building")
+        if building.exists():
+            shutil.rmtree(building)
+        frames_d = building / "frames"
+        frames_d.mkdir(parents=True, exist_ok=True)
+        log.info("building ProcTHOR render cache for scene %s -> %s", self.scene, base)
+        n = 0
+        for fr in self._iter_live():
+            arrs = dict(rgb=fr.rgb, depth=fr.depth, T=np.asarray(fr.T_world_cam, np.float64))
+            seg = self._seg_by_frame.get(fr.frame_id)
+            if seg is not None:
+                arrs["seg"] = seg
+            np.savez_compressed(frames_d / f"{fr.frame_id}.npz", **arrs)
+            n += 1
+        gt = self.gt() or []   # populated during _iter_live (controller up); cache not ready yet
+        meta = {
+            "version": _CACHE_VERSION, "scene": self.scene, "n_frames": n,
+            "K": np.asarray(self.K, float).tolist(),
+            "inst_color": {str(k): np.asarray(v).tolist() for k, v in self._inst_color.items()},
+            "objid": {str(k): v for k, v in self._objid_by_instance.items()},
+            "gt": [{"instance_id": g.instance_id, "label": g.label,
+                    "T_world_obj": np.asarray(g.T_world_obj, float).tolist(),
+                    "extents": np.asarray(g.extents, float).tolist()} for g in gt],
+        }
+        with open(building / "meta.json", "w") as f:
+            json.dump(meta, f)
+        if base.exists():
+            shutil.rmtree(base)
+        os.replace(building, base)
+        self.close()  # done with the controller; replay reads from disk
+
+    def _load_meta(self) -> dict:
+        with open(Path(self.cache_dir) / "meta.json") as f:
+            return json.load(f)
+
+    def _iter_cached(self) -> Iterator[Frame]:
+        meta = self._load_meta()
+        self.K = np.asarray(meta["K"], float)
+        n = int(meta["n_frames"])
+        frames_d = Path(self.cache_dir) / "frames"
+        self._seg_by_frame = {}
+        emitted = 0
+        for fid in range(n):
+            z = np.load(frames_d / f"{fid}.npz")
+            if self.native_masks and "seg" in z.files:
+                self._seg_by_frame[fid] = z["seg"]
+            yield Frame(rgb=z["rgb"], depth=z["depth"], K=self.K.copy(),
+                        T_world_cam=z["T"], stamp=float(fid), frame_id=fid)
+            emitted += 1
+            if self.max_frames and emitted >= self.max_frames:
+                break
+        self._n_frames = emitted
 
     # -- controller lifecycle ------------------------------------------------------
     def _house(self):
@@ -247,6 +350,14 @@ class ProcThorSource:
 
     # -- SequenceSource protocol ---------------------------------------------------
     def __iter__(self) -> Iterator[Frame]:
+        if self.cache_dir:
+            if not self._cache_ready():
+                self._build_cache()
+            yield from self._iter_cached()
+            return
+        yield from self._iter_live()
+
+    def _iter_live(self) -> Iterator[Frame]:
         c = self._start()
         if self.native_masks and not self._inst_color:
             self.gt()  # ensure instance->color map is ready before capturing seg
@@ -287,6 +398,9 @@ class ProcThorSource:
     def __len__(self) -> int:
         if self._n_frames is not None:
             return self._n_frames
+        if self.cache_dir and self._cache_ready():
+            n = int(self._load_meta()["n_frames"])
+            return n if not self.max_frames else min(n, self.max_frames)
         positions = self._trajectory_positions()
         n = len(positions) * len(self.yaws) * len(self.horizons)
         return n if not self.max_frames else min(n, self.max_frames)
@@ -296,6 +410,25 @@ class ProcThorSource:
             return None
         if self._gt is not None:
             return self._gt
+        # Replay: load GT + instance-color maps from cache, no controller needed.
+        if self.cache_dir and self._cache_ready():
+            meta = self._load_meta()
+            self.K = np.asarray(meta["K"], float)
+            self._inst_color = {int(k): np.asarray(v, np.uint8)
+                                for k, v in meta["inst_color"].items()}
+            self._objid_by_instance = {int(k): v for k, v in meta["objid"].items()}
+            objs = []
+            for g in meta["gt"]:
+                T = np.asarray(g["T_world_obj"], float)
+                ext = np.asarray(g["extents"], float)
+                mesh = trimesh.creation.box(extents=ext, transform=T) if self.gt_mesh == "box" else None
+                objs.append(GTObject(instance_id=int(g["instance_id"]), label=g["label"],
+                                     T_world_obj=T, extents=ext, mesh=mesh))
+            self._gt = objs
+            return self._gt
+        return self._build_gt_live()
+
+    def _build_gt_live(self) -> Optional[List[GTObject]]:
         c = self._start()
         obj_color = getattr(c.last_event, "object_id_to_color", {}) or {}
         objs: List[GTObject] = []

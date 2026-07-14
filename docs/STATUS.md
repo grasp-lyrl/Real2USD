@@ -18,19 +18,43 @@ column is **not a fair entry** — a valid column needs **detector-driven** numb
 recall-dominated (Phase-2: YOLOE found 35–70% of GT). Contribution thesis: multi-view tracking
 makes per-track recall ≫ per-frame recall (objects missed in one frame seen in another) — the
 asset-centric payoff. Strategy: `REWORK_PLAN.md §2.10`; how/commands: `PHASE_SPECS.md
-§Perception robustness`. **Do in order:** (1) measure the gap — YOLOE `object_track_scale_icp`
-vs the native-GT-mask `sam3d_layout_scale_icp` ceiling on 137/200/428; (2) per-frame vs
-per-track recall (headline); (3) segment-everything→track→label; (4) robustify scale-fit to
-noisy masks; (5) detector upgrades. First: `uv sync --extra procthor --extra dev --extra
-detector --extra registration --extra viz`, then `detect.run --source procthor` +
-`object_track_scale_icp`.
+§Perception robustness`. **Do in order:** (1) ✅ gap measured on scene 200 (below); extend to
+137/428; (2) per-frame vs per-track recall (headline); (3) segment-everything→track→label;
+(4) **robustify scale-fit to noisy masks — now HIGH priority (see finding)**; (5) detector
+upgrades. First: `uv sync --extra procthor --extra dev --extra detector --extra registration
+--extra viz`, then `detect.run --source procthor` + `object_track_icp` (NB: icp, not scale_icp).
 
-**Scale-fit port DONE (2026-07-14):** the depth-extent scale-fit (`_fit_scale_to_extent`) now
-runs in the `object_track` path against the track's fused multi-view cloud, so the two columns
-differ only in mask source (detector vs GT). Named methods `object_track_{icp,scale,scale_icp}`
-mirror `sam3d_layout_*`; equivalently `object_track --registration {icp,scale,scale_icp}`. SAM3D
-job cache is keyed by `..._t{track_id}_{framing}` (registration-independent), so switching a
-prior `object_track` run to a scale variant is an eval re-run, **not** a SAM3D re-queue.
+**Gap measured — scene 200 (2026-07-14).** Detector-driven vs native-GT-mask ceiling, n_gt=52:
+
+| method | F1 | recall | precision | Scan2CAD | cent |
+|---|---|---|---|---|---|
+| ceiling `sam3d_layout_scale_icp` (GT masks) | **0.638** | 0.577 | 0.714 | 0.308 | 0.027 m |
+| detector `object_track_icp` (**best**) | **0.538** | 0.481 | 0.610 | 0.000 | 0.086 m |
+| detector `object_track_scale_icp` | 0.237 | 0.212 | 0.268 | 0.038 | 0.152 m |
+| detector `object_track` (layout only) | 0.452 | — | — | 0.000 | 0.093 m |
+
+Per-frame detector recall (diagnose) = 0.50. **Two findings:** (a) with `icp`, the gap to the
+ceiling is modest (~0.10 F1) and recall-dominated (TP 30→25); per-track≈per-frame recall so
+association isn't losing objects — the loss is objects never detected (scene 200 is a weak
+multi-view showcase, few objects; test 137/428). (b) **The depth-extent scale-fit — the GT-mask
+win — is a LIABILITY on detector masks:** it craters detector F1 (layout 0.452 → scale 0.151),
+because noisy masks contaminate the fused cloud → inflated OBB extent → wrong scale → boxes miss
+the IoU gate. So for detector-driven runs use `object_track_icp`, and step 4 (robustify the
+scale-fit) is now the priority. See [[scale-fit-hurts-on-detector-masks]].
+
+**Infra fixes that made the number valid (2026-07-14):** (1) `_diagnose` recall bug — it
+compared detector masks to mesh-silhouettes (offset from ProcTHOR RGB), reporting 0.019; now
+uses native masks → 0.50. (2) **ProcTHOR render cache** — AI2-THOR RGB is non-deterministic
+(|Δrgb|≤205), which reshuffled tracker `track_id`s between the SAM3D queue and collect passes so
+meshes bound to the wrong objects (bogus F1 0.10, TP 4). `ProcThorSource` now caches renders to
+disk (default-on; `R2S3D_PROCTHOR_NOCACHE=1` to disable), replaying deterministically (RGB Δ=0,
+stable ids, no controller on replay). See [[procthor-render-cache]].
+
+**Scale-fit port (2026-07-14):** the scale-fit runs in the `object_track` path against the
+track's fused cloud. Methods `object_track_{icp,scale,scale_icp}` mirror `sam3d_layout_*`;
+equivalently `object_track --registration <mode>`. SAM3D job cache keyed by
+`..._t{track_id}_{framing}` (registration-independent), so registration variants share one mesh
+set — ablating them is an eval re-run, **not** a SAM3D re-queue.
 
 ## Phase dashboard
 
