@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
+from scipy.spatial.transform import Rotation as _Rot
 
 from ..data.base import GTObject
 from ..detect import corrupt
@@ -105,6 +106,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
 
     mature = [t for t in tracks if t.state == TrackState.MATURE]
     preds: List[SceneObject] = []
+    placements = []    # per object: enough to rebuild the posed mesh -> scene_graph.json
     pending = 0
     invocations = 0
     for t in mature:
@@ -147,6 +149,12 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
         posed, T_world_obj, extents = s3d.place_from_sam3d(
             mesh_raw, pose["sam3d_scale"], pose["sam3d_rotation"], pose["sam3d_translation"],
             frame.T_world_cam)
+        # Track raw-mesh -> world so a placement can be rebuilt later (load the cached
+        # object.glb, apply T_world_mesh) without re-running placement. `post` accumulates
+        # the registration deltas applied to `posed` after the layout.
+        T_world_raw = frame.T_world_cam @ s3d._T_cam_raw(
+            pose["sam3d_scale"], pose["sam3d_rotation"], pose["sam3d_translation"])
+        post = np.eye(4)
 
         prov = {
             "source": "sam3d", "registration": "layout", "track_id": t.track_id,
@@ -175,6 +183,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
                     if tgt_ext is not None:
                         M, sinfo = s3d._fit_scale_to_extent(posed, tgt_ext)
                         posed.apply_transform(M)
+                        post = M @ post
                         prov["scale_fit"] = sinfo
                     else:
                         prov["scale_fit"] = {"skipped": "degenerate_target"}
@@ -184,6 +193,7 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
                                if len(posed.faces) else np.asarray(posed.vertices))
                     delta, info = s3d.refine_icp(src_pts, target, np.eye(4))
                     posed.apply_transform(delta)
+                    post = delta @ post
                     prov["icp"] = info
                 prov["registration"] = "layout+" + registration
                 # One OBB from sampled points after all transforms -> pose + extents.
@@ -192,6 +202,39 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
 
         preds.append(SceneObject(label=t.label(), T_world_obj=T_world_obj, extents=extents,
                                  mesh=posed, provenance=prov))
+        # Per-object placement -> scene_graph.json (parity with sam3d_layout). Load
+        # <queue>/output/<job_id>/object.glb and apply T_world_mesh to rebuild the posed
+        # prediction with no re-run. Keyed by track_id (the detector-path object identity).
+        _jid = s3d._stable_job_id(job_key)
+        placements.append({
+            "id": int(t.track_id), "label": t.label(),
+            "center": np.asarray(T_world_obj, float)[:3, 3].tolist(),   # world OBB center
+            "extents": np.asarray(extents, float).tolist(),             # metric OBB size
+            "T_world_obj": np.asarray(T_world_obj, float).tolist(),     # OBB pose
+            "T_world_mesh": (post @ T_world_raw).tolist(),              # raw object.glb verts -> world
+            "mesh": f"output/{_jid}/object.glb",                        # relative to sam3d_queue
+            "job_id": _jid, "registration": prov["registration"],
+            # best-view camera that generated this mesh (also a nav viewpoint to observe it).
+            # cam->world, OpenCV-optical (x-right, y-down, z-forward) in Z-up world.
+            "best_frame_id": int(frame.frame_id), "view_index": int(obs.frame_index),
+            "cam_position": np.asarray(frame.T_world_cam, float)[:3, 3].tolist(),
+            "cam_quat_xyzw": _Rot.from_matrix(
+                np.asarray(frame.T_world_cam, float)[:3, :3]).as_quat().tolist(),
+            "T_world_cam": np.asarray(frame.T_world_cam, float).tolist(),
+            "camera_K": np.asarray(frame.K, float).tolist(),
+            # detector-path provenance the GT path lacks (track lineage / label vote)
+            "n_obs": int(t.n_obs), "views_used": len(t.kept_views),
+            "det_track_ids": sorted(t.det_track_ids), "merged_from": t.merged_from,
+            "scale_fit": prov.get("scale_fit"), "icp": prov.get("icp"),
+        })
+
+    # hand per-object placements to the runner to persist as scene_graph.json
+    if placements:
+        config.setdefault("_placements", {})[str(getattr(source, "scene", "scene"))] = {
+            "sam3d_queue": str(queue) if queue else None,
+            "method": config.get("method"),
+            "objects": placements,
+        }
 
     # stash scene-level Phase-2 stats for the run record (merged by eval.run)
     scene = getattr(source, "scene", "?")

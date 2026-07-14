@@ -178,6 +178,13 @@ fidelity opt-in** for figures/deliverables. Exported `.glb` stay gitignored.
   Scene stats (`sam3d_invocations`, `n_mature`, `tracks_per_gt`, `n_merged`) land in
   run.json — these are the fragmentation-cleanup headline and are computable from the
   detector cache alone (no SAM3D worker needed).
+- **Scene graph (parity with sam3d_layout).** object_track emits per-scene
+  `<run>/<scene>/scene_graph.json` (via `config['_placements']`, written by `eval.run`
+  unless `--no-placements`): per object `label` + metric `center`/`extents`/`T_world_obj`
+  + `T_world_mesh` (raw `object.glb` verts → world; a visualizer rebuilds the posed mesh
+  with no re-run — verified exact to ~1e-14 m) + best-view camera pose + detector lineage
+  (`n_obs`, `det_track_ids`, `merged_from`). `label_source=detector`. This is the
+  object-centric map deliverable and is emitted independent of GLB export.
 
 - Lifecycle: TENTATIVE (created on unmatched detection) → ACTIVE (≥3 associated
   observations) → mature (≥6 kept views or sequence end) → RECONSTRUCTED → REGISTERED;
