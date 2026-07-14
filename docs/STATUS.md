@@ -18,12 +18,19 @@ column is **not a fair entry** — a valid column needs **detector-driven** numb
 recall-dominated (Phase-2: YOLOE found 35–70% of GT). Contribution thesis: multi-view tracking
 makes per-track recall ≫ per-frame recall (objects missed in one frame seen in another) — the
 asset-centric payoff. Strategy: `REWORK_PLAN.md §2.10`; how/commands: `PHASE_SPECS.md
-§Perception robustness`. **Do in order:** (1) measure the gap — YOLOE `object_track` vs the
-native-GT-mask `scale_icp` ceiling on 137/200/428; (2) per-frame vs per-track recall (headline);
-(3) segment-everything→track→label; (4) robustify scale-fit to noisy masks; (5) detector
-upgrades. First: `uv sync --extra procthor --extra dev --extra detector --extra registration
---extra viz`, then `detect.run --source procthor` + `object_track`. Also port the depth-extent
-scale-fit into the `object_track` path (it's only in `sam3d_layout` today).
+§Perception robustness`. **Do in order:** (1) measure the gap — YOLOE `object_track_scale_icp`
+vs the native-GT-mask `sam3d_layout_scale_icp` ceiling on 137/200/428; (2) per-frame vs
+per-track recall (headline); (3) segment-everything→track→label; (4) robustify scale-fit to
+noisy masks; (5) detector upgrades. First: `uv sync --extra procthor --extra dev --extra
+detector --extra registration --extra viz`, then `detect.run --source procthor` +
+`object_track_scale_icp`.
+
+**Scale-fit port DONE (2026-07-14):** the depth-extent scale-fit (`_fit_scale_to_extent`) now
+runs in the `object_track` path against the track's fused multi-view cloud, so the two columns
+differ only in mask source (detector vs GT). Named methods `object_track_{icp,scale,scale_icp}`
+mirror `sam3d_layout_*`; equivalently `object_track --registration {icp,scale,scale_icp}`. SAM3D
+job cache is keyed by `..._t{track_id}_{framing}` (registration-independent), so switching a
+prior `object_track` run to a scale variant is an eval re-run, **not** a SAM3D re-queue.
 
 ## Phase dashboard
 

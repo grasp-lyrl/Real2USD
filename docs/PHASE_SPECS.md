@@ -170,10 +170,11 @@ fidelity opt-in** for figures/deliverables. Exported `.glb` stay gitignored.
   > 0.5 ∧ appearance_cos > 0.85). Recorded in run provenance; mesh-IoU merge lands with
   Phase 3.
 - **Placement reuses Phase 0.** Mature tracks feed their best view to
-  `sam3d_layout.{run_sam3d, place_from_sam3d, refine_icp}`; the ICP variant registers
-  against the track's **fused multi-view cloud** (the natural upgrade of Phase-0
+  `sam3d_layout.{run_sam3d, place_from_sam3d, refine_icp, _fit_scale_to_extent}`; registration
+  runs against the track's **fused multi-view cloud** (the natural upgrade of Phase-0
   `--icp-accumulate`). Methods: `object_track` (re-ID + late-merge on),
-  `object_track_naive` (both off; `--v1-dedup` adds v1's 0.5 m same-label suppression).
+  `object_track_naive` (both off; `--v1-dedup` adds v1's 0.5 m same-label suppression), and the
+  registration variants `object_track_{icp,scale,scale_icp}` (or `--registration <mode>`).
   Scene stats (`sam3d_invocations`, `n_mature`, `tracks_per_gt`, `n_merged`) land in
   run.json — these are the fragmentation-cleanup headline and are computable from the
   detector cache alone (no SAM3D worker needed).
@@ -291,19 +292,23 @@ needs **detector-driven** numbers. Diagnosis: recall-dominated (YOLOE 35–70% o
 
 Steps (prioritized; reuse Phase-2 `detect/` + `tracks/` on the new adapter):
 
-1. **Measure the gap.** Generate YOLOE detections on ProcTHOR RGB, run `object_track`, compare
-   to the native-GT-mask `sam3d_layout_scale_icp` ceiling on 137/200/428. Commands:
+1. **Measure the gap.** Generate YOLOE detections on ProcTHOR RGB, run
+   `object_track_scale_icp`, compare to the native-GT-mask `sam3d_layout_scale_icp` ceiling on
+   137/200/428 — both now apply the depth-extent scale-fit, so the columns differ only in mask
+   source. Commands:
    ```
    uv sync --extra procthor --extra dev --extra detector --extra registration --extra viz
    uv run python -m r2s3d_core.detect.run --source procthor --scene 137 --prompt gt --diagnose
    uv run python -m r2s3d_core.eval.run --source procthor --scene 137 200 428 \
-       --method object_track --detections results/detections/procthor --no-geometry \
-       --phase procthor --name procthor_object_track_3scene \
-       --sam3d-queue results/procthor_procthor_object_track_3scene/sam3d_queue
+       --method object_track_scale_icp --detections results/detections/procthor --no-geometry \
+       --phase procthor --name procthor_object_track_scale_icp_3scene \
+       --sam3d-queue results/procthor_procthor_object_track_scale_icp_3scene/sam3d_queue
    ```
-   (`object_track` needs the SAM3D worker for its new meshes — detector masks ≠ native masks →
-   new job keys; the scale_icp queue won't hit.) **Accept:** detector-driven vs GT-mask ceiling
-   table, with the degradation attributed to recall vs mask-IoU vs placement.
+   (The track path needs the SAM3D worker for its new meshes — detector masks ≠ native masks →
+   new job keys, so the `sam3d_layout_scale_icp` queue won't hit. But registration mode is NOT
+   in the job key, so `object_track`/`_icp`/`_scale`/`_scale_icp` share one mesh cache — collect
+   once, switch modes freely.) **Accept:** detector-driven vs GT-mask ceiling table, with the
+   degradation attributed to recall vs mask-IoU vs placement.
 2. **Multi-view recall recovery (headline).** Report **per-frame recall vs per-track recall**
    (union of detections over the trajectory via ObjectTrack association). Expect per-track ≫
    per-frame — the asset-centric/tracking payoff. **Accept:** the two recall curves + the count
@@ -315,7 +320,9 @@ Steps (prioritized; reuse Phase-2 `detect/` + `tracks/` on the new adapter):
 5. **Detector upgrades:** SAM 3 (AI-6, gated), Grounding-DINO+SAM2, YOLOE prompt-mode study
    (generic / prompt-free vs gt-vocab — still open from Phase 2).
 
-Note: `object_track` already passes a stable `job_key` (`{source}_{scene}_t{track_id}_
-{framing}`) and honours `full_frame`; it does NOT yet do the depth-extent scale-fit — add
-`scale`/`scale_icp` to the track path (reuse `_fit_scale_to_extent` against the track's fused
-cloud) so the scale win carries over to the detector-driven runs.
+Note: `object_track` passes a stable `job_key` (`{source}_{scene}_t{track_id}_{framing}`) and
+honours `full_frame`. The depth-extent scale-fit is **done (2026-07-14)**: the track path reuses
+`_fit_scale_to_extent` against the track's fused multi-view cloud. Registration modes: `none` |
+`icp` (rigid pose) | `scale` (scale-fit only) | `scale_icp` (scale-fit + rigid pose), exposed
+as named methods `object_track_{icp,scale,scale_icp}` (mirroring `sam3d_layout_*`) or via
+`object_track --registration <mode>` (`--icp` is the legacy alias for `icp`).

@@ -25,10 +25,15 @@ def get_method(name: str) -> Callable:
                 "sam3d_layout_teaser": sam3d_layout_teaser,
                 "sam3d_layout_scale": sam3d_layout_scale,
                 "sam3d_layout_scale_icp": sam3d_layout_scale_icp}[name]
-    if name in ("object_track", "object_track_naive"):
-        from .object_track import object_track, object_track_naive
+    if name in ("object_track", "object_track_naive", "object_track_icp",
+                "object_track_scale", "object_track_scale_icp"):
+        from .object_track import (object_track, object_track_naive, object_track_icp,
+                                   object_track_scale, object_track_scale_icp)
 
-        return {"object_track": object_track, "object_track_naive": object_track_naive}[name]
+        return {"object_track": object_track, "object_track_naive": object_track_naive,
+                "object_track_icp": object_track_icp,
+                "object_track_scale": object_track_scale,
+                "object_track_scale_icp": object_track_scale_icp}[name]
     raise ValueError(
         f"unknown method {name!r} (have: {', '.join(AVAILABLE)})"
     )
@@ -36,4 +41,5 @@ def get_method(name: str) -> Callable:
 
 AVAILABLE = ["oracle", "oracle_noisy", "sam3d_layout", "sam3d_layout_icp",
              "sam3d_layout_teaser", "sam3d_layout_scale", "sam3d_layout_scale_icp",
-             "object_track", "object_track_naive"]
+             "object_track", "object_track_naive", "object_track_icp",
+             "object_track_scale", "object_track_scale_icp"]

@@ -83,7 +83,11 @@ def _v1_position_suppress(tracks):
 
 
 def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
-         late_merge: bool, use_icp: bool) -> List[SceneObject]:
+         late_merge: bool, registration: str) -> List[SceneObject]:
+    """registration: "none" | "icp" (rigid pose) | "scale" (depth-extent scale-fit) |
+    "scale_icp" (scale-fit + rigid ICP for pose). The registration target is the track's
+    fused multi-view cloud — the detector-driven analogue of sam3d_layout's accumulated
+    masked-depth cloud. The scale-fit is the lever rigid ICP structurally lacks."""
     frames = list(source)
     if not frames:
         log.warning("source yielded no frames")
@@ -152,22 +156,39 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
             "validation": val,
         }
 
-        if use_icp:
+        if registration != "none":
+            do_scale = registration in ("scale", "scale_icp")
+            do_icp = registration in ("icp", "scale_icp")
             # register against the track's FUSED multi-view cloud (Phase-2 upgrade over
-            # sam3d_layout's single-view ICP target).
+            # sam3d_layout's single-view ICP target; the multi-view analogue of that
+            # method's accumulated masked-depth cloud).
             target = t.fused_cloud
+            prov["reg_target"] = f"fused_{len(target)}pts"
             if len(target) < 30:
-                prov["icp"] = {"fitness": 0.0, "fallback": "too_few_fused_points"}
+                prov["registration"] = "layout(too_few_fused_points)"
             else:
-                src_pts = geo.sample_surface(posed, 2000, seed=t.track_id) if len(posed.faces) \
-                    else posed.vertices
-                delta, info = s3d.refine_icp(src_pts, target, np.eye(4))
-                posed.apply_transform(delta)
-                T_world_obj = delta @ T_world_obj
-                extents = np.asarray(posed.bounding_box_oriented.primitive.extents, dtype=np.float64)
-                prov["icp"] = info
-            prov["registration"] = "layout+icp"
-            prov["icp_target"] = f"fused_{len(target)}pts"
+                if do_scale:
+                    # Set metric scale from the fused-cloud OBB extent (the observed metric
+                    # size); rigid ICP (if any) then fixes pose only. This is the scale lever
+                    # ICP lacks — see sam3d_layout._fit_scale_to_extent.
+                    tgt_ext = s3d._observed_obb_extent(target)
+                    if tgt_ext is not None:
+                        M, sinfo = s3d._fit_scale_to_extent(posed, tgt_ext)
+                        posed.apply_transform(M)
+                        prov["scale_fit"] = sinfo
+                    else:
+                        prov["scale_fit"] = {"skipped": "degenerate_target"}
+                if do_icp:
+                    # rigid: recovers pose only (cannot rescale).
+                    src_pts = (geo.sample_surface(posed, 2000, seed=t.track_id)
+                               if len(posed.faces) else np.asarray(posed.vertices))
+                    delta, info = s3d.refine_icp(src_pts, target, np.eye(4))
+                    posed.apply_transform(delta)
+                    prov["icp"] = info
+                prov["registration"] = "layout+" + registration
+                # One OBB from sampled points after all transforms -> pose + extents.
+                # scale/ICP deltas may carry scale, so re-derive rather than compose.
+                T_world_obj, extents = s3d._fast_obb(posed, seed=t.track_id)
 
         preds.append(SceneObject(label=t.label(), T_world_obj=T_world_obj, extents=extents,
                                  mesh=posed, provenance=prov))
@@ -200,11 +221,44 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
     return preds
 
 
+def _registration(config: dict) -> str:
+    """Resolve the registration mode from config. Explicit ``registration`` wins; else the
+    legacy ``--icp`` flag maps to "icp"; else "none"."""
+    reg = config.get("registration")
+    if reg:
+        if reg not in ("none", "icp", "scale", "scale_icp"):
+            raise ValueError(f"unknown registration {reg!r} "
+                             "(have: none, icp, scale, scale_icp)")
+        return reg
+    return "icp" if config.get("icp") else "none"
+
+
 def object_track(source, gt, config) -> List[SceneObject]:
     return _run(source, gt, config, reid=True, late_merge=True,
-                use_icp=bool(config.get("icp")))
+                registration=_registration(config))
 
 
 def object_track_naive(source, gt, config) -> List[SceneObject]:
     return _run(source, gt, config, reid=False, late_merge=False,
-                use_icp=bool(config.get("icp")))
+                registration=_registration(config))
+
+
+# Named registration variants of the full pipeline — symmetric with sam3d_layout's
+# {_icp, _scale, _scale_icp} so both paths appear one-to-one in AVAILABLE and read the
+# same way at the CLI (e.g. object_track_scale_icp vs sam3d_layout_scale_icp). These pin
+# the registration mode directly; the equivalent is object_track --registration <mode>.
+
+def object_track_icp(source, gt, config) -> List[SceneObject]:
+    """ObjectTrack + rigid ICP against the track's fused multi-view cloud (pose only)."""
+    return _run(source, gt, config, reid=True, late_merge=True, registration="icp")
+
+
+def object_track_scale(source, gt, config) -> List[SceneObject]:
+    """ObjectTrack + depth-extent scale-fit (metric scale from the fused-cloud OBB)."""
+    return _run(source, gt, config, reid=True, late_merge=True, registration="scale")
+
+
+def object_track_scale_icp(source, gt, config) -> List[SceneObject]:
+    """ObjectTrack + scale-fit + rigid ICP for pose (the full scale+pose fix; the
+    detector-driven counterpart of sam3d_layout_scale_icp)."""
+    return _run(source, gt, config, reid=True, late_merge=True, registration="scale_icp")

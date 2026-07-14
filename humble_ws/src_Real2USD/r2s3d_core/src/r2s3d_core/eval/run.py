@@ -69,6 +69,7 @@ def run(args: argparse.Namespace) -> Path:
         "late_merge": args.late_merge,
         "v1_dedup": args.v1_dedup,
         "icp": args.icp,
+        "registration": args.registration,
         "debug_html": args.debug_html,
         "corrupt": {"dropout": args.det_dropout, "jitter_px": args.det_jitter,
                     "track_break": args.det_track_break, "split": args.det_split_prob},
@@ -222,7 +223,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--v1-dedup", action="store_true",
                    help="object_track_naive: add v1's 0.5 m same-label position suppression")
     p.add_argument("--icp", action="store_true",
-                   help="object_track: refine each track against its fused multi-view cloud")
+                   help="object_track: refine each track against its fused multi-view cloud "
+                        "(legacy alias for --registration icp)")
+    p.add_argument("--registration", default=None,
+                   choices=["none", "icp", "scale", "scale_icp"],
+                   help="object_track: registration mode against the track's fused cloud. "
+                        "'scale'/'scale_icp' add the depth-extent scale-fit (the lever rigid "
+                        "ICP lacks); overrides --icp when set.")
     p.add_argument("--det-dropout", type=float, default=0.0, help="corruption: drop-detection prob")
     p.add_argument("--det-jitter", type=int, default=0, help="corruption: bbox/mask jitter px")
     p.add_argument("--det-track-break", type=float, default=0.0, help="corruption: id-break prob")
