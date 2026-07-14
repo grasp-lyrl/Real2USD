@@ -88,7 +88,14 @@ def run(args: argparse.Namespace) -> Path:
     per_scene = {}
     t0 = time.time()
     for scene in args.scene:
-        src = make_source(args.source, scene, root=args.data_root, stride=args.stride)
+        # gt_mesh/asset_root are procthor-only; pass only when set so other backends
+        # (replica, ...) that don't accept them are unaffected.
+        src_kwargs = {}
+        if args.gt_mesh is not None:
+            src_kwargs["gt_mesh"] = args.gt_mesh
+        if args.asset_root is not None:
+            src_kwargs["asset_root"] = args.asset_root
+        src = make_source(args.source, scene, root=args.data_root, stride=args.stride, **src_kwargs)
         gt = src.gt()
         if not gt:
             print(f"[{scene}] WARNING: no GT available; skipping (need semantic assets).")
@@ -186,6 +193,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--method", required=True, choices=AVAILABLE)
     p.add_argument("--data-root", default=None, help="override dataset root")
     p.add_argument("--stride", type=int, default=20, help="use every Nth frame")
+    p.add_argument("--gt-mesh", default=None, choices=["box", "asset", "none"],
+                   help="procthor: GT mesh policy. 'box' (default) = OBB as a box; 'asset' = "
+                        "real THOR asset meshes fitted to the OBB (activates the Mesh rows / "
+                        "Chamfer + geo-recall; needs `--extra mesh` + AI-8 download); 'none'.")
+    p.add_argument("--asset-root", default=None,
+                   help="procthor: THOR asset dir (else $R2S3D_THOR_ASSETS or the data-root default)")
     p.add_argument("--iou-threshold", type=float, default=0.25)
     p.add_argument("--no-geometry", action="store_true", help="skip Chamfer/F-score (faster)")
     p.add_argument("--surface-points", type=int, default=10000)

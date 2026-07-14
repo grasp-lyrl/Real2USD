@@ -151,3 +151,70 @@ def test_scan2cad_fails_on_large_error():
     m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=False)
     assert m["tp"] == 1
     assert m["scan2cad_accuracy"] == pytest.approx(0.0)
+
+
+# ------------------------------------------------ coworker-comparable additions
+
+def test_named_counts():
+    gts = [M.SceneObject("chair", _pose([0, 0, 0]), np.array([1.0, 1, 1])),
+           M.SceneObject("table", _pose([5, 0, 0]), np.array([1.0, 1, 1]))]
+    preds = [M.SceneObject("chair", _pose([0.05, 0, 0]), np.array([1.0, 1, 1]))]
+    m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=False)
+    assert m["objects_per_scene"] == 2
+    assert m["predictions_per_scene"] == 1
+    assert m["matched_per_scene"] == 1
+
+
+def test_micro_macro_f1_all_correct():
+    gts = [M.SceneObject("chair", _pose([0, 0, 0]), np.array([1.0, 1, 1])),
+           M.SceneObject("table", _pose([5, 0, 0]), np.array([1.0, 1, 1]))]
+    preds = [M.SceneObject("chair", _pose([0.05, 0, 0]), np.array([1.0, 1, 1])),
+             M.SceneObject("table", _pose([5.05, 0, 0]), np.array([1.0, 1, 1]))]
+    m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=False)
+    assert m["micro_f1"] == pytest.approx(1.0)
+    assert m["macro_f1"] == pytest.approx(1.0)
+    assert set(m["per_class"]) == {"chair", "table"}
+
+
+def test_micro_macro_f1_mislabel_penalized():
+    # geometry is perfect (label-agnostic f1 == 1) but one label is wrong, so the
+    # label-aware micro/macro F1 must drop below 1.
+    gts = [M.SceneObject("chair", _pose([0, 0, 0]), np.array([1.0, 1, 1])),
+           M.SceneObject("table", _pose([5, 0, 0]), np.array([1.0, 1, 1]))]
+    preds = [M.SceneObject("chair", _pose([0.05, 0, 0]), np.array([1.0, 1, 1])),
+             M.SceneObject("sofa", _pose([5.05, 0, 0]), np.array([1.0, 1, 1]))]  # wrong label
+    m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=False)
+    assert m["f1"] == pytest.approx(1.0)          # geometry-only unaffected
+    assert m["label_aware_matched"] == 1          # only the chair matches label-aware
+    assert m["micro_f1"] == pytest.approx(0.5)    # tp=1, n_pred=n_gt=2
+    # classes: chair (F1 1), table (missed, 0), sofa (hallucinated, 0) -> mean 1/3
+    assert m["macro_f1"] == pytest.approx(1.0 / 3.0)
+
+
+def test_chamfer_mean_is_half_l1():
+    trimesh = pytest.importorskip("trimesh")
+    m = trimesh.creation.box(extents=[1, 1, 1])
+    p = geo.sample_surface(m, 20000, seed=1)
+    q = geo.sample_surface(m, 20000, seed=2)
+    out = geo.chamfer_and_fscore(p, q, taus=(0.05, 0.02))
+    assert out["chamfer_mean"] == pytest.approx(0.5 * out["chamfer_l1"])
+    # recall@tau (class-free geo recall) present and sane on identical surfaces
+    assert out["recall@0.05"] > 0.99
+
+
+def test_scene_geometry_keys_present_with_meshes():
+    trimesh = pytest.importorskip("trimesh")
+    box = trimesh.creation.box(extents=[1, 1, 1])
+    gts = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]), mesh=box)]
+    preds = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]), mesh=box)]
+    m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=True, surface_points=4000)
+    assert "scene_chamfer_mean_m" in m
+    assert m["geo_recall@0.05"] > 0.99
+    assert np.isfinite(m["chamfer_symmetric_mean_m"])
+
+
+def test_scene_geometry_absent_without_meshes():
+    gts = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]))]
+    preds = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]))]
+    m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=True)
+    assert "scene_chamfer_mean_m" not in m  # no meshes -> class-free geometry skipped

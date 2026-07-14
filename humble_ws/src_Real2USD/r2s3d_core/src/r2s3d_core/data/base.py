@@ -41,6 +41,7 @@ class GTObject(NamedTuple):
     T_world_obj: np.ndarray        # (4, 4) object-to-world (OBB pose)
     extents: np.ndarray            # (3,) full OBB dimensions, meters
     mesh: Optional["trimesh.Trimesh"] = None  # per-instance GT mesh (world frame)
+    asset_id: Optional[str] = None  # source asset identifier (e.g. THOR assetId), if known
 
 
 @runtime_checkable

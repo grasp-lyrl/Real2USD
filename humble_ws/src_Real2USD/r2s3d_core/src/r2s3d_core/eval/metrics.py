@@ -10,6 +10,23 @@ Metric summary (see docs/PHASE_SPECS.md Phase 0):
     ratio error, Chamfer-L1, F-score@5cm/2cm.
   * Scan2CAD accuracy: GT fraction with a prediction within 20cm & 20deg & 20% scale.
   * Scene: precision / recall / F1 @ IoU 0.25, duplicate rate, count ratio.
+
+Coworker-comparability additions (Option A; for the ProcTHOR/MolmoSpaces scene-graph
+table -- see docs/ACTION_ITEMS.md AI-7). These reconcile our output to the coworker's
+named metric list; the association / fragmentation / merge family (Option B) needs
+per-detection track provenance and is wired separately.
+  * micro_f1 / macro_f1 + per_class: LABEL-AWARE detection F1 (a match requires IoU >=
+    threshold AND the same label). Micro pools over all objects; macro averages per-class
+    F1 over the union of GT and predicted classes. (Our headline ``f1`` stays label-
+    AGNOSTIC -- geometry only -- so the two are reported side by side, not conflated.)
+  * matched_per_scene / objects_per_scene / predictions_per_scene: named counts.
+  * chamfer_symmetric_mean_m: per-matched-pair Chamfer under the coworker's average
+    convention (= our chamfer_l1 / 2).
+  * scene_chamfer_mean_m + geo_recall/geo_precision/geo_fscore@tau: SCENE-LEVEL, class-
+    free geometry -- all predicted surface points vs all GT surface points, no matching
+    and no labels. This is the apples-to-apples counterpart to the coworker's whole-scene
+    point-cloud Chamfer and class-free geometric recall (needs meshes on both sides;
+    NaN until GT meshes are attached -- AI-8).
 """
 
 from __future__ import annotations
@@ -41,6 +58,15 @@ class SceneObject:
 
 def gt_to_scene_object(g: GTObject) -> SceneObject:
     return SceneObject(label=g.label, T_world_obj=g.T_world_obj, extents=g.extents, mesh=g.mesh)
+
+
+def _f1(precision: float, recall: float) -> float:
+    """Harmonic mean of precision and recall; 0 when both are 0."""
+    return 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+
+def _norm_label(label: str) -> str:
+    return (label or "").strip().lower()
 
 
 # Default Scan2CAD-style symmetry per class (about world up). Keyed by substring of
@@ -117,6 +143,80 @@ def _duplicate_and_count(iou: np.ndarray, threshold: float, n_gt: int):
     return duplicates / n_gt
 
 
+def _label_aware_metrics(preds: List[SceneObject], gts: List[SceneObject],
+                         iou: np.ndarray, iou_threshold: float) -> dict:
+    """Label-aware micro/macro/per-class detection metrics.
+
+    A true positive requires IoU >= ``iou_threshold`` AND an exact (case-insensitive)
+    label match. Micro pools true positives over all objects; macro averages per-class
+    F1 over the union of GT and predicted classes (a class present on only one side
+    contributes an F1 of 0, penalising both misses and hallucinated categories).
+    """
+    labels_pred = [_norm_label(p.label) for p in preds]
+    labels_gt = [_norm_label(g.label) for g in gts]
+    n_pred, n_gt = len(preds), len(gts)
+
+    matches = hungarian_match(iou, iou_threshold, require_label=True,
+                              labels_pred=labels_pred, labels_gt=labels_gt)
+    tp = len(matches)  # by construction each matched pair shares a label
+    micro_precision = tp / n_pred if n_pred else 0.0
+    micro_recall = tp / n_gt if n_gt else 0.0
+
+    classes = sorted(set(labels_gt) | set(labels_pred))
+    per_class: dict[str, dict] = {}
+    f1s, precisions, recalls = [], [], []
+    for c in classes:
+        tp_c = sum(1 for _, gi, _ in matches if labels_gt[gi] == c)
+        n_pred_c = sum(1 for l in labels_pred if l == c)
+        n_gt_c = sum(1 for l in labels_gt if l == c)
+        fp_c, fn_c = n_pred_c - tp_c, n_gt_c - tp_c
+        p_c = tp_c / (tp_c + fp_c) if (tp_c + fp_c) else 0.0
+        r_c = tp_c / (tp_c + fn_c) if (tp_c + fn_c) else 0.0
+        f_c = _f1(p_c, r_c)
+        per_class[c] = {"tp": tp_c, "fp": fp_c, "fn": fn_c,
+                        "n_gt": n_gt_c, "n_pred": n_pred_c,
+                        "precision": p_c, "recall": r_c, "f1": f_c}
+        f1s.append(f_c); precisions.append(p_c); recalls.append(r_c)
+
+    return {
+        "micro_precision": micro_precision,
+        "micro_recall": micro_recall,
+        "micro_f1": _f1(micro_precision, micro_recall),
+        "macro_precision": float(np.mean(precisions)) if precisions else float("nan"),
+        "macro_recall": float(np.mean(recalls)) if recalls else float("nan"),
+        "macro_f1": float(np.mean(f1s)) if f1s else float("nan"),
+        "label_aware_matched": tp,
+        "per_class": per_class,
+    }
+
+
+def _scene_geometry(preds: List[SceneObject], gts: List[SceneObject],
+                    surface_points: int, taus=(0.05, 0.02)) -> dict:
+    """Scene-level, class-free geometry: all predicted surface points vs all GT points.
+
+    No matching and no labels -- the coworker-comparable whole-scene Chamfer and
+    geometric coverage. Returns an empty dict when either side has no mesh (so the
+    keys are simply absent and aggregate/table skip them) -- e.g. before GT meshes
+    are attached (AI-8).
+    """
+    pool_n = min(surface_points, 5000)  # bound the pooled cloud across many objects
+    pred_pts = [geo.sample_surface(p.mesh, pool_n, seed=i)
+                for i, p in enumerate(preds) if p.mesh is not None]
+    gt_pts = [geo.sample_surface(g.mesh, pool_n, seed=1000 + j)
+              for j, g in enumerate(gts) if g.mesh is not None]
+    pred_pts = [a for a in pred_pts if len(a)]
+    gt_pts = [a for a in gt_pts if len(a)]
+    if not pred_pts or not gt_pts:
+        return {}
+    cf = geo.chamfer_and_fscore(np.vstack(pred_pts), np.vstack(gt_pts), taus=taus)
+    out = {"scene_chamfer_mean_m": cf["chamfer_mean"]}
+    for tau in taus:
+        out[f"geo_recall@{tau}"] = cf[f"recall@{tau}"]
+        out[f"geo_precision@{tau}"] = cf[f"precision@{tau}"]
+        out[f"geo_fscore@{tau}"] = cf[f"fscore@{tau}"]
+    return out
+
+
 def evaluate(preds: List[SceneObject], gts: List[SceneObject],
              iou_threshold: float = 0.25,
              compute_geometry: bool = True,
@@ -138,7 +238,7 @@ def evaluate(preds: List[SceneObject], gts: List[SceneObject],
 
     # per-pair errors
     centroid_err, rot_err, scale_err_max, label_correct = [], [], [], []
-    chamfer, f5, f2 = [], [], []
+    chamfer, chamfer_mean, f5, f2 = [], [], [], []
     scan2cad_hits = 0
     for pi, gi, _ in matches:
         p, g = preds[pi], gts[gi]
@@ -160,6 +260,7 @@ def evaluate(preds: List[SceneObject], gts: List[SceneObject],
             gg = geo.sample_surface(g.mesh, surface_points, seed=1000 + gi)
             cf = geo.chamfer_and_fscore(pp, gg, taus=(0.05, 0.02))
             chamfer.append(cf["chamfer_l1"])
+            chamfer_mean.append(cf["chamfer_mean"])
             f5.append(cf["fscore@0.05"])
             f2.append(cf["fscore@0.02"])
 
@@ -169,11 +270,16 @@ def evaluate(preds: List[SceneObject], gts: List[SceneObject],
     metrics = {
         "n_pred": n_pred,
         "n_gt": n_gt,
+        # named per-scene counts (coworker table: matched / objects / predictions per scene)
+        "matched_per_scene": tp,
+        "objects_per_scene": n_gt,
+        "predictions_per_scene": n_pred,
         "count_ratio": (n_pred / n_gt) if n_gt else float("nan"),
         "iou_threshold": iou_threshold,
         "tp": tp,
         "fp": n_pred - tp,
         "fn": n_gt - tp,
+        # headline P/R/F1 are LABEL-AGNOSTIC (geometry only); label-aware micro/macro below
         "precision": precision,
         "recall": recall,
         "f1": f1,
@@ -188,7 +294,13 @@ def evaluate(preds: List[SceneObject], gts: List[SceneObject],
         "scale_err_median": _agg(scale_err_max),
         "scale_err_mean": _agg(scale_err_max, np.mean),
         "chamfer_l1_median_m": _agg(chamfer),
+        "chamfer_symmetric_mean_m": _agg(chamfer_mean),  # coworker "average chamfer" (= l1/2)
         "fscore@0.05_mean": _agg(f5, np.mean),
         "fscore@0.02_mean": _agg(f2, np.mean),
     }
+    # label-aware micro / macro / per-class detection F1 (coworker: Micro F1 / Macro F1)
+    metrics.update(_label_aware_metrics(preds, gts, iou, iou_threshold))
+    # scene-level, class-free geometry (coworker: whole-scene Chamfer + class-free geo recall)
+    if compute_geometry:
+        metrics.update(_scene_geometry(preds, gts, surface_points))
     return metrics

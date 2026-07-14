@@ -298,11 +298,27 @@ Disable with `cache=False` or `R2S3D_PROCTHOR_NOCACHE=1`; bump `_CACHE_VERSION` 
 changes. Tests: `tests/test_procthor_cache.py` (synthetic cache, no ai2thor). See
 [[procthor-render-cache]].
 
-Metric parity is the open comparability risk: our `evaluate()` gives micro P/R/F1, counts,
-duplicate rate, Chamfer/F-score; the table also wants macro-F1, many-to-one F1,
-matched/objects-per-scene, class-free geo recall, footprint (2D top-down) IoU — implement
-best-guess now, **reconcile to the coworker's exact definitions** (AI-7) before publishing
-the column. Split (`train`/`val`/`test`) for those ids is also TBD (defaults to `train`).
+Metric parity is the open comparability risk. **Option A landed (2026-07-14)** — `evaluate()`
+now also emits the geometric named metrics under reconciled definitions:
+- `micro_f1` / `macro_f1` / `per_class`: **label-aware** detection F1 (match = IoU ≥ thr ∧
+  same label). Micro pools over objects; macro = unweighted mean of per-class F1 over the
+  **union of GT and predicted classes** (a one-sided class scores F1 0). Headline `f1`,
+  `precision`, `recall` remain **label-agnostic** (geometry only) and are reported alongside.
+- `matched_per_scene` / `objects_per_scene` / `predictions_per_scene`: named counts.
+- `chamfer_symmetric_mean_m`: per-matched-pair "average chamfer" = `chamfer_l1` / 2 (matches
+  the coworker's `symmetric_chamfer_distance` convention; our `chamfer_l1_median_m` kept too).
+- `scene_chamfer_mean_m` + `geo_recall/geo_precision/geo_fscore@{0.05,0.02}`: **scene-level,
+  class-free** geometry (all pred surface points vs all GT points, no matching/labels) — the
+  apples-to-apples counterpart to the coworker's whole-scene Chamfer + class-free geo recall.
+  NaN/absent until GT meshes are attached (AI-8).
+
+Still **best-guess pending AI-7 confirmation** on: object set / IoU threshold / label-aware
+choice, and the **Option B** association family (many-to-one F1, fragmentation, merge rate,
+pairwise P/R/F1) — the coworker's `scripts/scene_graph_metrics.py:compute_track_metrics`,
+which needs per-detection→track provenance (ObjectTrack `track_id` + GT instance id) threaded
+into eval. **Footprint (2D top-down) IoU** still to add (blocked on AI-8 meshes). Reconcile
+to the coworker's exact definitions before publishing the column. Split (`train`/`val`/`test`)
+for those ids is also TBD (defaults to `train`).
 
 ### Perception robustness — detector-driven ProcTHOR (NEXT, the crux)
 

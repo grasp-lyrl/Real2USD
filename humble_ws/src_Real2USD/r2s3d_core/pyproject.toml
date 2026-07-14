@@ -30,6 +30,13 @@ dev = [
 viz = [
     "fast-simplification>=0.1",
 ]
+# GT asset-mesh reading for the ProcTHOR/MolmoSpaces Mesh rows (data/thor_assets.py).
+# The MolmoSpaces `isaac/objects/thor` source ships USDA (ASCII USD), which trimesh
+# cannot read; usd-core provides `pxr` to parse it. Optional -- only the Mesh-row
+# Chamfer / footprint-IoU / scene-geometry metrics need real GT meshes (AI-8).
+mesh = [
+    "usd-core>=23.11",
+]
 # Phase 2 detector step (detect/yoloe.py). Heavy (torch); kept optional so the core
 # tracker/eval/tests stay torch-free. torch is pulled from the CUDA 12.8 index because
 # this desktop's RTX 5090 (sm_120 / Blackwell) needs cu128 — see [[sam3d-5090-env]].

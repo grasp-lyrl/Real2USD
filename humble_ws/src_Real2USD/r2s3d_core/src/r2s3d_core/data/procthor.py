@@ -177,7 +177,8 @@ class ProcThorSource:
                  platform: Optional[str] = None, quality: str = "Low",
                  max_frames: Optional[int] = None, gt_mesh: str = "box",
                  native_masks: bool = True, cache: bool = True,
-                 cache_dir: Optional[str] = None, cache_root=None):
+                 cache_dir: Optional[str] = None, cache_root=None,
+                 asset_root=None):
         self.scene = str(scene)
         self.split = split
         self.stride = stride
@@ -193,7 +194,12 @@ class ProcThorSource:
         # (AI-8). "none" leaves mesh=None. Box silhouettes are a superset of the true
         # object -> a faithful GT-box-detector ceiling for the Objects rows; do NOT read
         # Chamfer/F-score off box meshes (run those methods with --no-geometry).
+        # "asset": attach the real THOR asset mesh (MolmoSpaces isaac/objects/thor, AI-8),
+        # fitted into the OBB -> activates the Mesh rows (Chamfer / geo-recall). Falls back
+        # to a box (loudly) per object whose asset is missing or unreadable.
         self.gt_mesh = gt_mesh
+        self.asset_root = asset_root      # THOR asset dir; None -> thor_assets.default
+        self._asset_lib = None            # lazily built ThorAssetLibrary (gt_mesh=="asset")
         self.width = width
         self.height = height
         self.position_stride = position_stride
@@ -271,7 +277,8 @@ class ProcThorSource:
             "objid": {str(k): v for k, v in self._objid_by_instance.items()},
             "gt": [{"instance_id": g.instance_id, "label": g.label,
                     "T_world_obj": np.asarray(g.T_world_obj, float).tolist(),
-                    "extents": np.asarray(g.extents, float).tolist()} for g in gt],
+                    "extents": np.asarray(g.extents, float).tolist(),
+                    "asset_id": g.asset_id} for g in gt],
         }
         with open(building / "meta.json", "w") as f:
             json.dump(meta, f)
@@ -405,6 +412,33 @@ class ProcThorSource:
         n = len(positions) * len(self.yaws) * len(self.horizons)
         return n if not self.max_frames else min(n, self.max_frames)
 
+    def _gt_mesh_for(self, asset_id, T_world_obj, extents):
+        """Build the GT mesh for one object per ``self.gt_mesh`` policy.
+
+        "box" -> OBB as a box; "asset" -> the real THOR asset mesh fitted into the OBB,
+        falling back LOUDLY to a box if the asset is missing/unreadable; else None.
+        """
+        if self.gt_mesh == "box":
+            return trimesh.creation.box(extents=extents, transform=T_world_obj)
+        if self.gt_mesh != "asset":
+            return None
+        # asset path: lazily build the library, then load + fit this asset
+        if self._asset_lib is None:
+            from .thor_assets import ThorAssetLibrary
+            self._asset_lib = ThorAssetLibrary(self.asset_root)
+        from .thor_assets import fit_canonical_to_obb
+        canonical = None
+        if asset_id:
+            try:
+                canonical = self._asset_lib.load_canonical(asset_id)
+            except Exception as e:  # malformed USD -> loud, then box fallback
+                log.warning("scene %s: asset %r failed to load (%s); using box", self.scene, asset_id, e)
+        if canonical is None:
+            if asset_id:
+                log.warning("scene %s: no THOR asset mesh for %r; using box fallback", self.scene, asset_id)
+            return trimesh.creation.box(extents=extents, transform=T_world_obj)
+        return fit_canonical_to_obb(canonical, T_world_obj, extents)
+
     def gt(self) -> Optional[List[GTObject]]:
         if not self._load_gt:
             return None
@@ -421,9 +455,10 @@ class ProcThorSource:
             for g in meta["gt"]:
                 T = np.asarray(g["T_world_obj"], float)
                 ext = np.asarray(g["extents"], float)
-                mesh = trimesh.creation.box(extents=ext, transform=T) if self.gt_mesh == "box" else None
+                aid = g.get("asset_id")
+                mesh = self._gt_mesh_for(aid, T, ext)
                 objs.append(GTObject(instance_id=int(g["instance_id"]), label=g["label"],
-                                     T_world_obj=T, extents=ext, mesh=mesh))
+                                     T_world_obj=T, extents=ext, mesh=mesh, asset_id=aid))
             self._gt = objs
             return self._gt
         return self._build_gt_live()
@@ -447,11 +482,8 @@ class ProcThorSource:
                 aabb = o["axisAlignedBoundingBox"]
                 corners_w = (_M_WU @ np.asarray(aabb["cornerPoints"], float).T).T
                 T_world_obj, extents = _obb_from_corner_points(corners_w)
-            mesh = None
-            if self.gt_mesh == "box":
-                # OBB as a mesh: enables the sam3d_layout GT-mask path. NOT a real shape
-                # (Mesh rows need asset meshes, AI-8) -> run those methods --no-geometry.
-                mesh = trimesh.creation.box(extents=extents, transform=T_world_obj)
+            asset_id = o.get("assetId")
+            mesh = self._gt_mesh_for(asset_id, T_world_obj, extents)
             inst_id = len(objs)
             col = obj_color.get(o["objectId"])
             if col is not None:
@@ -463,6 +495,7 @@ class ProcThorSource:
                 T_world_obj=T_world_obj,
                 extents=extents,
                 mesh=mesh,
+                asset_id=asset_id,
             ))
         self._gt = objs
         return objs

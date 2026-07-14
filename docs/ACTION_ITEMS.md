@@ -85,15 +85,47 @@ count?); (2) the **10th ProcTHOR id** (he named 9; the table says "slice of 10 r
 ≈ 10 houses); (3) the **split** those ids index (train/val/test — same integer is a
 different house per split); (4) his camera-trajectory protocol if he wants frame-set
 parity. Until then our column is "indicative, our metric defs" — flag in the caption.
+**Update (2026-07-14):** the geometric named metrics are now implemented (Option A —
+`eval/metrics.py` micro/macro F1, per-scene counts, class-free scene Chamfer + geo recall;
+see `PHASE_SPECS.md` Phase-5). What still needs the coworker: (a) confirm the exact
+definitions (object set, IoU threshold, label-aware?) so ours match; (b) his **association
+family** defs (many-to-one F1, fragmentation, merge, pairwise) to finish Option B against
+`scripts/scene_graph_metrics.py:compute_track_metrics`; plus the 10th id + split as before.
 
-### [ ] AI-8 — MolmoSpaces / THOR per-object GT meshes for the Mesh rows  *(not blocking Objects)*
+### [x] AI-8 — MolmoSpaces / THOR per-object GT meshes for the Mesh rows  *(DONE 2026-07-14)*
+**RESOLVED:** downloaded `isaac/objects/thor` (~1 GB, all 9 houses are iThor assets) and
+wired the loader: `data/thor_assets.py` (`usd-core` reads the USDA → canonical `trimesh`;
+`ThorAssetLibrary` resolves `assetId`; `fit_canonical_to_obb` places it in the trusted OBB).
+`ProcThorSource(gt_mesh="asset")` attaches them (loud box fallback for empty-`assetId`
+objects); CLI `--gt-mesh asset` + `--extra mesh`. **Validated on scene 200:** 46/52 real
+meshes, fitted mesh-span vs OBB-extent median [1.00,1.02,1.01]; oracle eval geo_recall@5cm
+0.987, scene_chamfer ~9 mm. Remaining for the Mesh **numbers**: run the campaign with
+`--gt-mesh asset` against real predictions (compute, not gated), and add top-down Footprint
+IoU. Known limitation: OBB-fit leaves axis SIGN unresolved (possible 180° flip on strongly
+asymmetric assets); refine with the Unity yaw if Chamfer looks off.
 **Blocks:** the **Mesh** row-group (Chamfer, Footprint IoU) — Real2USD's differentiator.
 Objects rows need none of this. **Why Claude can't:** MolmoSpaces asset download may be
 license-gated (Objaverse ODC-BY / THOR assets) and needs your account/acceptance.
-**Do:** grab the MolmoSpaces object USD/mesh assets
+**Do:** grab the MolmoSpaces object mesh assets
 (https://huggingface.co/datasets/allenai/molmospaces) so `ProcThorSource.gt()` can attach
-per-instance GT meshes (currently `mesh=None`); then Chamfer/F-score activate and we add
-top-down Footprint IoU. Alternative: extract meshes from the THOR asset db per `assetId`.
+per-instance GT meshes (currently a box placeholder, `gt_mesh="box"`); then Chamfer/F-score
++ `scene_chamfer_mean_m`/`geo_recall@tau` activate and we add top-down Footprint IoU.
+Alternative: extract meshes from the THOR asset db per `assetId`.
+
+**Scope resolved (2026-07-14, assetId audit):** the 9 houses reference **410 unique iThor
+asset ids, 0 Objaverse hashes** — so only the **`isaac/objects/thor` source (~1 GB, single
+tar)** is needed, NOT the 86 GB `isaac/objects/objaverse` and NOT the 13.1 TB full dataset.
+The dataset's `download.py` fetches one source at a time via `--data_source_dir`; no
+per-scene filtering. Commands:
+```
+pip install zstandard datasets huggingface-hub tqdm && huggingface-cli login
+curl -L -o /tmp/molmospaces_download.py \
+  https://huggingface.co/datasets/allenai/molmospaces/resolve/main/download.py
+python /tmp/molmospaces_download.py ~/Data/datasets/molmospaces --list --source isaac  # confirm version
+python /tmp/molmospaces_download.py ~/Data/datasets/molmospaces \
+  --data_source_dir isaac/objects/thor/20260128
+```
+Then Claude wires the tar→`assetId`→mesh loader into `ProcThorSource.gt()`.
 
 ### [ ] AI-6 — Meta SAM 3 checkpoint (detector)  *(not blocking — YOLOE is live)*
 **Blocks:** nothing hard. Phase 2 runs on **YOLOE** (ungated `ultralytics`, auto-downloads

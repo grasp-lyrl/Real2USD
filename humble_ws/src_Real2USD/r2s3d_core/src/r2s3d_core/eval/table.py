@@ -18,15 +18,17 @@ from typing import List
 
 # (metric key, column header, format, lower_is_better)
 _COLUMNS = [
-    ("f1", "F1@.25", "{:.3f}", False),
+    ("f1", "F1@.25", "{:.3f}", False),          # label-agnostic (geometry only)
+    ("micro_f1", "microF1", "{:.3f}", False),   # label-aware, pooled (coworker Micro F1)
+    ("macro_f1", "macroF1", "{:.3f}", False),   # label-aware, per-class mean (coworker Macro F1)
     ("recall@0.5", "R@.5", "{:.3f}", False),
     ("scan2cad_accuracy", "S2C-acc", "{:.3f}", False),
     ("centroid_err_median_m", "cent(m)", "{:.3f}", True),
     ("rotation_err_median_deg", "rot(deg)", "{:.1f}", True),
     ("scale_err_median", "scale", "{:.3f}", True),
     ("duplicate_rate", "dup", "{:.2f}", True),
-    ("chamfer_l1_median_m", "chamfer(m)", "{:.3f}", True),
-    ("fscore@0.05_mean", "F@5cm", "{:.3f}", False),
+    ("scene_chamfer_mean_m", "chamfer(m)", "{:.3f}", True),   # scene-level, class-free (coworker Chamfer)
+    ("geo_recall@0.05", "geoR@5cm", "{:.3f}", False),         # class-free geometric recall
 ]
 
 

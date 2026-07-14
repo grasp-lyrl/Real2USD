@@ -8,7 +8,7 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 - **Things only the human can do: `ACTION_ITEMS.md`** (Claude adds to it on every gated dependency)
 - Datasets & access: `DATASETS.md`
 
-_Last updated: 2026-07-14 (ProcTHOR scale-fit win (S2C 0.12→0.31) + per-scene scene_graph.json; NEXT = perception robustness / detector-driven — the crux)._
+_Last updated: 2026-07-14 (coworker metrics Option A + AI-8 GT-mesh loader landed: `eval/metrics.py` micro/macro F1 + class-free scene geometry; `data/thor_assets.py` reads THOR USDA→trimesh, `--gt-mesh asset` validated on scene 200; ProcTHOR scale-fit win (S2C 0.12→0.31); NEXT = perception robustness / detector-driven — the crux)._
 
 ## ▶ NEXT SESSION — perception robustness (detector-driven ProcTHOR)
 
@@ -234,10 +234,37 @@ missed on collect (see [[sam3d-queue-design]]).
 (comparability-critical; our `evaluate()` uses our own matching defs for now). (2) Run the
 real method rows — `sam3d_layout` (GT-mask, full-frame) + `object_track` (YOLOE) over the
 9 scenes → the Objects rows. Needs the **SAM3D worker** running (AI-1 env is ready) +
-`--extra detector` re-synced. This is the compute campaign; Claude-doable, not gated. (3) **AI-8**
-— MolmoSpaces/THOR per-object GT meshes → activates the **Mesh** rows (Chamfer + a new
-top-down Footprint IoU). (4) Add the extra named metrics (macro-F1, many-to-one F1, matched/
-objects-per-scene, class-free geo recall) to `eval/metrics.py`, reconciled to AI-7.
+`--extra detector` re-synced. This is the compute campaign; Claude-doable, not gated. (3) **AI-8
+DONE (2026-07-14)** — MolmoSpaces `isaac/objects/thor` (~1 GB) downloaded + GT-mesh loader
+wired (`data/thor_assets.py`: usd-core→trimesh, `assetId`→mesh, fit-to-OBB; `--gt-mesh asset`,
+`--extra mesh`). Validated on scene 200 (46/52 real meshes, span↔OBB median ~1.00, oracle
+geo_recall@5cm 0.987). Mesh **numbers** now just need the campaign run with `--gt-mesh asset`
+against real predictions + a top-down Footprint IoU metric. **No re-run needed for already-run
+scenes:** new `eval/rescore.py` (`python -m r2s3d_core.eval.rescore <result_dir> --source
+procthor --scene 200 --gt-mesh asset --export-glb`) rebuilds predictions from the persisted
+`scene_graph.json` (posed SAM3D GLBs) and re-evaluates + re-exports the compare GLB with real
+GT meshes — reproduces the Objects column exactly (s200 icp f1 0.538 / recall 0.481 ✓) and
+adds the first detector-driven Mesh-row numbers: **s200 `object_track_icp` scene_chamfer
+0.148 m, geo_recall@5cm 0.475, micro_f1 0.387, macro_f1 0.288** (vs geom f1 0.538 — label
+errors cost the micro/macro gap). Compare GLB now shows asset GT meshes, not boxes. (4) **Coworker-comparable named metrics — Option A DONE**
+(2026-07-14): `eval/metrics.py` now emits label-aware `micro_f1`/`macro_f1`/`per_class`,
+named per-scene counts (`matched/objects/predictions_per_scene`), the coworker "average
+chamfer" (`chamfer_symmetric_mean_m` = our `chamfer_l1`/2), and a **scene-level, class-free
+geometry** block (`scene_chamfer_mean_m`, `geo_recall/geo_precision/geo_fscore@tau` — pooled
+pred vs GT surface points, no matching/labels; NaN until GT meshes land, AI-8). Headline
+`f1` stays label-agnostic and is reported alongside micro/macro (not conflated). Tests in
+`tests/test_metrics.py` (19 pass). Still **Option B** (pending, needs AI-7 confirm +
+per-detection track provenance): many-to-one F1, fragmentation, merge rate, pairwise
+P/R/F1 — the association-quality family (coworker's `compute_track_metrics`); wire from
+`ObjectTrack` detection→track ids + GT instance ids. Footprint IoU still blocked on AI-8.
+(5) **USD/Isaac-Sim scene export (follow-up, not eval-blocking).** The eval is format-
+agnostic (normalises GLB preds + USDA GT to `trimesh` surface samples), so this is a
+downstream *deliverable*, not a metric requirement. Deferred until Objects/Mesh numbers are
+locked. When done: walk `scene_graph.json` (already carries per-object pose + mesh path) →
+write one USD `Xform` per object referencing its mesh posed by `T_world_mesh`; `usd-core`
+is now in the env (`--extra mesh`), so no new dep. Lets a reconstructed Real2USD scene load
+into Isaac Sim (sim/nav demo, paper figure, robot deploy). Do NOT convert our GLB assets to
+USDA on the eval path — zero metric gain.
 
 ## Phase 2 — detail (detector-in-sim ObjectTrack)
 

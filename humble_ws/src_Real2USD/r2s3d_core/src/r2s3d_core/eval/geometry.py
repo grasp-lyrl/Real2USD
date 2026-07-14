@@ -201,15 +201,26 @@ def sample_surface(mesh, n: int = 10000, seed: int = 0) -> np.ndarray:
 
 
 def chamfer_and_fscore(pts_pred: np.ndarray, pts_gt: np.ndarray, taus=(0.05, 0.02)):
-    """Chamfer-L1 (symmetric mean NN distance) and F-score at each tau.
+    """Chamfer distance and F-score / directional point coverage at each tau.
 
-    Returns dict with ``chamfer_l1`` and ``fscore@<tau>`` keys.
+    Returns dict with:
+      * ``chamfer_l1``   -- sum of the two directional mean NN distances.
+      * ``chamfer_mean`` -- ``chamfer_l1 / 2`` = mean of the two directional means.
+        This is the "average chamfer" convention used by the coworker's
+        ``scripts/scene_graph_metrics.py:symmetric_chamfer_distance``; kept as a
+        separate key so both columns are computed under the same definition.
+      * ``fscore@<tau>``    -- harmonic mean of the directional coverages.
+      * ``precision@<tau>`` -- fraction of predicted points within tau of GT.
+      * ``recall@<tau>``    -- fraction of GT points within tau of a prediction
+        (label-/box-free geometric recall = coworker's ground-truth coverage).
     """
     from scipy.spatial import cKDTree
 
-    out = {"chamfer_l1": float("nan")}
+    out = {"chamfer_l1": float("nan"), "chamfer_mean": float("nan")}
     for tau in taus:
         out[f"fscore@{tau}"] = float("nan")
+        out[f"precision@{tau}"] = float("nan")
+        out[f"recall@{tau}"] = float("nan")
     if len(pts_pred) == 0 or len(pts_gt) == 0:
         return out
 
@@ -217,10 +228,14 @@ def chamfer_and_fscore(pts_pred: np.ndarray, pts_gt: np.ndarray, taus=(0.05, 0.0
     tg = cKDTree(pts_gt)
     d_pred_to_gt, _ = tg.query(pts_pred)   # each pred point to nearest gt
     d_gt_to_pred, _ = tp.query(pts_gt)     # each gt point to nearest pred
-    out["chamfer_l1"] = float(np.mean(d_pred_to_gt) + np.mean(d_gt_to_pred))
+    chamfer_sum = float(np.mean(d_pred_to_gt) + np.mean(d_gt_to_pred))
+    out["chamfer_l1"] = chamfer_sum
+    out["chamfer_mean"] = 0.5 * chamfer_sum
     for tau in taus:
         precision = float(np.mean(d_pred_to_gt < tau))
         recall = float(np.mean(d_gt_to_pred < tau))
         f = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        out[f"precision@{tau}"] = precision
+        out[f"recall@{tau}"] = recall
         out[f"fscore@{tau}"] = f
     return out
