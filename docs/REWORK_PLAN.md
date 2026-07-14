@@ -373,6 +373,38 @@ cross terms), then add cross-object terms — same code path, flag-gated
 6. SAM 3 may also degrade on motion-blurred robot streams — YOLOE fallback is retained
    for the robot tier, and the detector ablation quantifies the gap.
 
+### 2.10 Perception robustness — the GT-mask ceiling gap (the real crux, 2026-07-14)
+
+Everything validated on ProcTHOR so far — native-mask `sam3d_layout`, depth-extent scale-fit,
+ICP (S2C 0.12→0.31, scale 0.31→0.14) — uses **ground-truth (THOR native) instance masks**.
+That is the **perfect-perception ceiling**, not a deployable result. The crux Chris named:
+*without GT masks (real robot, or sim run honestly) you must detect + segment yourself, and
+metrics degrade.*
+
+**Why this is required, not optional:** the comparison methods in the coworker's benchmark
+(Hydra/ConceptGraphs/Khronos/…) all run their **own** perception — none get GT masks. So our
+GT-mask column is **not a fair entry**. To honestly appear in that table we must report
+**detector-driven** numbers. Fixing perception is what stands between us and a valid column.
+
+**Diagnosis — recall-dominated, not mask-quality-dominated.** Phase-2 detector-in-sim on
+Replica: YOLOE found only **35–70%** of GT objects, but masks were decent when it fired
+(median IoU 0.66–0.82). So the dominant loss is *you never see the object*, secondarily mask
+quality feeding SAM3D + the scale-fit's extent estimate.
+
+**Contribution thesis (this is the defensible novelty, not the modules).** An asset-centric,
+**multi-view-tracked** map is robust to imperfect per-frame perception: an object missed in one
+frame is detected in another, so **per-track recall (union over the trajectory) ≫ per-frame
+recall**, and best-view selection recovers mask/shape quality. That robustness — plus the
+depth-extent scale fix — is the story, and ProcTHOR is the ideal testbed because it has GT to
+*measure* the degradation while we feed it real detections.
+
+**Approach, prioritized** (details + acceptance in `PHASE_SPECS.md §Perception robustness):
+(1) measure the gap — `object_track` (YOLOE) vs the native-GT-mask ceiling on the same
+ProcTHOR scenes; (2) multi-view recall recovery — per-frame vs per-track recall (the headline);
+(3) decouple recall from vocabulary — class-agnostic segment-everything (SAM2/SAM3) → track →
+open-vocab label; (4) robustify the scale-fit extent estimator to noisy masks; (5) detector
+upgrades (SAM 3 [AI-6, gated], Grounding-DINO+SAM2, YOLOE prompt modes). Do (1)→(2) first.
+
 ---
 
 ## 3. Execution plan for Opus (phased, with acceptance criteria)

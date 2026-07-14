@@ -282,3 +282,40 @@ duplicate rate, Chamfer/F-score; the table also wants macro-F1, many-to-one F1,
 matched/objects-per-scene, class-free geo recall, footprint (2D top-down) IoU — implement
 best-guess now, **reconcile to the coworker's exact definitions** (AI-7) before publishing
 the column. Split (`train`/`val`/`test`) for those ids is also TBD (defaults to `train`).
+
+### Perception robustness — detector-driven ProcTHOR (NEXT, the crux)
+
+Strategy/why: `REWORK_PLAN.md §2.10`. All current ProcTHOR results use GT (native THOR) masks
+= perfect-perception ceiling; the benchmark methods use their own perception, so a fair column
+needs **detector-driven** numbers. Diagnosis: recall-dominated (YOLOE 35–70% on Replica).
+
+Steps (prioritized; reuse Phase-2 `detect/` + `tracks/` on the new adapter):
+
+1. **Measure the gap.** Generate YOLOE detections on ProcTHOR RGB, run `object_track`, compare
+   to the native-GT-mask `sam3d_layout_scale_icp` ceiling on 137/200/428. Commands:
+   ```
+   uv sync --extra procthor --extra dev --extra detector --extra registration --extra viz
+   uv run python -m r2s3d_core.detect.run --source procthor --scene 137 --prompt gt --diagnose
+   uv run python -m r2s3d_core.eval.run --source procthor --scene 137 200 428 \
+       --method object_track --detections results/detections/procthor --no-geometry \
+       --phase procthor --name procthor_object_track_3scene \
+       --sam3d-queue results/procthor_procthor_object_track_3scene/sam3d_queue
+   ```
+   (`object_track` needs the SAM3D worker for its new meshes — detector masks ≠ native masks →
+   new job keys; the scale_icp queue won't hit.) **Accept:** detector-driven vs GT-mask ceiling
+   table, with the degradation attributed to recall vs mask-IoU vs placement.
+2. **Multi-view recall recovery (headline).** Report **per-frame recall vs per-track recall**
+   (union of detections over the trajectory via ObjectTrack association). Expect per-track ≫
+   per-frame — the asset-centric/tracking payoff. **Accept:** the two recall curves + the count
+   of objects recovered only by multi-view.
+3. **Segment-everything → track → label.** Class-agnostic SAM2/SAM3 masks (high object recall)
+   → track → open-vocab (CLIP) label per track; decouples recall from a fixed vocabulary.
+4. **Robustify the scale-fit to noisy masks.** `_observed_obb_extent` currently trusts the mask;
+   add percentile/outlier-robust extent + measure scale-err vs mask-IoU sensitivity.
+5. **Detector upgrades:** SAM 3 (AI-6, gated), Grounding-DINO+SAM2, YOLOE prompt-mode study
+   (generic / prompt-free vs gt-vocab — still open from Phase 2).
+
+Note: `object_track` already passes a stable `job_key` (`{source}_{scene}_t{track_id}_
+{framing}`) and honours `full_frame`; it does NOT yet do the depth-extent scale-fit — add
+`scale`/`scale_icp` to the track path (reuse `_fit_scale_to_extent` against the track's fused
+cloud) so the scale win carries over to the detector-driven runs.
