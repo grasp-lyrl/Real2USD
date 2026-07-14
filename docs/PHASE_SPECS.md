@@ -327,6 +327,9 @@ Steps (prioritized; reuse Phase-2 `detect/` + `tracks/` on the new adapter):
    # then run the SAM3D worker over that queue (conda sam3d-objects), then re-run eval to collect.
    # SINGLE worker only — concurrent workers OOM the 5090 (silent per-job failures → input_failed/).
    ```
+   The collect re-run emits, by default (no `--no-glb`/`--no-placements`), the lite viz GLBs
+   (`<scene>/scene_{pred,gt,compare}_lite.glb`) and `<scene>/scene_graph.json` — both are
+   on-disk-only (gitignored, regenerable), keep them for the leading system.
    (The track path needs the SAM3D worker for its new meshes — detector masks ≠ native masks →
    new job keys, so the `sam3d_layout_scale_icp` queue won't hit. Registration mode is NOT in the
    job key, so `object_track`/`_icp`/`_scale`/`_scale_icp` share one mesh cache — collect once,
