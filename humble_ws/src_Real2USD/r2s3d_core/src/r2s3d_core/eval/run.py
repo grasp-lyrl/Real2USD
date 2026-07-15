@@ -108,6 +108,13 @@ def run(args: argparse.Namespace) -> Path:
             continue
         preds: List[SceneObject] = method_fn(src, gt, config)
         gts = [gt_to_scene_object(g) for g in gt]
+        if args.label_map == "clip":
+            from .label_map import remap_pred_labels
+            vocab = sorted({(g.label or "").strip().lower() for g in gt if g.label})
+            mapping = remap_pred_labels(preds, vocab, threshold=args.label_map_threshold)
+            changed = {k: v for k, v in mapping.items() if k != v}
+            print(f"[{scene}] CLIP label-map: snapped {len(changed)}/{len(mapping)} distinct "
+                  f"labels to the {len(vocab)}-word GT vocab")
         m = evaluate(preds, gts, iou_threshold=args.iou_threshold,
                      compute_geometry=config["compute_geometry"],
                      surface_points=args.surface_points)
@@ -208,6 +215,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--asset-root", default=None,
                    help="procthor: THOR asset dir (else $R2S3D_THOR_ASSETS or the data-root default)")
     p.add_argument("--iou-threshold", type=float, default=0.25)
+    p.add_argument("--label-map", default="none", choices=["none", "clip"],
+                   help="'clip': snap each predicted label to the closest GT-vocab word by "
+                        "CLIP text cosine before scoring (coworker fairi-sgbench protocol; "
+                        "needed for fair open-vocab / generic / pf label F1). Default 'none' "
+                        "= exact normalized-string match (our stricter diagnostic).")
+    p.add_argument("--label-map-threshold", type=float, default=None,
+                   help="with --label-map clip: cosine floor below which a label maps to "
+                        "'unknown' instead of being forced onto a class (default None = force).")
     p.add_argument("--no-geometry", action="store_true", help="skip Chamfer/F-score (faster)")
     p.add_argument("--surface-points", type=int, default=10000)
     p.add_argument("--name", default=None, help="results subdir name")

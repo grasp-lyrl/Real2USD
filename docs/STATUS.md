@@ -8,7 +8,39 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 - **Things only the human can do: `ACTION_ITEMS.md`** (Claude adds to it on every gated dependency)
 - Datasets & access: `DATASETS.md` · In-family systems & ideas to steal: `RELATED_WORK.md`
 
-_Last updated: 2026-07-14 (coworker metrics Option A + AI-8 GT-mesh loader landed: `eval/metrics.py` micro/macro F1 + class-free scene geometry; `data/thor_assets.py` reads THOR USDA→trimesh, `--gt-mesh asset` validated on scene 200; ProcTHOR scale-fit win (S2C 0.12→0.31); NEXT = perception robustness / detector-driven — the crux)._
+_Last updated: 2026-07-14 (detector-driven ProcTHOR measured on **val** s200: YOLOE prompt
+study gt/generic/pf, multi-view recall vs ceiling, real tracker recall, CLIP label-map. Split
+footgun fixed across `rescore`/`detect.run` (both gained `--split`); CLIP-nearest-in-set label
+mapping landed (`eval/label_map.py`, `--label-map clip`). NEXT = robust cloud-extent estimation
+(boxes ~3×/side too big — floors IoU/S2C) + extend to 137/428)._
+
+### Detector-driven ProcTHOR — val scene 200 (measured 2026-07-14, no SAM3D; recall/placement only)
+
+All on **val** split, 93 GT objects, 392 frames (stride 1). `--diagnose` recall is label-
+agnostic mask-IoU>0.25 vs native seg. Tracker = `object_track` (reid+late_merge), SceneObjects
+from each mature track's fused-cloud OBB.
+
+- **Detection recall (YOLOE prompt study):** best-view→multi-view — `gt` 0.355→**0.710**,
+  `generic` 0.269→0.602, `pf` 0.430→**0.710**. Mask IoU ~0.96 in all modes (mask quality is
+  NOT the problem; recall is). `pf` finds the most per-view but ties `gt` at multi-view with
+  438 junk labels → prompt vocab buys **label correctness, not recall**.
+- **Recall ceiling decomposes:** trajectory coverage **0.796** (19/93 never visible) ×
+  detector-given-visible **0.892** (gt/pf), 0.757 (generic). Once views are fused the detector
+  is barely the bottleneck — coverage is.
+- **Real tracker (gt):** one-to-one cd_recall 0.516, class-free 0.957 @1m; centroid err **13cm**.
+  τ-sweep shows the 0.96→0.52 gap is the **coarse-1m-tolerance/clutter artifact** (vanishes at
+  τ=0.1), NOT over-segmentation (only 9% of GT fragmented at 25cm). **`gt` is not over-merged/
+  over-segmented; late-merge tuning won't help it.** `pf` IS over-segmented (185 tracks, 31%
+  fragmented @25cm) → late-merge is a `pf`-only fix, and `pf` isn't our config.
+- **⚠ Geometry is floored by box inflation, not recall:** raw fused-cloud OBBs are **~20–47×
+  too big by volume (~3×/side)** while centroids are 13cm → `iou_f1` 0.11–0.18, `scan2cad`≈0.
+  This is the raw-cloud-box proxy I used (not the real SAM3D+scale-fit placement) — it VALIDATES
+  using SAM3D shape + depth-extent scale-fit, and makes **robust extent estimation the #1
+  geometry lever** (outlier-trim the cloud before OBB / lean on scale-fit).
+- **Metrics critique (data-backed):** their 1 m centroid tolerance manufactures a 0.44 recall
+  gap that is pure tolerance and lets over-segmentation inflate recall → **report tight-τ
+  (0.25m) recall + 3D-IoU + scale/Chamfer as our columns** (their suite is blind to placement/
+  extent, our differentiator). Label F1 needs CLIP-nearest-in-set (AI-7) to be fair to open-vocab.
 
 ## ⚠ AI-7 ANSWERED (2026-07-14) — current ProcTHOR numbers are NOT yet comparable
 

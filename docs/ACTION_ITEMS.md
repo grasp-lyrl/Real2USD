@@ -132,10 +132,29 @@ https://meta-scenes.github.io. See `DATASETS.md §3`.
   `cd_micro_f1_many_to_one`. (The pairwise F1 in `scene_graph_metrics.py` is a different
   Stack-B quantity.)
 
-**Still to get from coworker:** (b) done (Q4/Q8 confirmed above); (c) frame-set parity (#11)
-— deferred (Option 3: render `val` ourselves, flag "our trajectory"); optionally the literal
-`evaluate_mesh` Chamfer/footprint-IoU code (Q5) for the Mesh rows. **No hard blocker remains
-for the Objects column** — regenerate on `val` (+id 434) with greedy-XY matching.
+**Label protocol RESOLVED (confirmed with coworker, 2026-07-14):** open-set methods ARE given the
+scene's label vocabulary ("in-set"); label-aware Object F1 snaps each predicted label to the
+**CLOSEST in-set word by CLIP text cosine** — NOT exact string. So `refrigerator→fridge`,
+`tv→television`, `couch→sofa`. (Current harness forces the argmax, no cosine floor.)
+Implemented as `eval/label_map.py` (+ `--label-map clip` on `eval.run`/`eval.rescore`); kept
+out of the torch-free `metrics.py`. Impact (val s200, cached preds): `gt` micro-F1 unchanged
+0.325 (already in-set = no-op ✓); `generic` 0.152→0.203; `pf` 0.101→0.201. Our old exact-string
+scoring under-credited open-vocab/`generic`/`pf` — this is REQUIRED for a comparable label F1.
+
+**Still to get from coworker (reconciliation, non-blocking — needed only to *bit-match* his
+label F1):**
+- (r1) **Exact CLIP model + prompt template.** We used `ViT-B/32`, `"a photo of a {}"`. Which
+  model (ViT-B/32? L/14? open_clip variant?) and template does the harness use? Different
+  choices shift which synonyms snap.
+- (r2) **Cosine threshold / fallback?** Does he force the argmax (our default) or drop below a
+  floor to `unknown`/background? (A cosine threshold is the natural refinement — matters for
+  `pf`'s forced-garbage maps like `aircraft model→book`.)
+- (r3) **In-set = per-scene GT vocab or a fixed global benchmark vocab?** We snap to the
+  scene's GT categories; confirm the target set.
+Plus prior: (c) frame-set parity (#11) — deferred (render `val` ourselves, flag "our
+trajectory"); optionally the literal `evaluate_mesh` Chamfer/footprint-IoU code (Q5) for Mesh
+rows. **No hard blocker remains for the Objects column** — regenerate on `val` (+id 434),
+greedy-XY matching, `--label-map clip`.
 
 ### [x] AI-8 — MolmoSpaces / THOR per-object GT meshes for the Mesh rows  *(DONE 2026-07-14)*
 **RESOLVED:** downloaded `isaac/objects/thor` (~1 GB, all 9 houses are iThor assets) and

@@ -84,11 +84,37 @@ def load_scene_graph_preds(scene_graph_path, queue_root=None) -> List[SceneObjec
     return preds
 
 
+def _runtime_n_gt(result_dir: Path, scene: str) -> Optional[int]:
+    """The ``n_gt`` the ORIGINAL run scored against, if recorded, for a split sanity check.
+
+    Looks in per-scene metrics first, then the aggregate. Returns None if unavailable.
+    """
+    run_json = result_dir / "run.json"
+    if not run_json.exists():
+        return None
+    try:
+        metrics = json.loads(run_json.read_text()).get("metrics", {})
+    except Exception:
+        return None
+    per_scene = (metrics.get("per_scene") or {}).get(str(scene), {})
+    n = per_scene.get("n_gt") or metrics.get("aggregate", {}).get("n_gt")
+    return int(n) if n is not None else None
+
+
 def rescore_scene(result_dir, source: str, scene: str, *, gt_mesh: str = "asset",
                   asset_root=None, iou_threshold: float = 0.25, compute_geometry: bool = True,
                   surface_points: int = 10000, export_glb: bool = False,
-                  data_root=None, stride: int = 20) -> dict:
-    """Re-evaluate one scene's persisted predictions against freshly-built GT."""
+                  data_root=None, stride: int = 20, split: Optional[str] = None,
+                  label_map: str = "none", label_map_threshold: Optional[float] = None) -> dict:
+    """Re-evaluate one scene's persisted predictions against freshly-built GT.
+
+    ``split`` selects the dataset split for GT rebuild. It MUST match the split the run
+    was generated on -- e.g. for procthor a given scene id is a DIFFERENT house on train
+    vs val, so a mismatch silently scores predictions against the wrong scene (all metrics
+    collapse to ~0). None defers to the source default (procthor: val); pass explicitly for
+    older train-split runs. A loud warning fires if the rebuilt GT count disagrees with the
+    count the original run recorded in run.json.
+    """
     result_dir = Path(result_dir)
     sg = result_dir / str(scene) / "scene_graph.json"
     if not sg.exists():
@@ -98,9 +124,26 @@ def rescore_scene(result_dir, source: str, scene: str, *, gt_mesh: str = "asset"
     src_kwargs = {"gt_mesh": gt_mesh}
     if asset_root is not None:
         src_kwargs["asset_root"] = asset_root
+    if split is not None:
+        src_kwargs["split"] = split
     src = make_source(source, scene, root=data_root, stride=stride, **src_kwargs)
     gt = src.gt() or []
     gts = [gt_to_scene_object(g) for g in gt]
+
+    if label_map == "clip":
+        from .label_map import remap_pred_labels
+        vocab = sorted({(g.label or "").strip().lower() for g in gt if g.label})
+        mapping = remap_pred_labels(preds, vocab, threshold=label_map_threshold)
+        changed = {k: v for k, v in mapping.items() if k != v}
+        print(f"  CLIP label-map: snapped {len(changed)}/{len(mapping)} distinct labels "
+              f"to the {len(vocab)}-word GT vocab")
+
+    expected = _runtime_n_gt(result_dir, scene)
+    if expected is not None and expected != len(gts):
+        print(f"  WARNING: rebuilt GT has {len(gts)} objects but the run scored against "
+              f"{expected} (run.json). The --split ({split or 'source default'}) likely does "
+              f"NOT match the run's split -- metrics will be meaningless. For procthor a scene "
+              f"id is a different house per split.")
 
     m = evaluate(preds, gts, iou_threshold=iou_threshold,
                  compute_geometry=compute_geometry, surface_points=surface_points)
@@ -127,8 +170,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="GT mesh policy for the rebuilt GT (default 'asset' = real meshes)")
     p.add_argument("--asset-root", default=None)
     p.add_argument("--data-root", default=None)
+    p.add_argument("--split", default=None,
+                   help="dataset split for GT rebuild; MUST match the run's split (procthor: "
+                        "a scene id is a different house per split). Default = source default "
+                        "(procthor: val). Use --split train for pre-val-switch runs.")
     p.add_argument("--stride", type=int, default=20)
     p.add_argument("--iou-threshold", type=float, default=0.25)
+    p.add_argument("--label-map", default="none", choices=["none", "clip"],
+                   help="'clip': snap predicted labels to the closest GT-vocab word by CLIP "
+                        "text cosine before scoring (coworker fairi-sgbench protocol).")
+    p.add_argument("--label-map-threshold", type=float, default=None,
+                   help="with --label-map clip: cosine floor below which a label maps to "
+                        "'unknown' instead of being forced (default None = force).")
     p.add_argument("--no-geometry", action="store_true")
     p.add_argument("--surface-points", type=int, default=10000)
     p.add_argument("--export-glb", action="store_true",
@@ -146,7 +199,9 @@ def main(argv=None):
             args.result_dir, args.source, scene, gt_mesh=args.gt_mesh,
             asset_root=args.asset_root, iou_threshold=args.iou_threshold,
             compute_geometry=not args.no_geometry, surface_points=args.surface_points,
-            export_glb=args.export_glb, data_root=args.data_root, stride=args.stride)
+            export_glb=args.export_glb, data_root=args.data_root, stride=args.stride,
+            split=args.split, label_map=args.label_map,
+            label_map_threshold=args.label_map_threshold)
         per_scene[scene] = m
         print(f"[{scene}] cd_micro_f1={m['cd_micro_f1']:.3f} cd_macro_f1={m['cd_macro_f1']:.3f} "
               f"cd_f1@1m={m['cd_f1']:.3f} class_free_recall_1m={m['class_free_recall_1m']:.3f} "

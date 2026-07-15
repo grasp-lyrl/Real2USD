@@ -30,16 +30,34 @@ def _gt_vocab(gt) -> list:
     return sorted({(g.label or "").strip().lower() for g in gt if g.label})
 
 
-def _diagnose(source, ds, iou_thr: float = 0.25) -> dict:
-    """GT-object detection recall + median mask IoU, using each GT's best (largest,
-    non-border) view. Reuses the sam3d_layout mask renderer / view selector."""
-    from ..baselines.sam3d_layout import render_instance_mask, select_best_view
+# A GT object counts as "visible" in a frame only if its native mask covers at least this
+# fraction of the image -- a slice of a few border pixels is not a view a detector could be
+# expected to fire on, and counting it would deflate detector recall. ~0.1% of a 640x480 image
+# is ~300 px (roughly a 17x17 blob).
+_MIN_VIS_AREA_FRAC = 0.001
+
+
+def _diagnose(source, ds, iou_thr: float = 0.25, min_vis_area: float = _MIN_VIS_AREA_FRAC) -> dict:
+    """GT-object detection recall + median mask IoU.
+
+    Reports TWO recalls (see docs -- perception robustness crux):
+      * ``best_view_recall`` -- object found in its single best (largest, non-border) view.
+        A conservative per-view floor (the old ``detection_recall``, kept under that alias).
+      * ``multi_view_recall`` -- object found in ANY frame where it is visible (>= ``min_vis_area``
+        of the image). This is the honest ceiling for a multi-view tracker, which fuses
+        detections across the whole trajectory rather than trusting one view.
+    Decomposed against trajectory coverage so detector recall is not blamed for objects the
+    camera never actually sees:
+      * ``trajectory_coverage`` -- fraction of GT visible in >= 1 qualifying frame.
+      * ``multi_view_recall_given_visible`` -- hits / visible (pure detector recall among the
+        objects the trajectory reaches; ``multi_view_recall = coverage * this``).
+    """
+    from ..baselines.sam3d_layout import _view_score, render_instance_mask, select_best_view
     from ..tracks.fusion import mask_iou
 
     gt = source.gt()
     frames = list(source)
     by_frame = ds.by_frame()
-    fidx = {int(f.frame_id): i for i, f in enumerate(frames)}
     # GT mask source must match what the ceiling pipeline uses: prefer the dataset's TRUE
     # instance masks (occlusion-aware, RGB-aligned, e.g. ProcTHOR native seg) over a
     # mesh-projected silhouette. On ProcTHOR the GT meshes are coarse/offset from the
@@ -50,7 +68,9 @@ def _diagnose(source, ds, iou_thr: float = 0.25) -> dict:
         gt_mask_fn = lambda g, fr: source.native_mask(fr.frame_id, g.instance_id)
     else:
         gt_mask_fn = lambda g, fr: render_instance_mask(g.mesh, fr)
-    hits, ious, frag = 0, [], []
+
+    # ---- best-view recall (single largest non-border view) ----
+    bv_hits, bv_ious, bv_frag = 0, [], []
     for g in gt:
         vi = select_best_view(g, frames, gt_mask_fn)
         if vi is None:
@@ -67,15 +87,45 @@ def _diagnose(source, ds, iou_thr: float = 0.25) -> dict:
             if iou > iou_thr:
                 n_overlap += 1
         if best > iou_thr:
-            hits += 1
-            ious.append(best)
-            frag.append(n_overlap)
+            bv_hits += 1
+            bv_ious.append(best)
+            bv_frag.append(n_overlap)
+
+    # ---- multi-view recall (found in ANY qualifying frame) ----
+    mv_hits, n_visible, mv_ious = 0, 0, []
+    for g in gt:
+        visible = False
+        best_over_traj = 0.0
+        for fr in frames:
+            gm = gt_mask_fn(g, fr)
+            if gm is None:
+                continue
+            area, _border = _view_score(gm)
+            if area < min_vis_area:
+                continue
+            visible = True
+            gmb = gm > 0
+            for det in by_frame.get(int(fr.frame_id), []):
+                best_over_traj = max(best_over_traj, mask_iou(gmb, det.mask))
+        if visible:
+            n_visible += 1
+            if best_over_traj > iou_thr:
+                mv_hits += 1
+                mv_ious.append(best_over_traj)
+
     n = len(gt)
     return {
         "gt_objects": n,
-        "detection_recall": hits / n if n else float("nan"),
-        "median_best_mask_iou": float(np.median(ious)) if ious else float("nan"),
-        "mean_detections_per_found_gt": float(np.mean(frag)) if frag else float("nan"),
+        # multi-view (the ceiling that bounds the tracker) + its coverage decomposition
+        "multi_view_recall": mv_hits / n if n else float("nan"),
+        "trajectory_coverage": n_visible / n if n else float("nan"),
+        "multi_view_recall_given_visible": mv_hits / n_visible if n_visible else float("nan"),
+        "median_multi_view_mask_iou": float(np.median(mv_ious)) if mv_ious else float("nan"),
+        # best-view (conservative per-view floor); detection_recall kept as a back-compat alias
+        "best_view_recall": bv_hits / n if n else float("nan"),
+        "detection_recall": bv_hits / n if n else float("nan"),
+        "median_best_mask_iou": float(np.median(bv_ious)) if bv_ious else float("nan"),
+        "mean_detections_per_found_gt": float(np.mean(bv_frag)) if bv_frag else float("nan"),
     }
 
 
@@ -85,6 +135,9 @@ def main(argv=None):
     p.add_argument("--source", default="replica")
     p.add_argument("--scene", nargs="+", required=True)
     p.add_argument("--data-root", default=None)
+    p.add_argument("--split", default=None,
+                   help="dataset split (procthor: a scene id is a DIFFERENT house per split; "
+                        "default = source default = val). Pass --split train for legacy runs.")
     p.add_argument("--stride", type=int, default=20)
     p.add_argument("--prompt", choices=["gt", "generic", "pf"], default="gt")
     p.add_argument("--out", default=str(DEFAULT_OUT))
@@ -99,8 +152,11 @@ def main(argv=None):
     from .yoloe import run_detector  # lazy: needs the detector extra
 
     out = Path(args.out) / args.prompt
+    src_kwargs = {"stride": args.stride}
+    if args.split is not None:
+        src_kwargs["split"] = args.split
     for scene in args.scene:
-        src = make_source(args.source, scene, root=args.data_root, stride=args.stride)
+        src = make_source(args.source, scene, root=args.data_root, **src_kwargs)
         vocab = _gt_vocab(src.gt()) if args.prompt == "gt" else None
         if args.prompt == "gt" and not vocab:
             print(f"[{scene}] no GT vocabulary available; skipping"); continue
