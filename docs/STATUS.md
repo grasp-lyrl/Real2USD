@@ -50,6 +50,17 @@ from each mature track's fused-cloud OBB.
   `place_canonical_by_linmap`), validated by native-mask silhouette IoU (0.497→0.528 mean; kettle
   0.21→0.77) and structurally upright. Moves scene chamfer only (0.104→0.0998; OBB metrics
   axis-invariant, unchanged). GT cache bumped to v2 (stores rotation).
+- **Registration/scale-source ablation (val s200, same tracks+meshes, iou_f1 / chamfer / scale_err):**
+  `icp` (no scale-fit) **0.545 / 0.104 / 0.269** = current best on iou; `scale_icp` w/ raw fused
+  cloud **0.158 / 0.315 / 0.692** (cratered — detector-mask cloud contaminated, OBB ~3× too big);
+  **Method A** `scale_source=fused_robust` (SOR + largest-DBSCAN-cluster) **0.376 / 0.132 / 0.513**;
+  **Method B** `scale_source=reproj` (clean 2D mask span + median depth, SAM3D aspect for the
+  along-ray axis) **0.509 / 0.093 / 0.320** — best chamfer of ANY variant, ~ties icp on iou/centroid.
+  So scale-fit no longer HURTS: read scale off the mask, not the cloud. On sim val SAM3D's native
+  scale is already decent (icp scale_err 0.27) so reproj can't beat icp on iou here; the payoff is
+  real-robot data (SAM3D scale ~3× off). `scale_icp` also now iterates scale↔ICP to convergence
+  (`--scale-icp-iters`, default 5; improves pose: rot 1.9°→1.2°). NEXT (B2): 3rd axis from a second
+  orthogonal view instead of SAM3D aspect. Knobs: `--scale-source {fused,fused_robust,reproj}`.
 - **Metrics critique (data-backed):** their 1 m centroid tolerance manufactures a 0.44 recall
   gap that is pure tolerance and lets over-segmentation inflate recall → **report tight-τ
   (0.25m) recall + 3D-IoU + scale/Chamfer as our columns** (their suite is blind to placement/

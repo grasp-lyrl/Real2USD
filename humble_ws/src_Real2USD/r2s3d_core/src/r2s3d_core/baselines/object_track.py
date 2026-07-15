@@ -175,27 +175,71 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
             if len(target) < 30:
                 prov["registration"] = "layout(too_few_fused_points)"
             else:
+                # scale target extent: how we measure the object's metric size for scale-fit.
+                #   fused        -> OBB of the raw fused multi-view cloud (legacy; contaminated
+                #                   by detector-mask edge bleed -> ~3x oversized)
+                #   fused_robust -> same but outlier-rejected first (Method A)
+                #   reproj       -> from the clean 2D mask + median depth (Method B)
+                tgt_ext = None
                 if do_scale:
-                    # Set metric scale from the fused-cloud OBB extent (the observed metric
-                    # size); rigid ICP (if any) then fixes pose only. This is the scale lever
-                    # ICP lacks — see sam3d_layout._fit_scale_to_extent.
-                    tgt_ext = s3d._observed_obb_extent(target)
-                    if tgt_ext is not None:
-                        M, sinfo = s3d._fit_scale_to_extent(posed, tgt_ext)
-                        posed.apply_transform(M)
-                        post = M @ post
-                        prov["scale_fit"] = sinfo
+                    _ss = config.get("scale_source", "fused")
+                    if _ss == "reproj":
+                        tgt_ext = s3d._reproj_target_extent(posed, obs.mask, frame.depth, frame.K)
+                    elif _ss == "fused_robust":
+                        tgt_ext = s3d._robust_obb_extent(target)
                     else:
+                        tgt_ext = s3d._observed_obb_extent(target)
+                    prov["scale_source"] = _ss
+
+                def _scale_step():
+                    # Match mesh OBB extents to the (fixed) depth-derived target extent; the
+                    # scale lever rigid ICP lacks (see sam3d_layout._fit_scale_to_extent).
+                    # Returns (max |scale-1|, transform) so callers can measure convergence.
+                    if tgt_ext is None:
                         prov["scale_fit"] = {"skipped": "degenerate_target"}
-                if do_icp:
+                        return 0.0, np.eye(4)
+                    M, sinfo = s3d._fit_scale_to_extent(posed, tgt_ext)
+                    posed.apply_transform(M)
+                    prov["scale_fit"] = sinfo
+                    return float(np.max(np.abs(np.asarray(sinfo["scales"]) - 1.0))), M
+
+                def _icp_step():
                     # rigid: recovers pose only (cannot rescale).
                     src_pts = (geo.sample_surface(posed, 2000, seed=t.track_id)
                                if len(posed.faces) else np.asarray(posed.vertices))
                     delta, info = s3d.refine_icp(src_pts, target, np.eye(4))
                     posed.apply_transform(delta)
-                    post = delta @ post
                     prov["icp"] = info
-                prov["registration"] = "layout+" + registration
+                    dt = float(np.linalg.norm(delta[:3, 3]))
+                    dR = float(np.degrees(np.arccos(np.clip((np.trace(delta[:3, :3]) - 1) / 2, -1, 1))))
+                    return dt, dR, delta
+
+                if registration == "scale_icp":
+                    # Scale-fit and ICP are COUPLED: ICP re-orients the mesh, changing which
+                    # mesh axis rank-matches which target axis, so re-fitting scale after ICP
+                    # can improve the per-axis scale (and vice-versa). Alternate to convergence
+                    # rather than one pass of each. Most objects converge in 1-2 iters; badly
+                    # mis-oriented ones benefit from more.
+                    max_iters = int(config.get("scale_icp_iters", 5))
+                    n_it = 0
+                    for _ in range(max_iters):
+                        n_it += 1
+                        sc, M = _scale_step()
+                        dt, dR, delta = _icp_step()
+                        post = delta @ (M @ post)
+                        # converged: scale within 2%, ICP delta < 5mm and < 1 deg
+                        if sc <= 0.02 and dt <= 0.005 and dR <= 1.0:
+                            break
+                    prov["scale_icp_iters"] = n_it
+                    prov["registration"] = f"layout+scale_icp_x{n_it}"
+                else:
+                    if do_scale:
+                        _ds, M = _scale_step()
+                        post = M @ post
+                    if do_icp:
+                        _dt, _dR, delta = _icp_step()
+                        post = delta @ post
+                    prov["registration"] = "layout+" + registration
                 # One OBB from sampled points after all transforms -> pose + extents.
                 # scale/ICP deltas may carry scale, so re-derive rather than compose.
                 T_world_obj, extents = s3d._fast_obb(posed, seed=t.track_id)

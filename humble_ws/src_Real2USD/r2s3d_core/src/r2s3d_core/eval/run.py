@@ -73,6 +73,8 @@ def run(args: argparse.Namespace) -> Path:
         "v1_dedup": args.v1_dedup,
         "icp": args.icp,
         "registration": args.registration,
+        "scale_source": args.scale_source,
+        "scale_icp_iters": args.scale_icp_iters,
         "debug_html": args.debug_html,
         "corrupt": {"dropout": args.det_dropout, "jitter_px": args.det_jitter,
                     "track_break": args.det_track_break, "split": args.det_split_prob},
@@ -275,6 +277,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="object_track: registration mode against the track's fused cloud. "
                         "'scale'/'scale_icp' add the depth-extent scale-fit (the lever rigid "
                         "ICP lacks); overrides --icp when set.")
+    p.add_argument("--scale-source", default="fused",
+                   choices=["fused", "fused_robust", "reproj"],
+                   help="how scale-fit measures the object's metric size: 'fused' = raw "
+                        "fused-cloud OBB (contaminated on detector masks); 'fused_robust' = "
+                        "outlier-rejected cloud (Method A); 'reproj' = clean 2D mask + median "
+                        "depth, SAM3D aspect for the 3rd axis (Method B).")
+    p.add_argument("--scale-icp-iters", type=int, default=5,
+                   help="scale_icp: max scale<->ICP alternations (converges early per object).")
     p.add_argument("--det-dropout", type=float, default=0.0, help="corruption: drop-detection prob")
     p.add_argument("--det-jitter", type=int, default=0, help="corruption: bbox/mask jitter px")
     p.add_argument("--det-track-break", type=float, default=0.0, help="corruption: id-break prob")

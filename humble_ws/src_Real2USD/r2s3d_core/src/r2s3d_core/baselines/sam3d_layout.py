@@ -292,6 +292,71 @@ def _observed_obb_extent(target_pts: np.ndarray):
     return np.sort(e)[::-1]
 
 
+def _robust_obb_extent(target_pts: np.ndarray, nb_neighbors: int = 20, std_ratio: float = 2.0,
+                       eps: float = 0.10, min_points: int = 10):
+    """Sorted (desc) OBB extents after OUTLIER REJECTION -- Method A for detector masks.
+
+    A detector-mask fused cloud carries edge-bleed / mis-fused points that sit off the object
+    and inflate the raw OBB ~3x. They are few vs the bulk, so statistical outlier removal
+    (drop points whose kNN distance is > mean + ``std_ratio``*std) + keep-largest-DBSCAN-cluster
+    recovers the object body. Falls back to the raw extent if cleaning collapses the cloud.
+    """
+    import open3d as o3d
+    pts = np.asarray(target_pts, dtype=np.float64)
+    if len(pts) < 30:
+        return None
+    q = pts
+    try:
+        pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
+        pc, _ = pc.remove_statistical_outlier(nb_neighbors=nb_neighbors, std_ratio=std_ratio)
+        cand = np.asarray(pc.points)
+        if len(cand) >= 30:
+            labels = np.asarray(pc.cluster_dbscan(eps=eps, min_points=min_points))
+            good = labels[labels >= 0]
+            if len(good):
+                best = np.bincount(good).argmax()
+                keep = labels == best
+                cand = cand[keep]
+            if len(cand) >= max(30, int(0.15 * len(pts))):
+                q = cand
+    except Exception:
+        q = pts
+    return _observed_obb_extent(q)
+
+
+def _reproj_target_extent(mesh_posed: trimesh.Trimesh, mask, depth, K):
+    """Target OBB extent (sorted desc) from a CLEAN 2D mask + robust median depth -- Method B.
+
+    The detection mask is high-quality (IoU ~0.96) where the 3D cloud is contaminated, so read
+    the frontal metric size off the mask instead of the cloud: PCA the mask pixels -> two
+    principal pixel spans, convert to metric via ``span * median_depth / focal`` (median depth is
+    robust to the edge pixels that wreck the cloud OBB). The along-ray 3rd axis is unobserved
+    by one view, so keep SAM3D's shape aspect: scale the mesh's smallest OBB extent by the mean
+    of the two in-plane fit ratios. None if the mask/depth is degenerate.
+    """
+    m = np.asarray(mask, bool)
+    if m.sum() < 30:
+        return None
+    dz = np.asarray(depth)[m]
+    dz = dz[np.isfinite(dz) & (dz > 0)]
+    if len(dz) < 20:
+        return None
+    depth_med = float(np.median(dz))
+    ys, xs = np.where(m)
+    P = np.stack([xs, ys], axis=1).astype(np.float64)
+    P -= P.mean(0)
+    _, _, Vt = np.linalg.svd(P, full_matrices=False)
+    proj = P @ Vt.T
+    span_px = proj.max(0) - proj.min(0)                     # pixel spans along mask principal axes
+    f = 0.5 * (float(K[0, 0]) + float(K[1, 1]))
+    E = np.sort(span_px * depth_med / f)[::-1]              # 2 in-plane metric extents, desc
+    _, mesh_ext = _fast_obb(mesh_posed)
+    m_sorted = np.sort(mesh_ext)[::-1]
+    s = 0.5 * (E[0] / max(m_sorted[0], 1e-6) + E[1] / max(m_sorted[1], 1e-6))  # in-plane fit ratio
+    third = float(m_sorted[2]) * s                          # 3rd axis keeps SAM3D aspect
+    return np.sort([float(E[0]), float(E[1]), third])[::-1]
+
+
 def _fast_obb(mesh: trimesh.Trimesh, n: int = 3000, seed: int = 0):
     """(transform, extents) of the mesh OBB from sampled surface points — much faster than
     ``mesh.bounding_box_oriented`` on SAM3D meshes (up to ~1M faces; the OBB is called
