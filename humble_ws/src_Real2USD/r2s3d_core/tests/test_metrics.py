@@ -230,6 +230,28 @@ def test_centroid_matching_metrics():
     assert m["centroid_recall_by_tau"]["1.0"] == pytest.approx(1.0)
 
 
+def test_many_to_one_exceeds_micro_on_oversegmentation():
+    # one GT chair, two predicted chairs near it: greedy micro caps at one match, but the
+    # any-overlap many-to-one metric credits both -> many_to_one_f1 > micro_f1.
+    gts = [M.SceneObject("chair", _pose([0, 0, 0]), np.array([1.0, 1, 1]))]
+    preds = [M.SceneObject("chair", _pose([0.1, 0, 0]), np.array([1.0, 1, 1])),
+             M.SceneObject("chair", _pose([0.2, 0, 0]), np.array([1.0, 1, 1]))]
+    m = M.evaluate(preds, gts, compute_geometry=False)
+    assert m["cd_micro_f1"] == pytest.approx(2 / 3)          # tp=1, prec=1/2, rec=1
+    assert m["cd_micro_f1_many_to_one"] == pytest.approx(1.0)  # both preds credited
+    assert m["cd_micro_f1_many_to_one"] > m["cd_micro_f1"]
+
+
+def test_centroid_matching_is_2d_topdown():
+    # pred stacked 2 m directly ABOVE the GT (same X,Y): 3D distance 2 m would miss, but the
+    # 2D top-down distance is 0 -> matched.
+    gts = [M.SceneObject("book", _pose([0, 0, 0]), np.array([0.3, 0.3, 0.1]))]
+    preds = [M.SceneObject("book", _pose([0, 0, 2.0]), np.array([0.3, 0.3, 0.1]))]
+    m = M.evaluate(preds, gts, compute_geometry=False)
+    assert m["cd_recall"] == pytest.approx(1.0)
+    assert m["class_free_recall_1m"] == pytest.approx(1.0)
+
+
 def test_centroid_matching_far_objects_unmatched():
     # a prediction 3 m from the only GT: outside every tau up to 1.5 -> no match
     gts = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]))]

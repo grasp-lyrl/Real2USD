@@ -112,10 +112,30 @@ https://meta-scenes.github.io. See `DATASETS.md §3`.
     body frame, Z-up world → OpenCV c2w via `R_BODY_OPTICAL=[[0,0,1],[-1,0,0],[0,-1,0]]`.
     For frame-set parity we'd consume THEIR trajectory, not our AI2-THOR-rendered one.
 
-**Still to get from coworker:** (a) the **DAAAM lexicon / GT vocab filter** (#4 — needed);
-(b) verify on `ec2-ma` source: Q4 macro averaging set (GT vs GT∪pred) and Q8 exact
-many-to-one definition in `evaluate_objects`; (c) whether they want frame-set parity (#11)
-or accept our renderer (flag as "our trajectory").
+**CONFIRMED VS SOURCE (2026-07-14, harness.py + objects.py) — supersedes #2/#3/#8 above:**
+- **Q2 matching = GREEDY on 2D top-down (X,Y) centroid distance ≤ τ (default 1.0 m).** NOT
+  Hungarian, NOT 3D, NOT IoU (`use_hungarian=False`; `_xy_distance` uses X,Y only). Our
+  `cd_*` now uses greedy-XY (`eval/metrics.py:greedy_match_centroid`).
+- **Q3 = NO GT FILTERING, no size floor** — `_load_gt_objects` takes the entire objects map
+  (doors/windows included; category defaults `UNLABELLED`). **This REMOVES the DAAAM-lexicon
+  blocker — we do NOT need it to produce comparable numbers.** (Asymmetry baked into their
+  harness: predictions drop STRUCTURAL, GT doesn't; unlocalizable GT (position=None) are FNs
+  in micro but excluded from class-free recall.) NB our `procthor._THOR_EXCLUDE_TYPES` drops
+  floor/wall/window/door/room from GT — diverges from their "count all"; decide whether to
+  stop excluding for parity.
+- **Q4 macro set = GT ∪ predicted** ✓ (unweighted mean per-category F1; hallucinated/missed
+  categories score 0). Caveat: they bucket on **raw case-sensitive** category strings; we
+  normalise case (harmless if our two sides agree on casing).
+- **Q8 many-to-one F1 = any-/dominant-overlap association accuracy** (GT with ≥1 valid same-
+  category detection within τ; detection with ≥1 valid same-category GT), label-aware, NOT
+  exact-pair. Object-level, needs NO track provenance → implemented now as
+  `cd_micro_f1_many_to_one`. (The pairwise F1 in `scene_graph_metrics.py` is a different
+  Stack-B quantity.)
+
+**Still to get from coworker:** (b) done (Q4/Q8 confirmed above); (c) frame-set parity (#11)
+— deferred (Option 3: render `val` ourselves, flag "our trajectory"); optionally the literal
+`evaluate_mesh` Chamfer/footprint-IoU code (Q5) for the Mesh rows. **No hard blocker remains
+for the Objects column** — regenerate on `val` (+id 434) with greedy-XY matching.
 
 ### [x] AI-8 — MolmoSpaces / THOR per-object GT meshes for the Mesh rows  *(DONE 2026-07-14)*
 **RESOLVED:** downloaded `isaac/objects/thor` (~1 GB, all 9 houses are iThor assets) and

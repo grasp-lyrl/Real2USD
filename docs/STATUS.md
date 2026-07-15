@@ -19,9 +19,16 @@ every ProcTHOR number produced so far:** (1) their split is **`val`**, ours defa
 IoU@0.25 — a different matched set. Also: object F1 is **label-aware**; **Class-Free Geo
 Recall = 1 m object-centroid** (our `geo_recall@tau` is a *different* surface metric,
 mislabeled); GT must be **filtered to the shared ProcTHOR/DAAAM vocab** (≈74.7 obj/scene);
-**10th id = 434** (we were missing it). Chamfer convention already matches (✓). Reconciliation
-plan pending Chris's steer on matching (add centroid vs replace IoU) + trajectory parity.
-The code/pipeline is fine; the **numbers** need regenerating on val + centroid matching.
+**10th id = 434** (we were missing it). Chamfer convention already matches (✓).
+
+**Confirmed vs source + implemented (2026-07-14):** matching = **greedy 2D top-down (X,Y)
+centroid ≤ 1 m** (NOT Hungarian/3D/IoU) — `eval/metrics.py` `cd_*` now greedy-XY, plus
+`cd_micro_f1_many_to_one` (their over-seg-tolerant any-overlap F1) and XY `class_free_recall_1m`.
+**Q3: the published harness does NO GT filtering → the DAAAM-lexicon blocker is REMOVED; no
+hard blocker remains for the Objects column.** Remaining: regenerate on **val** (+ id 434)
+with greedy-XY, decide whether to drop our `_THOR_EXCLUDE_TYPES` (they count doors/windows),
+and trajectory parity is deferred (render val ourselves). The code/pipeline is fine; the
+**numbers** just need the val re-run.
 
 ## ▶ NEXT SESSION — perception robustness (detector-driven ProcTHOR)
 

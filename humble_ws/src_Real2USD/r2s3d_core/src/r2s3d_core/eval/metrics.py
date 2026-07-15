@@ -14,15 +14,17 @@ Metric summary (see docs/PHASE_SPECS.md Phase 0):
 Two matching protocols are reported side by side (docs/ACTION_ITEMS.md AI-7):
   * OUR protocol (headline ``f1``/``precision``/``recall`` + ``iou``/``micro``/``macro``):
     Hungarian on 3D OBB IoU >= threshold. Stricter; NOT what the coworker's table uses.
-  * COWORKER-COMPARABLE (``cd_*``): Hungarian on Euclidean CENTROID distance <= tau
-    (default 1 m, swept over ``centroid_f1_by_tau``/``centroid_recall_by_tau``). This is
-    the coworker's object-matching rule. ``cd_f1``/``cd_precision``/``cd_recall`` are
-    label-agnostic; ``cd_micro_f1``/``cd_macro_f1`` are label-aware (their Object Micro/
-    Macro F1). ``cd_per_class`` breaks it down.
+  * COWORKER-COMPARABLE (``cd_*``): GREEDY match on 2D top-down (X,Y) CENTROID distance
+    <= tau (default 1 m, swept over ``centroid_f1_by_tau``/``centroid_recall_by_tau``) --
+    confirmed vs their ``harness.py`` defaults (greedy, not Hungarian; 2D, not 3D; centroid,
+    not IoU). ``cd_f1``/``cd_precision``/``cd_recall`` label-agnostic; ``cd_micro_f1``/
+    ``cd_macro_f1``/``cd_per_class`` label-aware (their Object Micro/Macro F1).
+    ``cd_micro_f1_many_to_one`` = their over-segmentation-tolerant any-overlap object F1
+    (``micro_f1 - many_to_one`` = the over-segmentation penalty).
 
 Other coworker-comparable pieces:
   * class_free_recall_1m: their Class-Free Geo Recall = fraction of GT with ANY predicted
-    centroid within 1 m (label ignored, NOT one-to-one).
+    centroid within 1 m in X,Y (label ignored, NOT one-to-one).
   * scene_chamfer_mean_m: SCENE-LEVEL pooled symmetric Chamfer (their convention, confirmed).
   * surf_recall/surf_precision/surf_fscore@tau: SURFACE-reconstruction point coverage
     (Tanks-and-Temples heritage) -- a DIFFERENT metric from class_free_recall_1m; needs
@@ -201,50 +203,59 @@ def _label_aware_metrics(preds: List[SceneObject], gts: List[SceneObject],
     return out
 
 
-def hungarian_match_centroid(dist: np.ndarray, tau: float, require_label: bool = False,
-                             labels_pred=None, labels_gt=None):
-    """One-to-one min-cost assignment on centroid distance; keep pairs with dist <= tau.
+def greedy_match_centroid(dist: np.ndarray, tau: float, require_label: bool = False,
+                          labels_pred=None, labels_gt=None):
+    """GREEDY one-to-one matching on 2D-XY centroid distance; keep pairs with dist <= tau.
 
-    This is the coworker's object-matching rule (Hungarian on Euclidean centroid distance,
-    NOT OBB IoU -- see AI-7). Returns ``[(pred_idx, gt_idx, dist), ...]``.
+    Matches the coworker's shipped default (``harness.py`` -> ``ObjectMatchThresholds()``:
+    ``use_hungarian=False``, 2D top-down centroid, ``default_distance_m=1.0``). Candidate
+    pairs are taken in ascending distance and assigned first-come, each pred/gt used once.
+    ``dist`` must already be the XY (top-down) distance matrix. Returns
+    ``[(pred_idx, gt_idx, dist), ...]``.
     """
-    if dist.size == 0:
-        return []
-    cost = dist.copy()
-    big = float(dist.max()) + tau + 1.0  # forbid cross-label pairs without gating them in
-    if require_label and labels_pred is not None and labels_gt is not None:
-        for i, lp in enumerate(labels_pred):
-            for j, lg in enumerate(labels_gt):
-                if lp != lg:
-                    cost[i, j] = big
-    rows, cols = linear_sum_assignment(cost)
-    matches = []
-    for r, c in zip(rows, cols):
-        if dist[r, c] <= tau and (not require_label or cost[r, c] < big):
-            matches.append((int(r), int(c), float(dist[r, c])))
+    n_pred, n_gt = dist.shape
+    cand = []
+    for i in range(n_pred):
+        for j in range(n_gt):
+            if dist[i, j] <= tau and (not require_label or labels_pred[i] == labels_gt[j]):
+                cand.append((float(dist[i, j]), i, j))
+    cand.sort()
+    used_p, used_g, matches = set(), set(), []
+    for d, i, j in cand:
+        if i in used_p or j in used_g:
+            continue
+        used_p.add(i); used_g.add(j)
+        matches.append((i, j, d))
     return matches
+
+
+def _xy_dist_matrix(preds, gts):
+    """Top-down (X,Y) Euclidean distance matrix between pred and gt object centroids."""
+    if not preds or not gts:
+        return np.zeros((len(preds), len(gts)), dtype=np.float64)
+    pc = np.array([np.asarray(p.T_world_obj)[:2, 3] for p in preds], dtype=np.float64)
+    gc = np.array([np.asarray(g.T_world_obj)[:2, 3] for g in gts], dtype=np.float64)
+    return cdist(pc, gc)
 
 
 def _centroid_metrics(preds: List[SceneObject], gts: List[SceneObject],
                       taus=(0.25, 0.5, 0.75, 1.0, 1.5), primary_tau: float = 1.0) -> dict:
-    """Coworker-comparable centroid-distance metrics (``cd_`` prefix).
+    """Coworker-comparable object metrics (``cd_`` prefix), confirmed vs source (AI-7).
 
-    Matching is Hungarian on Euclidean centroid distance <= tau (default 1 m), swept over
+    Matching = GREEDY on 2D top-down centroid distance <= tau (default 1 m), swept over
     ``taus``. At ``primary_tau``: label-agnostic precision/recall/F1 and label-aware
-    micro/macro F1 (the coworker's Object Micro/Macro F1). ``class_free_recall_1m`` is the
-    coworker's Class-Free Geo Recall = fraction of GT with ANY predicted centroid within 1 m
-    (label ignored; NOT one-to-one). All keys are prefixed ``cd_`` so they never collide with
-    our OBB-IoU headline metrics -- the two protocols are reported side by side.
+    micro/macro F1 (their Object Micro/Macro F1; macro over GT union pred categories).
+    ``cd_micro_f1_many_to_one`` is their over-segmentation-tolerant object F1 (any-overlap:
+    a GT counts if it has >=1 valid same-category detection; a detection counts if it has
+    >=1 valid same-category GT). ``class_free_recall_1m`` = fraction of GT with ANY predicted
+    centroid within 1 m (label ignored). NB categories use our normalised (lowercased) labels;
+    the coworker's published run buckets on raw case-sensitive strings -- a divergence only if
+    the two sides disagree on casing (ours are internally consistent).
     """
     n_pred, n_gt = len(preds), len(gts)
     labels_pred = [_norm_label(p.label) for p in preds]
     labels_gt = [_norm_label(g.label) for g in gts]
-    if n_pred and n_gt:
-        pc = np.array([np.asarray(p.T_world_obj)[:3, 3] for p in preds], dtype=np.float64)
-        gc = np.array([np.asarray(g.T_world_obj)[:3, 3] for g in gts], dtype=np.float64)
-        dist = cdist(pc, gc)
-    else:
-        dist = np.zeros((n_pred, n_gt), dtype=np.float64)
+    dist = _xy_dist_matrix(preds, gts)
 
     def _prf(matches):
         tp = len(matches)
@@ -252,17 +263,28 @@ def _centroid_metrics(preds: List[SceneObject], gts: List[SceneObject],
         r = tp / n_gt if n_gt else 0.0
         return tp, p, r, _f1(p, r)
 
-    tp, prec, rec, f1 = _prf(hungarian_match_centroid(dist, primary_tau))
-    lbl_matches = hungarian_match_centroid(dist, primary_tau, require_label=True,
-                                           labels_pred=labels_pred, labels_gt=labels_gt)
+    tp, prec, rec, f1 = _prf(greedy_match_centroid(dist, primary_tau))
+    lbl_matches = greedy_match_centroid(dist, primary_tau, require_label=True,
+                                        labels_pred=labels_pred, labels_gt=labels_gt)
     mm = _micro_macro_from_matches(lbl_matches, labels_pred, labels_gt)
+
+    # many-to-one (any-overlap, within category): GT with >=1 valid same-cat detection,
+    # detections with >=1 valid same-cat GT. micro_f1 - many_to_one = over-segmentation cost.
+    gt_any, hy_any = set(), set()
+    if n_pred and n_gt:
+        for i in range(n_pred):
+            for j in range(n_gt):
+                if dist[i, j] <= primary_tau and labels_pred[i] == labels_gt[j]:
+                    hy_any.add(i); gt_any.add(j)
+    m2o_recall = len(gt_any) / n_gt if n_gt else 0.0
+    m2o_precision = len(hy_any) / n_pred if n_pred else 0.0
 
     class_free_recall_1m = (float(np.mean(dist.min(axis=0) <= 1.0))
                             if (n_pred and n_gt) else (0.0 if n_gt else float("nan")))
 
     f1_by_tau, recall_by_tau = {}, {}
     for t in taus:
-        _, _, rt, ft = _prf(hungarian_match_centroid(dist, t))
+        _, _, rt, ft = _prf(greedy_match_centroid(dist, t))
         f1_by_tau[f"{t}"] = ft
         recall_by_tau[f"{t}"] = rt
 
@@ -273,6 +295,9 @@ def _centroid_metrics(preds: List[SceneObject], gts: List[SceneObject],
         "cd_micro_recall": mm["micro_recall"], "cd_macro_f1": mm["macro_f1"],
         "cd_macro_precision": mm["macro_precision"], "cd_macro_recall": mm["macro_recall"],
         "cd_per_class": mm["per_class"],
+        "cd_micro_f1_many_to_one": _f1(m2o_precision, m2o_recall),
+        "cd_micro_precision_many_to_one": m2o_precision,
+        "cd_micro_recall_many_to_one": m2o_recall,
         "class_free_recall_1m": class_free_recall_1m,
         "centroid_f1_by_tau": f1_by_tau, "centroid_recall_by_tau": recall_by_tau,
     }

@@ -20,7 +20,8 @@ from typing import List
 # Coworker-comparable columns use centroid matching (cd_*, tau=1m) + class_free_recall_1m;
 # f1@.25 is OUR stricter OBB-IoU protocol, shown alongside (see AI-7 / metrics.py).
 _COLUMNS = [
-    ("cd_micro_f1", "microF1", "{:.3f}", False),   # coworker Object Micro F1 (centroid, label-aware)
+    ("cd_micro_f1", "microF1", "{:.3f}", False),   # coworker Object Micro F1 (greedy XY, label-aware)
+    ("cd_micro_f1_many_to_one", "m2oF1", "{:.3f}", False),  # over-seg-tolerant any-overlap F1
     ("cd_macro_f1", "macroF1", "{:.3f}", False),   # coworker Object Macro F1
     ("cd_f1", "cdF1@1m", "{:.3f}", False),         # centroid, label-agnostic
     ("class_free_recall_1m", "cfR@1m", "{:.3f}", False),  # coworker Class-Free Geo Recall
