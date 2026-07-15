@@ -94,6 +94,8 @@ def run(args: argparse.Namespace) -> Path:
         # gt_mesh/asset_root are procthor-only; pass only when set so other backends
         # (replica, ...) that don't accept them are unaffected.
         src_kwargs = {}
+        if args.split is not None:
+            src_kwargs["split"] = args.split
         if args.gt_mesh is not None:
             src_kwargs["gt_mesh"] = args.gt_mesh
         if args.asset_root is not None:
@@ -196,6 +198,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--method", required=True, choices=AVAILABLE)
     p.add_argument("--data-root", default=None, help="override dataset root")
     p.add_argument("--stride", type=int, default=20, help="use every Nth frame")
+    p.add_argument("--split", default=None,
+                   help="procthor: dataset split (default 'val' = the benchmark slice; a given "
+                        "id is a DIFFERENT house on train vs val)")
     p.add_argument("--gt-mesh", default=None, choices=["box", "asset", "none"],
                    help="procthor: GT mesh policy. 'box' (default) = OBB as a box; 'asset' = "
                         "real THOR asset meshes fitted to the OBB (activates the Mesh rows / "

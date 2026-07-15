@@ -61,9 +61,11 @@ _THOR_EXCLUDE_TYPES = {
     "floor", "wall", "window", "doorway", "door", "room",
 }
 
-# The MolmoSpaces / coworker slice (9 confirmed ids; a 10th + the split are pending —
-# docs/ACTION_ITEMS.md). Split defaults to "train"; override via kwarg once confirmed.
-PROCTHOR_SCENES = ["137", "200", "428", "534", "569", "573", "683", "771", "912"]
+# The MolmoSpaces / coworker (SuperMap fairi-sgbench) slice, CONFIRMED 2026-07-14 (AI-7):
+# procthor-10k **val** split, canonical 10 ids below (id 434 was missing before). 771 has a
+# short/sparse trajectory and is dropped in some of the coworker's runs. Split default is
+# "val" to match the benchmark (a given id is a DIFFERENT house on train vs val).
+PROCTHOR_SCENES = ["137", "200", "428", "434", "534", "569", "573", "683", "771", "912"]
 
 # ProcTHOR-10k DatasetDict, loaded ONCE per process. `prior.load_dataset` pings
 # api.github.com for the dataset revision on every call, so calling it per-scene both
@@ -170,7 +172,7 @@ class ProcThorSource:
     come from the ``prior`` cache) but kept for the registry signature.
     """
 
-    def __init__(self, root=None, scene: str = "137", split: str = "train",
+    def __init__(self, root=None, scene: str = "137", split: str = "val",
                  stride: int = 1, load_gt: bool = True, width: int = 640,
                  height: int = 480, position_stride: int = 20,
                  yaws=(0, 90, 180, 270), horizons=(0, 30),
