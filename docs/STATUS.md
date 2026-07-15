@@ -59,8 +59,11 @@ from each mature track's fused-cloud OBB.
   So scale-fit no longer HURTS: read scale off the mask, not the cloud. On sim val SAM3D's native
   scale is already decent (icp scale_err 0.27) so reproj can't beat icp on iou here; the payoff is
   real-robot data (SAM3D scale ~3× off). `scale_icp` also now iterates scale↔ICP to convergence
-  (`--scale-icp-iters`, default 5; improves pose: rot 1.9°→1.2°). NEXT (B2): 3rd axis from a second
-  orthogonal view instead of SAM3D aspect. Knobs: `--scale-source {fused,fused_robust,reproj}`.
+  (`--scale-icp-iters`, default 5; improves pose: rot 1.9°→1.2°). **B2 tested & rejected:**
+  `scale_source=reproj_mv` (3rd axis from a 2nd ~orthogonal view instead of SAM3D aspect) is
+  slightly WORSE (iou_f1 0.509→0.461) — a 2nd-view silhouette span is a noisier along-ray estimate
+  than SAM3D's shape prior. **`reproj` (SAM3D 3rd axis) stays the recommended scale source.**
+  Knobs: `--scale-source {fused,fused_robust,reproj,reproj_mv}`.
 - **Metrics critique (data-backed):** their 1 m centroid tolerance manufactures a 0.44 recall
   gap that is pure tolerance and lets over-segmentation inflate recall → **report tight-τ
   (0.25m) recall + 3D-IoU + scale/Chamfer as our columns** (their suite is blind to placement/

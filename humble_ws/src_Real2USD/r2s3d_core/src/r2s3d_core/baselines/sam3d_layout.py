@@ -324,15 +324,11 @@ def _robust_obb_extent(target_pts: np.ndarray, nb_neighbors: int = 20, std_ratio
     return _observed_obb_extent(q)
 
 
-def _reproj_target_extent(mesh_posed: trimesh.Trimesh, mask, depth, K):
-    """Target OBB extent (sorted desc) from a CLEAN 2D mask + robust median depth -- Method B.
+def _mask_inplane_metric(mask, depth, K):
+    """(2 in-plane metric extents desc, median depth) from a clean mask, or None.
 
-    The detection mask is high-quality (IoU ~0.96) where the 3D cloud is contaminated, so read
-    the frontal metric size off the mask instead of the cloud: PCA the mask pixels -> two
-    principal pixel spans, convert to metric via ``span * median_depth / focal`` (median depth is
-    robust to the edge pixels that wreck the cloud OBB). The along-ray 3rd axis is unobserved
-    by one view, so keep SAM3D's shape aspect: scale the mesh's smallest OBB extent by the mean
-    of the two in-plane fit ratios. None if the mask/depth is degenerate.
+    PCA the mask pixels -> two principal pixel spans; metric = ``span * median_depth / focal``.
+    Median depth is robust to the edge pixels that wreck the 3D cloud OBB.
     """
     m = np.asarray(mask, bool)
     if m.sum() < 30:
@@ -346,14 +342,75 @@ def _reproj_target_extent(mesh_posed: trimesh.Trimesh, mask, depth, K):
     P = np.stack([xs, ys], axis=1).astype(np.float64)
     P -= P.mean(0)
     _, _, Vt = np.linalg.svd(P, full_matrices=False)
-    proj = P @ Vt.T
-    span_px = proj.max(0) - proj.min(0)                     # pixel spans along mask principal axes
+    span_px = (P @ Vt.T).max(0) - (P @ Vt.T).min(0)
     f = 0.5 * (float(K[0, 0]) + float(K[1, 1]))
-    E = np.sort(span_px * depth_med / f)[::-1]              # 2 in-plane metric extents, desc
+    return np.sort(span_px * depth_med / f)[::-1], depth_med
+
+
+def _reproj_target_extent(mesh_posed: trimesh.Trimesh, mask, depth, K):
+    """Target OBB extent (sorted desc) from a CLEAN 2D mask + robust median depth -- Method B.
+
+    The detection mask is high-quality (IoU ~0.96) where the 3D cloud is contaminated, so read
+    the frontal metric size off the mask. The along-ray 3rd axis is unobserved by one view, so
+    keep SAM3D's shape aspect: scale the mesh's smallest OBB extent by the mean of the two
+    in-plane fit ratios. None if the mask/depth is degenerate.
+    """
+    ip = _mask_inplane_metric(mask, depth, K)
+    if ip is None:
+        return None
+    E, _ = ip
     _, mesh_ext = _fast_obb(mesh_posed)
     m_sorted = np.sort(mesh_ext)[::-1]
     s = 0.5 * (E[0] / max(m_sorted[0], 1e-6) + E[1] / max(m_sorted[1], 1e-6))  # in-plane fit ratio
     third = float(m_sorted[2]) * s                          # 3rd axis keeps SAM3D aspect
+    return np.sort([float(E[0]), float(E[1]), third])[::-1]
+
+
+def _reproj_target_extent_mv(mesh_posed, obs1, frame1, kept_views, frames, min_angle_deg=25.0):
+    """Method B2: like reproj, but measure the along-ray 3rd axis from a SECOND ~orthogonal view.
+
+    V1 (best view) gives the two in-plane metric extents. The object's V1-along-ray direction
+    (V1 optical axis) is in-image for a view V2 whose optical axis is roughly orthogonal, so
+    V2's mask span along the projection of that direction gives the 3rd (otherwise unobserved)
+    metric extent. Falls back to SAM3D aspect (:func:`_reproj_target_extent`) if no view is
+    orthogonal enough or its mask/depth is degenerate.
+    """
+    ip1 = _mask_inplane_metric(obs1.mask, frame1.depth, frame1.K)
+    if ip1 is None:
+        return None
+    E, _ = ip1
+    a1 = np.asarray(frame1.T_world_cam, float)[:3, 2]       # V1 optical axis (world)
+    a1 = a1 / (np.linalg.norm(a1) + 1e-9)
+    # most-orthogonal kept view with a usable mask
+    best = None
+    for ob in kept_views:
+        if ob is obs1 or ob.mask is None:
+            continue
+        fr = frames[ob.frame_index]
+        a2 = np.asarray(fr.T_world_cam, float)[:3, 2]
+        ang = np.degrees(np.arccos(np.clip(abs(float(a1 @ (a2 / (np.linalg.norm(a2) + 1e-9)))), 0, 1)))
+        ang = 90.0 - ang                                    # 0 = parallel optical axes, 90 = orthogonal
+        if best is None or ang > best[0]:
+            best = (ang, ob, fr)
+    if best is None or best[0] < min_angle_deg:
+        return _reproj_target_extent(mesh_posed, obs1.mask, frame1.depth, frame1.K)
+    _, ob2, fr2 = best
+    # project a1 (world dir) into V2 image plane -> pixel direction u
+    a1_cam2 = np.asarray(fr2.T_world_cam, float)[:3, :3].T @ a1
+    u = a1_cam2[:2]
+    if np.linalg.norm(u) < 1e-6:
+        return _reproj_target_extent(mesh_posed, obs1.mask, frame1.depth, frame1.K)
+    u = u / np.linalg.norm(u)
+    m2 = np.asarray(ob2.mask, bool)
+    dz2 = np.asarray(fr2.depth)[m2]
+    dz2 = dz2[np.isfinite(dz2) & (dz2 > 0)]
+    if m2.sum() < 30 or len(dz2) < 20:
+        return _reproj_target_extent(mesh_posed, obs1.mask, frame1.depth, frame1.K)
+    ys, xs = np.where(m2)
+    P = np.stack([xs, ys], 1).astype(np.float64); P -= P.mean(0)
+    proj = P @ u                                            # mask extent along a1's V2 projection
+    f2 = 0.5 * (float(fr2.K[0, 0]) + float(fr2.K[1, 1]))
+    third = float((proj.max() - proj.min()) * np.median(dz2) / f2)
     return np.sort([float(E[0]), float(E[1]), third])[::-1]
 
 

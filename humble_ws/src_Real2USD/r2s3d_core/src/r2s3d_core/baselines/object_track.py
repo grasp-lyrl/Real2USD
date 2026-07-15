@@ -183,7 +183,9 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
                 tgt_ext = None
                 if do_scale:
                     _ss = config.get("scale_source", "fused")
-                    if _ss == "reproj":
+                    if _ss == "reproj_mv":
+                        tgt_ext = s3d._reproj_target_extent_mv(posed, obs, frame, t.kept_views, frames)
+                    elif _ss == "reproj":
                         tgt_ext = s3d._reproj_target_extent(posed, obs.mask, frame.depth, frame.K)
                     elif _ss == "fused_robust":
                         tgt_ext = s3d._robust_obb_extent(target)

@@ -278,11 +278,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "'scale'/'scale_icp' add the depth-extent scale-fit (the lever rigid "
                         "ICP lacks); overrides --icp when set.")
     p.add_argument("--scale-source", default="fused",
-                   choices=["fused", "fused_robust", "reproj"],
+                   choices=["fused", "fused_robust", "reproj", "reproj_mv"],
                    help="how scale-fit measures the object's metric size: 'fused' = raw "
                         "fused-cloud OBB (contaminated on detector masks); 'fused_robust' = "
                         "outlier-rejected cloud (Method A); 'reproj' = clean 2D mask + median "
-                        "depth, SAM3D aspect for the 3rd axis (Method B).")
+                        "depth, SAM3D aspect for the 3rd axis (Method B); 'reproj_mv' = same but "
+                        "3rd axis from a second ~orthogonal view (Method B2).")
     p.add_argument("--scale-icp-iters", type=int, default=5,
                    help="scale_icp: max scale<->ICP alternations (converges early per object).")
     p.add_argument("--det-dropout", type=float, default=0.0, help="corruption: drop-detection prob")
