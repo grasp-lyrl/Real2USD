@@ -44,7 +44,23 @@ from .base import Frame, GTObject
 log = logging.getLogger(__name__)
 
 # Bump when the cache layout / render semantics change so stale caches miss.
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2  # v2: GT cache stores object rotation; asset meshes placed by true rotation
+
+
+def _R_unity_euler(rot: dict) -> np.ndarray:
+    """Rotation matrix from AI2-THOR/Unity euler angles (degrees), Unity intrinsic Y-X-Z order.
+
+    Validated against native instance masks (silhouette IoU) on procthor val scene 200: using
+    the object's true rotation places asymmetric assets correctly, where PCA-axis matching
+    left them flipped/upside-down (axis-sign ambiguity). Compose with ``_M_WU`` to get the
+    canonical->our-world linear map (``_M_WU @ _R_unity_euler`` has det -1: the LH->RH flip).
+    """
+    x, y, z = np.radians([rot.get("x", 0.0), rot.get("y", 0.0), rot.get("z", 0.0)])
+    cx, sx, cy, sy, cz, sz = (np.cos(x), np.sin(x), np.cos(y), np.sin(y), np.cos(z), np.sin(z))
+    Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    return Ry @ Rx @ Rz
 
 # --- Unity(left-handed, Y-up) -> our world (right-handed, Z-up) --------------------
 # W = M_WU @ p_unity  =>  (x, y, z)_W = (x, z, y)_unity.  det(M_WU) = -1 (LH->RH).
@@ -280,7 +296,7 @@ class ProcThorSource:
             "gt": [{"instance_id": g.instance_id, "label": g.label,
                     "T_world_obj": np.asarray(g.T_world_obj, float).tolist(),
                     "extents": np.asarray(g.extents, float).tolist(),
-                    "asset_id": g.asset_id} for g in gt],
+                    "asset_id": g.asset_id, "rotation": g.rotation} for g in gt],
         }
         with open(building / "meta.json", "w") as f:
             json.dump(meta, f)
@@ -414,21 +430,23 @@ class ProcThorSource:
         n = len(positions) * len(self.yaws) * len(self.horizons)
         return n if not self.max_frames else min(n, self.max_frames)
 
-    def _gt_mesh_for(self, asset_id, T_world_obj, extents):
+    def _gt_mesh_for(self, asset_id, T_world_obj, extents, rotation=None):
         """Build the GT mesh for one object per ``self.gt_mesh`` policy.
 
-        "box" -> OBB as a box; "asset" -> the real THOR asset mesh fitted into the OBB,
-        falling back LOUDLY to a box if the asset is missing/unreadable; else None.
+        "box" -> OBB as a box; "asset" -> the real THOR asset mesh placed by its TRUE rotation
+        (``rotation``, Unity euler) when known -- else PCA-fitted into the OBB (legacy, prone to
+        axis-sign flips on asymmetric assets). Falls back LOUDLY to a box if the asset is
+        missing/unreadable; else None.
         """
         if self.gt_mesh == "box":
             return trimesh.creation.box(extents=extents, transform=T_world_obj)
         if self.gt_mesh != "asset":
             return None
-        # asset path: lazily build the library, then load + fit this asset
+        # asset path: lazily build the library, then load + place this asset
         if self._asset_lib is None:
             from .thor_assets import ThorAssetLibrary
             self._asset_lib = ThorAssetLibrary(self.asset_root)
-        from .thor_assets import fit_canonical_to_obb
+        from .thor_assets import fit_canonical_to_obb, place_canonical_by_linmap
         canonical = None
         if asset_id:
             try:
@@ -439,6 +457,9 @@ class ProcThorSource:
             if asset_id:
                 log.warning("scene %s: no THOR asset mesh for %r; using box fallback", self.scene, asset_id)
             return trimesh.creation.box(extents=extents, transform=T_world_obj)
+        if rotation is not None:  # true orientation (validated) -> no PCA sign ambiguity
+            M_lin = _M_WU @ _R_unity_euler(rotation)
+            return place_canonical_by_linmap(canonical, M_lin, np.asarray(T_world_obj)[:3, 3])
         return fit_canonical_to_obb(canonical, T_world_obj, extents)
 
     def gt(self) -> Optional[List[GTObject]]:
@@ -458,9 +479,11 @@ class ProcThorSource:
                 T = np.asarray(g["T_world_obj"], float)
                 ext = np.asarray(g["extents"], float)
                 aid = g.get("asset_id")
-                mesh = self._gt_mesh_for(aid, T, ext)
+                rot = g.get("rotation")
+                mesh = self._gt_mesh_for(aid, T, ext, rotation=rot)
                 objs.append(GTObject(instance_id=int(g["instance_id"]), label=g["label"],
-                                     T_world_obj=T, extents=ext, mesh=mesh, asset_id=aid))
+                                     T_world_obj=T, extents=ext, mesh=mesh, asset_id=aid,
+                                     rotation=rot))
             self._gt = objs
             return self._gt
         return self._build_gt_live()
@@ -485,7 +508,8 @@ class ProcThorSource:
                 corners_w = (_M_WU @ np.asarray(aabb["cornerPoints"], float).T).T
                 T_world_obj, extents = _obb_from_corner_points(corners_w)
             asset_id = o.get("assetId")
-            mesh = self._gt_mesh_for(asset_id, T_world_obj, extents)
+            rotation = o.get("rotation")
+            mesh = self._gt_mesh_for(asset_id, T_world_obj, extents, rotation=rotation)
             inst_id = len(objs)
             col = obj_color.get(o["objectId"])
             if col is not None:
@@ -498,6 +522,7 @@ class ProcThorSource:
                 extents=extents,
                 mesh=mesh,
                 asset_id=asset_id,
+                rotation=rotation,
             ))
         self._gt = objs
         return objs

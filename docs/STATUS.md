@@ -8,11 +8,14 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 - **Things only the human can do: `ACTION_ITEMS.md`** (Claude adds to it on every gated dependency)
 - Datasets & access: `DATASETS.md` · In-family systems & ideas to steal: `RELATED_WORK.md`
 
-_Last updated: 2026-07-14 (detector-driven ProcTHOR measured on **val** s200: YOLOE prompt
-study gt/generic/pf, multi-view recall vs ceiling, real tracker recall, CLIP label-map. Split
-footgun fixed across `rescore`/`detect.run` (both gained `--split`); CLIP-nearest-in-set label
-mapping landed (`eval/label_map.py`, `--label-map clip`). NEXT = robust cloud-extent estimation
-(boxes ~3×/side too big — floors IoU/S2C) + extend to 137/428)._
+_Last updated: 2026-07-15 (first REAL detector-driven val-s200 run: `object_track_icp` on
+gt-prompt YOLOE detections + full SAM3D worker → iou_f1@.25 **0.545**, centroid **4.5cm**,
+class-free recall 1.0, scan2cad 0.15, chamfer 0.10. Corrects the earlier "box inflation"
+scare (that was a SAM3D-free cloud-OBB proxy artifact; real placement is fine). GT mesh
+orientation fixed: placed by AI2-THOR true rotation, not PCA (`_R_unity_euler`+`place_canonical_by_linmap`,
+cache v2). Prior: split footgun fixed (`--split` on rescore/detect.run), CLIP-nearest-in-set
+label mapping (`eval/label_map.py`, `--label-map clip`). NEXT = other variants + generic/pf
+detector prompts through the real pipeline; extend to 137/428)._
 
 ### Detector-driven ProcTHOR — val scene 200 (measured 2026-07-14, no SAM3D; recall/placement only)
 
@@ -32,11 +35,21 @@ from each mature track's fused-cloud OBB.
   τ=0.1), NOT over-segmentation (only 9% of GT fragmented at 25cm). **`gt` is not over-merged/
   over-segmented; late-merge tuning won't help it.** `pf` IS over-segmented (185 tracks, 31%
   fragmented @25cm) → late-merge is a `pf`-only fix, and `pf` isn't our config.
-- **⚠ Geometry is floored by box inflation, not recall:** raw fused-cloud OBBs are **~20–47×
-  too big by volume (~3×/side)** while centroids are 13cm → `iou_f1` 0.11–0.18, `scan2cad`≈0.
-  This is the raw-cloud-box proxy I used (not the real SAM3D+scale-fit placement) — it VALIDATES
-  using SAM3D shape + depth-extent scale-fit, and makes **robust extent estimation the #1
-  geometry lever** (outlier-trim the cloud before OBB / lean on scale-fit).
+- **REAL SAM3D+ICP placement (val s200, 2026-07-15, 72/93 placed): iou_f1@.25 0.545, iou_recall
+  0.484, cd_f1@1m 0.727, class-free 1.0, centroid 4.5cm, rot 3.6°, scan2cad 0.151, chamfer 0.10,
+  micro-F1 (CLIP) 0.388.** This CORRECTS the earlier "box inflation is the #1 lever" claim: that
+  0.11 iou_f1 was a **SAM3D-free cloud-OBB proxy artifact** (raw depth-cloud boxes ~3×/side too
+  big). The real pipeline (SAM3D shape + depth-extent + ICP) already produces well-sized,
+  well-localized boxes — iou_f1 is a healthy 0.545, centroid 4.5cm. Robust extent estimation is
+  NOT the bottleneck; the SAM3D+scale-fit design handles it. (The SAM3D-free tracker numbers
+  above remain valid — they use track centroids, which are legit; only the cloud-OBB *extent* was
+  the proxy artifact.)
+- **GT mesh orientation fixed (2026-07-15):** GT asset meshes were placed by PCA-axis matching
+  (`fit_canonical_to_obb`), whose axis-sign ambiguity flipped asymmetric assets (upside-down
+  chairs). Now placed by AI2-THOR's true `rotation` (`_R_unity_euler` → `_M_WU @ R`, det -1 LH→RH;
+  `place_canonical_by_linmap`), validated by native-mask silhouette IoU (0.497→0.528 mean; kettle
+  0.21→0.77) and structurally upright. Moves scene chamfer only (0.104→0.0998; OBB metrics
+  axis-invariant, unchanged). GT cache bumped to v2 (stores rotation).
 - **Metrics critique (data-backed):** their 1 m centroid tolerance manufactures a 0.44 recall
   gap that is pure tolerance and lets over-segmentation inflate recall → **report tight-τ
   (0.25m) recall + 3D-IoU + scale/Chamfer as our columns** (their suite is blind to placement/

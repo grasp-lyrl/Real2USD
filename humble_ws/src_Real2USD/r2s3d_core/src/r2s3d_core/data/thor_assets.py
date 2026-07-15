@@ -146,6 +146,24 @@ def _pca_frame(vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray
     return c, V, extents
 
 
+def place_canonical_by_linmap(mesh: "object", M_lin: np.ndarray, center: np.ndarray) -> "object":
+    """Place a canonical asset mesh into the world by a KNOWN linear map + center translation.
+
+    ``M_lin`` (3x3) maps canonical-frame vectors to world-frame vectors -- it may include the
+    left-handed->right-handed reflection (det = -1), which is expected for Unity assets. The
+    mesh is centered on its centroid, mapped by ``M_lin``, then translated so its centroid sits
+    at ``center`` (the OBB center). Unlike :func:`fit_canonical_to_obb`, this uses the object's
+    TRUE orientation (from the dataset's rotation metadata) rather than inferring axes by PCA,
+    so asymmetric assets are not flipped/upside-down by PCA sign ambiguity. Returns a new
+    world-frame ``trimesh.Trimesh``.
+    """
+    V = np.asarray(mesh.vertices, dtype=np.float64)
+    c = V.mean(axis=0)
+    out = mesh.copy()
+    out.vertices = (np.asarray(M_lin, dtype=np.float64) @ (V - c).T).T + np.asarray(center, float)
+    return out
+
+
 def fit_canonical_to_obb(mesh: "object", T_world_obj: np.ndarray,
                          extents: np.ndarray) -> "object":
     """Rigidly place a canonical asset mesh into a world OBB (rotation + translation).

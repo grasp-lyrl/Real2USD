@@ -42,6 +42,7 @@ class GTObject(NamedTuple):
     extents: np.ndarray            # (3,) full OBB dimensions, meters
     mesh: Optional["trimesh.Trimesh"] = None  # per-instance GT mesh (world frame)
     asset_id: Optional[str] = None  # source asset identifier (e.g. THOR assetId), if known
+    rotation: Optional[dict] = None  # source rotation metadata (e.g. THOR Unity euler {x,y,z}), if known
 
 
 @runtime_checkable
