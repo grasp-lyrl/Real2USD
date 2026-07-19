@@ -8,6 +8,29 @@ You work these; mark them done. `STATUS.md` links here for anything blocked.
 Convention: each item has an ID (AI-N, stable), a **blocks** field, and a status box.
 When done, check the box and add the date; leave it in place for provenance.
 
+### [x] AI-9 — AI2-THOR rendering hung (Wayland session)  *(RESOLVED 2026-07-19)*
+**FIX:** the machine had booted into a GNOME **Wayland** session (no GPU Xorg → AI2-THOR's X11/GLX
+hung). Chris switched to **Ubuntu on Xorg** (session now x11); render works — new-scene test
+`GOT FRAME @ 23s, depth 480×640, valid 1.00`. The session display is now **`:0`** (was `:1` before)
+with `XAUTHORITY=/run/user/1003/gdm/Xauthority`. `run_paper_sim_val10.sh` updated to use those
+(overridable via `R2S3D_DISPLAY`/`R2S3D_XAUTHORITY`). If it hangs again, first check
+`loginctl show-session <id> -p Type` is `x11`, not `wayland`. (NB `glxinfo` is NOT installed here —
+don't use its "timeout" as evidence; test an actual AI2-THOR render instead.) Original diagnosis below.
+
+### [~] AI-9 (orig diagnosis) — AI2-THOR rendering hung on display `:1`  *(2026-07-19)*
+**Blocks:** rendering ANY new ProcTHOR scene → the **val-10 sim cluster** aggregate (and any future
+sim run on an uncached scene). Cached scenes (s200/137/428) still replay fine.
+**Symptom:** `make_source` builds, but pulling the first frame hangs >200 s with no error / no Unity
+process; a clean retry (hung procs cleared) reproduces it → environmental, not a stale lock.
+**Root cause (diagnosed):** `DISPLAY=:1 glxinfo` also hangs/times out while `nvidia-smi` is healthy
+(RTX 5090 idle) → the **GL rendering context on `:1` is wedged**, not the GPU. `:1` is a GNOME/mutter
+session; it worked 2026-07-13 (caches + `~/.ai2thor` build locks dated then).
+**How to fix (human — Claude won't restart X, could kill the desktop):** reset the GPU-backed X/GL on
+`:1` — e.g. restart the X server / GNOME session on `:1`, or whatever headless GPU-X the render used;
+then verify with `! DISPLAY=:1 glxinfo | grep -i "OpenGL renderer"` (must show NVIDIA, not llvmpipe/
+timeout). Once GL works, re-run `scripts/run_paper_sim_val10.sh` (idempotent — resumes).
+**Fallback if not fixed:** s200-only sim (already in hand); val-10 breadth deferred.
+
 Tip: for interactive logins/commands, you can run them in this session by typing
 `! <command>` so the output lands in the conversation.
 
@@ -73,8 +96,19 @@ license at https://huggingface.co/datasets/ShapeNet/ShapeNetCore. See `DATASETS.
 https://meta-scenes.github.io. See `DATASETS.md §3`.
 
 ### [~] AI-7 — Coworker's scene-graph benchmark metric defs  *(ANSWERED 2026-07-14; reconciliation in progress)*
-**Blocks:** publishing a *comparable* Objects/Mesh column. Coworker's benchmark = **SuperMap**
-(AirLab/Super Odometry, RSS'26) eval harness `fairi-sgbench`; DAAAM-lineage lexicon.
+**Blocks:** publishing a *comparable* Objects/Mesh column. **CORRECTION (2026-07-19, per Chris):
+SuperMap (AirLab/Super Odometry, RSS'26) is NOT the coworker's method** — it is a separate recently-
+published system (no code released), earlier notes conflated the two. The coworker's benchmark is
+their OWN harness; the metric code we hold is `scripts/scene_graph_metrics.py` (a DAAAM-lineage lexicon
+is used for the ProcTHOR table).
+**Read the coworker code (2026-07-19):** `scene_graph_metrics.py` defines `symmetric_chamfer_distance`,
+`point_coverage_f_score`, `assignment_precision_recall_f1`, `compute_track_metrics` — a POINT-CLOUD
+tracking+geometry stack. **Chamfer DEFINITIVELY CONFIRMED == our `scene_chamfer_mean_m`** (mean of the
+two directional mean-NN distances). **But NO footprint-IoU, NO Micro/Macro F1, NO class-free recall in
+this file** → those live in the OTHER harness (`harness.py`/`objects.py`, NOT in our repo). So **Q5
+(footprint def) is STILL unresolved** — need the footprint function specifically. **Actionable: lead
+the Mesh cross-method comparison with CHAMFER (verified), treat Footprint IoU as internal-ablation-only
+until the coworker's footprint code is obtained.**
 
 **RESOLVED ANSWERS (from coworker, 2026-07-14) — two INVALIDATE our current numbers:**
 1. **Split = procthor-10k `val`** (val.jsonl), NOT train. Same integer id is a *different
@@ -152,9 +186,19 @@ label F1):**
 - (r3) **In-set = per-scene GT vocab or a fixed global benchmark vocab?** We snap to the
   scene's GT categories; confirm the target set.
 Plus prior: (c) frame-set parity (#11) — deferred (render `val` ourselves, flag "our
-trajectory"); optionally the literal `evaluate_mesh` Chamfer/footprint-IoU code (Q5) for Mesh
-rows. **No hard blocker remains for the Objects column** — regenerate on `val` (+id 434),
+trajectory"). **No hard blocker remains for the Objects column** — regenerate on `val` (+id 434),
 greedy-XY matching, `--label-map clip`.
+
+**(Q5) — ELEVATED to a real gate for the MESH cross-method claim (2026-07-19).** Need the coworker's
+EXACT Footprint-IoU + Chamfer definition (the literal `evaluate_mesh` code). WHY it now blocks: our
+open-vocab cluster scores Footprint IoU ~0.44 vs the published field 0.006–0.095, and we confirmed
+this gap is NOT a gt-vocab artifact (open-vocab `generic` cluster still 0.445). So either our
+front-end genuinely covers more, OR the metric is computed differently — the field matches very few
+objects/scene (Hydra 5.6, DAAAM 3.5) vs our ~65, so a per-object / recall-weighted footprint (vs our
+scene-level pooled) would explain their low numbers as coverage, not quality. Cannot make ANY
+cross-method Mesh claim until this is pinned. ASK: is Footprint IoU scene-level pooled occupancy or
+per-object-matched? cell size? mesh-footprint vs OBB-footprint? Chamfer confirmed scene-level pooled
+symmetric (#5 ✓). This is a one-question ask, not compute.
 
 ### [x] AI-8 — MolmoSpaces / THOR per-object GT meshes for the Mesh rows  *(DONE 2026-07-14)*
 **RESOLVED:** downloaded `isaac/objects/thor` (~1 GB, all 9 houses are iThor assets) and

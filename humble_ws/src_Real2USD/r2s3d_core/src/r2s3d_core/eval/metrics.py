@@ -57,11 +57,31 @@ class SceneObject:
     T_world_obj: np.ndarray
     extents: np.ndarray
     mesh: object = None            # trimesh.Trimesh in world frame, optional
+    # world-frame surface points (N,3), optional. Used for surface geometry (Chamfer,
+    # footprint IoU) when there is no mesh -- e.g. the cluster-payload ablation, whose
+    # "surface" IS the track's observed fused cloud (GENERATION_ABLATION_PLAN.md B).
+    # Preferred over sampling ``mesh`` when present.
+    surface_pts: Optional[np.ndarray] = None
     confidence: float = 1.0
     provenance: dict = field(default_factory=dict)
 
     def box(self) -> geo.Box:
         return geo.Box.from_pose(self.T_world_obj, self.extents)
+
+    def sample_surface(self, n: int, seed: int) -> np.ndarray:
+        """Surface points for geometry metrics: the attached cloud if present
+        (subsampled deterministically to ~n), else sampled from the mesh."""
+        if self.surface_pts is not None and len(self.surface_pts):
+            pts = np.asarray(self.surface_pts, dtype=np.float64)
+            if len(pts) <= n:
+                return pts
+            idx = np.random.RandomState(seed).choice(len(pts), n, replace=False)
+            return pts[idx]
+        return geo.sample_surface(self.mesh, n, seed=seed)
+
+    def has_surface(self) -> bool:
+        return (self.surface_pts is not None and len(self.surface_pts) > 0) or (
+            self.mesh is not None and len(getattr(self.mesh, "faces", [])) > 0)
 
 
 def gt_to_scene_object(g: GTObject) -> SceneObject:
@@ -304,25 +324,33 @@ def _centroid_metrics(preds: List[SceneObject], gts: List[SceneObject],
 
 
 def _scene_geometry(preds: List[SceneObject], gts: List[SceneObject],
-                    surface_points: int, taus=(0.05, 0.02)) -> dict:
+                    surface_points: int, taus=(0.05, 0.02),
+                    footprint_cell: float = 0.05) -> dict:
     """Scene-level, class-free geometry: all predicted surface points vs all GT points.
 
-    No matching and no labels -- the coworker-comparable whole-scene Chamfer and
-    geometric coverage. Returns an empty dict when either side has no mesh (so the
-    keys are simply absent and aggregate/table skip them) -- e.g. before GT meshes
-    are attached (AI-8).
+    No matching and no labels -- the coworker-comparable whole-scene Chamfer,
+    geometric coverage, and top-down Footprint IoU. Each object's surface comes from
+    ``SceneObject.sample_surface`` (attached cloud if present -- the cluster-payload
+    ablation -- else sampled mesh). Returns an empty dict when either side has no
+    surface (so the keys are simply absent and aggregate/table skip them) -- e.g.
+    before GT meshes are attached (AI-8).
     """
     pool_n = min(surface_points, 5000)  # bound the pooled cloud across many objects
-    pred_pts = [geo.sample_surface(p.mesh, pool_n, seed=i)
-                for i, p in enumerate(preds) if p.mesh is not None]
-    gt_pts = [geo.sample_surface(g.mesh, pool_n, seed=1000 + j)
-              for j, g in enumerate(gts) if g.mesh is not None]
+    pred_pts = [p.sample_surface(pool_n, seed=i)
+                for i, p in enumerate(preds) if p.has_surface()]
+    gt_pts = [g.sample_surface(pool_n, seed=1000 + j)
+              for j, g in enumerate(gts) if g.has_surface()]
     pred_pts = [a for a in pred_pts if len(a)]
     gt_pts = [a for a in gt_pts if len(a)]
     if not pred_pts or not gt_pts:
         return {}
-    cf = geo.chamfer_and_fscore(np.vstack(pred_pts), np.vstack(gt_pts), taus=taus)
-    out = {"scene_chamfer_mean_m": cf["chamfer_mean"]}
+    pred_all, gt_all = np.vstack(pred_pts), np.vstack(gt_pts)
+    cf = geo.chamfer_and_fscore(pred_all, gt_all, taus=taus)
+    out = {
+        "scene_chamfer_mean_m": cf["chamfer_mean"],
+        # coworker Mesh row: top-down occupancy IoU (5 cm cells by default)
+        "footprint_iou": geo.footprint_iou(pred_all, gt_all, cell=footprint_cell),
+    }
     # surf_*@tau = SURFACE-reconstruction point-coverage (Tanks-and-Temples heritage), NOT the
     # coworker's Class-Free Geo Recall (that is 1m-centroid class_free_recall_1m). Kept distinct.
     for tau in taus:
@@ -370,9 +398,9 @@ def evaluate(preds: List[SceneObject], gts: List[SceneObject],
         label_correct.append((p.label or "").strip().lower() == (g.label or "").strip().lower())
         if c_err <= 0.20 and r_err <= 20.0 and s_err_max <= 0.20:
             scan2cad_hits += 1
-        if compute_geometry and p.mesh is not None and g.mesh is not None:
-            pp = geo.sample_surface(p.mesh, surface_points, seed=pi)
-            gg = geo.sample_surface(g.mesh, surface_points, seed=1000 + gi)
+        if compute_geometry and p.has_surface() and g.has_surface():
+            pp = p.sample_surface(surface_points, seed=pi)
+            gg = g.sample_surface(surface_points, seed=1000 + gi)
             cf = geo.chamfer_and_fscore(pp, gg, taus=(0.05, 0.02))
             chamfer.append(cf["chamfer_l1"])
             chamfer_mean.append(cf["chamfer_mean"])

@@ -85,6 +85,34 @@ def _promote(track: ObjectTrack) -> None:
         # backfill the cloud from kept views now that we are ACTIVE (TENTATIVE didn't fuse)
 
 
+# Precision gate defaults. FP-vs-TP characterization on the real Go2 hallway-1 scene
+# (scripts/rs_coverage_diag.py): FP mature tracks are short-lived + low-confidence — median
+# n_obs 6 vs 17 and mean det_score 0.40 vs 0.50, and 9/10 are hallucinated "door" detections.
+# Thresholds tuned by scripts/rs_gate_sweep.py + full eval: 6/0.40 nearly halves FP tracks
+# (29->16), lifts scale_icp_reproj IoU-precision 0.12->0.20 and IoU-F1 0.089->0.104 while
+# keeping IoU-recall flat; stricter (10/0.45) over-prunes a true positive.
+GATE_MIN_OBS = 6
+GATE_MIN_SCORE = 0.40
+
+
+def _passes_precision_gate(track: ObjectTrack, config: dict) -> bool:
+    """A matured track is kept only if it is well-supported: enough associated
+    observations (persistence) AND high enough mean detector confidence. Rejects the
+    spurious short-lived / low-confidence detections that survive to MATURE on real
+    detector-driven runs (the tracking-by-detection precision leak). Applied AFTER late
+    merge so fragments that fold into a real track count toward its persistence."""
+    min_obs = config.get("gate_min_obs")
+    min_obs = GATE_MIN_OBS if min_obs is None else int(min_obs)
+    min_score = config.get("gate_min_score")
+    min_score = GATE_MIN_SCORE if min_score is None else float(min_score)
+    if track.n_obs < min_obs:
+        return False
+    scores = [o.det_score for o in track.observations]
+    if scores and float(np.mean(scores)) < min_score:
+        return False
+    return True
+
+
 def run_tracker(frames: List[Frame], detections_by_frame: Dict[int, list],
                 config: dict, appearance: Optional[Appearance] = None) -> List[ObjectTrack]:
     """Run the tracker over an in-memory frames list + per-frame detections.
@@ -142,6 +170,21 @@ def run_tracker(frames: List[Frame], detections_by_frame: Dict[int, list],
 
     if config.get("late_merge", True):
         tracks = associate.late_merge(tracks, config)
+
+    # precision gate: demote weakly-supported MATURE tracks to REJECTED (opt-in). After
+    # late merge so merged-in fragments count toward persistence.
+    if config.get("track_gate"):
+        n_gated = 0
+        for t in tracks:
+            if t.state == TrackState.MATURE and not _passes_precision_gate(t, config):
+                t.state = TrackState.REJECTED
+                n_gated += 1
+        if n_gated:
+            _mo = config.get("gate_min_obs"); _ms = config.get("gate_min_score")
+            log.info("tracker: precision gate rejected %d mature track(s) "
+                     "(min_obs=%s min_score=%s)", n_gated,
+                     GATE_MIN_OBS if _mo is None else _mo,
+                     GATE_MIN_SCORE if _ms is None else _ms)
 
     n_mature = sum(1 for t in tracks if t.state == TrackState.MATURE)
     log.info("tracker: %d tracks (%d mature) over %d frames",

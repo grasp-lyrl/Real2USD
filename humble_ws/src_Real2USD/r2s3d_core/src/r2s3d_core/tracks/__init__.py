@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from .appearance import Appearance, HSVHistogram, cosine
 from .fusion import VoxelCloud
-from .tracker import run_tracker
+from .tracker import GATE_MIN_OBS, GATE_MIN_SCORE, run_tracker
 from .types import (MAX_KEPT_VIEWS, MIN_ACTIVE_OBS, MIN_MATURE_VIEWS, Observation,
                     ObjectTrack, TrackState)
 
@@ -20,4 +20,5 @@ __all__ = [
     "run_tracker", "ObjectTrack", "Observation", "TrackState",
     "Appearance", "HSVHistogram", "cosine", "VoxelCloud",
     "MIN_ACTIVE_OBS", "MIN_MATURE_VIEWS", "MAX_KEPT_VIEWS",
+    "GATE_MIN_OBS", "GATE_MIN_SCORE",
 ]

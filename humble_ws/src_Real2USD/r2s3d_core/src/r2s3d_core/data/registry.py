@@ -31,6 +31,17 @@ def make_source(source: str, scene: str, root: str | os.PathLike | None = None, 
         from .procthor import ProcThorSource
 
         return ProcThorSource(root, scene, **kwargs)
+    if source in ("rosbag", "go2", "lidar"):
+        from .rosbag import RosbagSource, resolve_scene
+
+        bag, gt = resolve_scene(scene, root)
+        return RosbagSource(bag, gt_json=gt, scene=scene, **kwargs)
+    if source in ("realsense", "rs"):
+        from .realsense import RealSenseSource, resolve_rs_scene
+
+        bag, gt = resolve_rs_scene(scene, root)
+        return RealSenseSource(bag, gt_json=gt, scene=scene, **kwargs)
     raise ValueError(
-        f"unknown SequenceSource backend: {source!r} (have: replica, synthetic, procthor)"
+        f"unknown SequenceSource backend: {source!r} "
+        "(have: replica, synthetic, procthor, rosbag, realsense)"
     )

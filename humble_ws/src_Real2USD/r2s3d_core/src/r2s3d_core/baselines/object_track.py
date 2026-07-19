@@ -104,12 +104,59 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
     if config.get("v1_dedup"):
         _v1_position_suppress(tracks)
 
+    # Node payload: "asset" (SAM3D mesh + scale-fit + ICP, default) vs "cluster" (the track's
+    # fused observed point cloud, no generation) — the confound-free ablation isolating what
+    # per-instance generation buys (GENERATION_ABLATION_PLAN.md B). Cluster holds tracks/depth/
+    # scoring fixed and varies ONLY the representation, so it is a same-front-end stand-in for
+    # what Hydra/ConceptGraphs/Khronos output.
+    node_payload = config.get("node_payload", "asset")
+    if node_payload not in ("asset", "cluster"):
+        raise ValueError(f"unknown node_payload {node_payload!r} (have: asset, cluster)")
+
     mature = [t for t in tracks if t.state == TrackState.MATURE]
     preds: List[SceneObject] = []
     placements = []    # per object: enough to rebuild the posed mesh -> scene_graph.json
     pending = 0
     invocations = 0
+    n_cluster = 0
     for t in mature:
+        if node_payload == "cluster":
+            # No SAM3D, no registration: the "shape" IS the observed fused cloud. OBB (same
+            # convention as the asset box) for extent/pose; the points for surface metrics.
+            # `cluster_denoise` (default on) applies the standard clustering-scene-graph
+            # cleaning (SOR + largest-DBSCAN-cluster; ConceptGraphs/HOV-SG denoise the
+            # accumulated cloud before boxing) so the baseline is a FAITHFUL clustering node,
+            # not an edge-bleed-inflated raw cloud. Off = the raw-cloud ablation.
+            raw = np.asarray(t.fused_cloud, dtype=np.float64)
+            cloud = s3d._denoise_cloud(raw) if config.get("cluster_denoise", True) else raw
+            if len(cloud) < 4:
+                log.info("track %d cluster payload has %d points (<4) after cleaning; skipping",
+                         t.track_id, len(cloud))
+                continue
+            T_world_obj, extents = s3d._cloud_obb(cloud)
+            prov = {
+                "source": "cluster", "registration": "none", "track_id": t.track_id,
+                "views_used": len(t.kept_views), "n_obs": t.n_obs,
+                "label_votes": dict(t.label_votes), "det_track_ids": sorted(t.det_track_ids),
+                "merged_from": t.merged_from, "n_fused_points": int(len(raw)),
+                "n_points_after_denoise": int(len(cloud)),
+                "cluster_denoise": bool(config.get("cluster_denoise", True)),
+            }
+            preds.append(SceneObject(label=t.label(), T_world_obj=T_world_obj, extents=extents,
+                                     surface_pts=cloud, provenance=prov))
+            n_cluster += 1
+            placements.append({
+                "id": int(t.track_id), "label": t.label(), "payload": "cluster",
+                "center": np.asarray(T_world_obj, float)[:3, 3].tolist(),
+                "extents": np.asarray(extents, float).tolist(),
+                "T_world_obj": np.asarray(T_world_obj, float).tolist(),
+                "mesh": None, "registration": "none", "n_obs": int(t.n_obs),
+                "views_used": len(t.kept_views), "n_fused_points": int(len(raw)),
+                "n_points_after_denoise": int(len(cloud)),
+                "det_track_ids": sorted(t.det_track_ids), "merged_from": t.merged_from,
+            })
+            continue
+
         obs = _best_view(t)
         if obs is None:
             log.info("track %d matured with no usable view; skipping", t.track_id)
@@ -276,8 +323,9 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
 
     # hand per-object placements to the runner to persist as scene_graph.json
     if placements:
+        _queue = Path(config["sam3d_queue"]) if config.get("sam3d_queue") else None
         config.setdefault("_placements", {})[str(getattr(source, "scene", "scene"))] = {
-            "sam3d_queue": str(queue) if queue else None,
+            "sam3d_queue": str(_queue) if (_queue and node_payload == "asset") else None,
             "method": config.get("method"),
             "objects": placements,
         }
@@ -287,7 +335,9 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
     stats = config.setdefault("_method_stats", {})
     n_gt = len(gt) if gt else 0
     stats[scene] = {
+        "node_payload": node_payload,
         "sam3d_invocations": invocations,
+        "n_cluster_payloads": n_cluster,
         "n_tracks_total": sum(1 for t in tracks if t.state != TrackState.MERGED),
         "n_mature": len(mature),
         "n_merged": sum(1 for t in tracks if t.state == TrackState.MERGED),
@@ -351,3 +401,14 @@ def object_track_scale_icp(source, gt, config) -> List[SceneObject]:
     """ObjectTrack + scale-fit + rigid ICP for pose (the full scale+pose fix; the
     detector-driven counterpart of sam3d_layout_scale_icp)."""
     return _run(source, gt, config, reid=True, late_merge=True, registration="scale_icp")
+
+
+def object_track_cluster(source, gt, config) -> List[SceneObject]:
+    """ObjectTrack with the CLUSTER node payload: each object is the track's fused observed
+    point cloud (no SAM3D generation, no registration). The confound-free ablation baseline
+    — same tracks/depth/scoring as the asset methods, varying ONLY the representation, so it
+    stands in for what clustering scene-graph methods output (GENERATION_ABLATION_PLAN.md B).
+    Equivalent to ``object_track --node-payload cluster``."""
+    cfg = dict(config)
+    cfg["node_payload"] = "cluster"
+    return _run(source, gt, cfg, reid=True, late_merge=True, registration="none")

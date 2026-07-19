@@ -266,3 +266,71 @@ def test_scene_geometry_absent_without_meshes():
     preds = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]))]
     m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=True)
     assert "scene_chamfer_mean_m" not in m  # no meshes -> class-free geometry skipped
+
+
+# ------------------------------------------------------------------- footprint IoU
+
+def test_footprint_iou_identical_clouds_is_one():
+    # same points -> same occupied cells -> IoU 1
+    rng = np.random.RandomState(0)
+    pts = rng.uniform(-1, 1, size=(500, 3))
+    assert geo.footprint_iou(pts, pts, cell=0.05) == pytest.approx(1.0)
+
+
+def test_footprint_iou_z_invariant():
+    # shifting one cloud purely in Z must not change the top-down footprint
+    rng = np.random.RandomState(1)
+    pts = rng.uniform(-1, 1, size=(500, 3))
+    shifted = pts.copy()
+    shifted[:, 2] += 3.0
+    assert geo.footprint_iou(pts, shifted, cell=0.05) == pytest.approx(1.0)
+
+
+def test_footprint_iou_disjoint_is_zero():
+    # two clouds in far-apart XY regions share no cells -> IoU 0
+    rng = np.random.RandomState(2)
+    a = rng.uniform(0, 1, size=(300, 3))
+    b = rng.uniform(100, 101, size=(300, 3))
+    assert geo.footprint_iou(a, b, cell=0.05) == pytest.approx(0.0)
+
+
+def test_footprint_iou_half_overlap():
+    # two 10x10 blocks of cells (points at cell centres to avoid boundary fp jitter),
+    # offset by 5 cells in x: x-cells {0..9} vs {5..14} -> intersection 5, union 15,
+    # y identical -> IoU = 50/150 = 1/3.
+    g = 0.1
+    centres = (np.arange(10) + 0.5) * g          # 0.05, 0.15, ..., 0.95
+    grid_a = np.array([[x, y, 0.0] for x in centres for y in centres])
+    grid_b = grid_a + np.array([5 * g, 0.0, 0.0])
+    assert geo.footprint_iou(grid_a, grid_b, cell=g) == pytest.approx(1 / 3)
+
+
+def test_footprint_iou_empty_is_nan():
+    pts = np.zeros((0, 3))
+    assert np.isnan(geo.footprint_iou(pts, np.ones((3, 3)), cell=0.05))
+
+
+def test_footprint_iou_in_evaluate_with_meshes():
+    trimesh = pytest.importorskip("trimesh")
+    box = trimesh.creation.box(extents=[1, 1, 1])
+    gts = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]), mesh=box)]
+    preds = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]), mesh=box)]
+    m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=True, surface_points=4000)
+    assert "footprint_iou" in m
+    assert m["footprint_iou"] > 0.9  # coincident boxes -> near-full footprint overlap
+
+
+def test_scene_geometry_scores_cluster_surface_pts():
+    # cluster payload (no mesh) is scored from its attached surface points -- a coincident
+    # GT mesh and pred point cloud must produce a finite Chamfer + high footprint IoU.
+    trimesh = pytest.importorskip("trimesh")
+    box = trimesh.creation.box(extents=[1, 1, 1])
+    cloud, _ = trimesh.sample.sample_surface(box, 3000)
+    gts = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]), mesh=box)]
+    preds = [M.SceneObject("box", _pose([0, 0, 0]), np.array([1.0, 1, 1]),
+                           surface_pts=np.asarray(cloud))]
+    m = M.evaluate(preds, gts, iou_threshold=0.25, compute_geometry=True, surface_points=3000)
+    assert np.isfinite(m["scene_chamfer_mean_m"])
+    # two independent surface samplings of the same box disagree only on a few boundary
+    # cells -> high but not perfect footprint overlap; the point is the cluster path scores.
+    assert m["footprint_iou"] > 0.8

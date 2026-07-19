@@ -167,6 +167,40 @@ def test_late_merge_collapses_duplicate_object():
     assert a_track.merged_from                          # records what it absorbed
 
 
+def test_precision_gate_rejects_short_tracks():
+    # A seen every frame (persistent); B seen only the first 3 frames (matures via
+    # MIN_ACTIVE_OBS=3 but is short-lived). The persistence gate should drop B, keep A.
+    n = 8
+    ds = DetectionSet(scene="fix", height=H, width=W)
+    for i in range(n):
+        ds.detections.append(_det(i, _A, 1))
+        if i < 3:
+            ds.detections.append(_det(i, _B, 2))
+    base = {"reid": True, "late_merge": True}
+    ungated = _mature(run_tracker(_frames(), ds.by_frame(), dict(base)))
+    assert sorted(t.label() for t in ungated) == ["chair", "table"]
+    gated = _mature(run_tracker(_frames(), ds.by_frame(),
+                    dict(base, track_gate=True, gate_min_obs=5, gate_min_score=0.0)))
+    assert [t.label() for t in gated] == ["chair"]        # short B rejected
+
+
+def test_precision_gate_rejects_lowconf_tracks():
+    # Both persistent, but B's detections are low-confidence. The confidence gate should
+    # drop B (mean score 0.2 < 0.4), keep A (0.9). n_obs criterion satisfied for both.
+    n = 8
+    ds = DetectionSet(scene="fix", height=H, width=W)
+    for i in range(n):
+        a = _det(i, _A, 1); a.score = 0.9
+        b = _det(i, _B, 2); b.score = 0.2
+        ds.detections += [a, b]
+    base = {"reid": True, "late_merge": True}
+    ungated = _mature(run_tracker(_frames(), ds.by_frame(), dict(base)))
+    assert sorted(t.label() for t in ungated) == ["chair", "table"]
+    gated = _mature(run_tracker(_frames(), ds.by_frame(),
+                    dict(base, track_gate=True, gate_min_obs=1, gate_min_score=0.4)))
+    assert [t.label() for t in gated] == ["chair"]        # low-confidence B rejected
+
+
 def test_voxel_cloud_dedups_within_1cm():
     vc = VoxelCloud(0.01)
     vc.add(np.array([[0.0, 0.0, 0.0], [0.003, 0.0, 0.0], [0.006, 0.002, 0.0]]))

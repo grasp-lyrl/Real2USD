@@ -7,7 +7,8 @@ trimesh = pytest.importorskip("trimesh")
 
 from scipy.spatial.transform import Rotation
 
-from r2s3d_core.baselines.sam3d_layout import _fit_scale_to_extent, _observed_obb_extent
+from r2s3d_core.baselines.sam3d_layout import (_fit_scale_to_extent, _observed_obb_extent,
+                                               _denoise_cloud)
 
 
 def test_scale_fit_matches_target_extent():
@@ -29,3 +30,24 @@ def test_observed_obb_extent_of_box_cloud():
 
 def test_observed_obb_extent_degenerate_returns_none():
     assert _observed_obb_extent(np.zeros((5, 3))) is None
+
+
+def test_denoise_cloud_removes_edge_bleed_outliers():
+    # a 0.3x0.6x0.9 box body + a handful of far-off "edge bleed" points; denoising should
+    # drop the outliers so the OBB extent recovers the body (raw OBB is inflated by them).
+    pytest.importorskip("open3d")
+    rng = np.random.RandomState(0)
+    body = trimesh.creation.box(extents=[0.3, 0.6, 0.9]).sample(3000)
+    outliers = rng.uniform(-3, 3, size=(40, 3))  # scattered far from the body
+    raw = np.vstack([body, outliers])
+    raw_ext = np.sort(_observed_obb_extent(raw))[::-1]
+    clean = _denoise_cloud(raw)
+    clean_ext = np.sort(_observed_obb_extent(clean))[::-1]
+    assert len(clean) < len(raw)                       # outliers dropped
+    assert clean_ext[0] < raw_ext[0]                   # OBB no longer inflated
+    np.testing.assert_allclose(clean_ext, [0.9, 0.6, 0.3], rtol=0.15)
+
+
+def test_denoise_cloud_fallback_on_tiny_input():
+    pts = np.zeros((5, 3))
+    np.testing.assert_array_equal(_denoise_cloud(pts), pts)  # <30 pts -> passthrough

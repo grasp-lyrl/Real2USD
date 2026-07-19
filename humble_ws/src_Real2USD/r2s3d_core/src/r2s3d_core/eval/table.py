@@ -30,6 +30,7 @@ _COLUMNS = [
     ("centroid_err_median_m", "cent(m)", "{:.3f}", True),
     ("scale_err_median", "scale", "{:.3f}", True),
     ("scene_chamfer_mean_m", "chamfer(m)", "{:.3f}", True),   # scene-level pooled (coworker Chamfer)
+    ("footprint_iou", "footIoU", "{:.3f}", False),            # top-down occupancy IoU (coworker Mesh row)
     ("surf_fscore@0.05", "surfF@5cm", "{:.3f}", False),       # surface-recon coverage (NOT geo recall)
 ]
 

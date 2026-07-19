@@ -44,6 +44,26 @@ def test_place_anisotropic_scale():
     np.testing.assert_allclose(np.sort(ext), [1, 1, 2], atol=1e-6)
 
 
+def test_cloud_obb_recovers_box_extent():
+    # cluster-payload OBB: a dense sampling of a 2x1x0.5 box -> OBB extents match, center at 0.
+    box = trimesh.creation.box(extents=[2.0, 1.0, 0.5])
+    pts, _ = trimesh.sample.sample_surface(box, 4000)
+    T, ext = B._cloud_obb(np.asarray(pts))
+    np.testing.assert_allclose(np.sort(ext), [0.5, 1.0, 2.0], atol=0.02)
+    np.testing.assert_allclose(T[:3, 3], [0, 0, 0], atol=0.02)
+
+
+def test_cloud_obb_too_few_points_raises():
+    with pytest.raises(ValueError):
+        B._cloud_obb(np.zeros((3, 3)))
+
+
+def test_object_track_cluster_registered():
+    from r2s3d_core.baselines import get_method, AVAILABLE
+    assert "object_track_cluster" in AVAILABLE
+    assert callable(get_method("object_track_cluster"))
+
+
 def test_place_respects_world_cam():
     # move the camera 5m in world +x; object should shift with it
     mesh = trimesh.creation.box(extents=[1, 1, 1])

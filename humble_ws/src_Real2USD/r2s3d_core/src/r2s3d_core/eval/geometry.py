@@ -239,3 +239,27 @@ def chamfer_and_fscore(pts_pred: np.ndarray, pts_gt: np.ndarray, taus=(0.05, 0.0
         out[f"recall@{tau}"] = recall
         out[f"fscore@{tau}"] = f
     return out
+
+
+def footprint_iou(pts_pred: np.ndarray, pts_gt: np.ndarray, cell: float = 0.05) -> float:
+    """Top-down (X,Y) occupancy IoU between two point clouds.
+
+    Both clouds are projected to the ground plane (Z dropped) and rasterized to a
+    shared square grid of side ``cell`` metres, quantized against a common world
+    origin so cells align regardless of extent. IoU is over the sets of occupied
+    cells: ``|pred ∩ gt| / |pred ∪ gt|``.
+
+    This is the coworker table's Mesh "Footprint IoU" row -- a 2D floor-plan overlap
+    that rewards spatial coverage of the scene independent of vertical extent
+    (see docs/GENERATION_ABLATION_PLAN.md; exact def AI-7 Q5, scene-level 5cm default).
+    Returns ``nan`` when either side is empty.
+    """
+    if len(pts_pred) == 0 or len(pts_gt) == 0:
+        return float("nan")
+    # floor(coord / cell) against the world origin -> integer cell index per point.
+    pred_cells = set(map(tuple, np.floor(pts_pred[:, :2] / cell).astype(np.int64)))
+    gt_cells = set(map(tuple, np.floor(pts_gt[:, :2] / cell).astype(np.int64)))
+    union = len(pred_cells | gt_cells)
+    if union == 0:
+        return float("nan")
+    return len(pred_cells & gt_cells) / union

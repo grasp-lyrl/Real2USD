@@ -8,14 +8,77 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 - **Things only the human can do: `ACTION_ITEMS.md`** (Claude adds to it on every gated dependency)
 - Datasets & access: `DATASETS.md` · In-family systems & ideas to steal: `RELATED_WORK.md`
 
-_Last updated: 2026-07-15 (first REAL detector-driven val-s200 run: `object_track_icp` on
-gt-prompt YOLOE detections + full SAM3D worker → iou_f1@.25 **0.545**, centroid **4.5cm**,
-class-free recall 1.0, scan2cad 0.15, chamfer 0.10. Corrects the earlier "box inflation"
-scare (that was a SAM3D-free cloud-OBB proxy artifact; real placement is fine). GT mesh
-orientation fixed: placed by AI2-THOR true rotation, not PCA (`_R_unity_euler`+`place_canonical_by_linmap`,
-cache v2). Prior: split footgun fixed (`--split` on rescore/detect.run), CLIP-nearest-in-set
-label mapping (`eval/label_map.py`, `--label-map clip`). NEXT = other variants + generic/pf
-detector prompts through the real pipeline; extend to 137/428)._
+_**▶ NEXT SESSION FOCUS (2026-07-19): `docs/GENERATION_ABLATION_PLAN.md`** — the confound-free
+internal ablation (cluster-cloud vs SAM3D-asset, same tracks) + a new Footprint IoU metric, on
+ProcTHOR val, to prove whether generation improves geometry ACCURACY (not just richness) and to
+fill our column (Objects+Mesh) in the coworker's benchmark. **Deliverable A (Footprint IoU metric)
+DONE + tested (98 tests pass):** `geo.footprint_iou` + `footprint_iou` metric key + `SceneObject.
+surface_pts` (for the cluster payload). First real number — `object_track_icp` asset, s200 val:
+**footprint_iou 0.420 / chamfer 0.100 m** vs coworker Mesh best (Kimera 0.095 / 0.489) = ~4.4× / ~5×.
+Coworker's per-method targets are now transcribed into the plan's "Benchmark targets" section.
+**★ GENERATION-VALUE WIN (2026-07-19): shape-completion of the unobserved surface.** The strong,
+defensible "why generate" result (`scripts/gen_shape_completion.py`, s200, 22 large objects): oracle-
+placed asset reconstructs the UNSEEN surface **2× better** than the clean cluster at low coverage
+(0.085 vs 0.172 m), 18/22 objects, gap diverges as coverage drops. Qualitative panel: armchair 44%
+observed → generation fills the unobserved base (`results/paper/_figs/completion_panel_s200_t26.png`).
+This is paper Fig 4. Honesty: oracle placement isolates the shape prior; pair with the end-to-end
+coverage diagnostic (placement is observation-limited). Also this session: **Clio real-robot baseline**
+(4 scenes, coworker-independent — v2 ≫ Clio on strict placement), **v1 dropped as a comparison row**
+(confounded; internal ±scale-fit/±gate ablations carry contributions), paper structure built out
+(`WORKSHOP_PAPER_PLAN.md`), experiment index + naming + aggregator (`docs/EXPERIMENT_MATRIX.md`,
+`scripts/agg_paper.py`). **AI-9 RESOLVED (Wayland→Xorg; render on `:0`+gdm auth). VAL-10 CLUSTER DONE (n=10):** iou_f1 0.405,
+footprint 0.446, scale_err 0.306, cd_f1@1m 0.686 — tracks s200 (0.386) → **Claim B has n=10 breadth**
+("observed cluster localizes/covers consistently across 10 scenes; generation not needed for
+localization"). Asset stays s200 per decision (0.545/0.420/0.233/0.727). Runs `results/paper/sim/`,
+CSVs `results/paper/_tables/sim_*.csv` (regen via `scripts/agg_paper.py`).
+
+**Deliverable B (cluster payload) + FAIRNESS ROW DONE (s200 val) — conclusion CORRECTED.**
+`object_track_cluster` / `--node-payload cluster` (denoise default-on = ConceptGraphs/HOV-SG node
+convention; `--no-cluster-denoise` = raw ablation). Three-way asset vs raw vs DENOISED cluster: the
+raw-cluster "asset 3×" was edge-bleed contamination, not generation. Against a FAIR denoised cluster:
+footprint the cluster WINS (0.464>0.420), scale/cd_f1@1m/surf-coverage TIE, and the asset's real
+remaining win is strict metric-box quality only — **3D-IoU 0.545 vs 0.386 (1.4×), Scan2CAD 0.151 vs
+0.097 (1.6×), centroid 4.5 vs 7.8 cm** + the simulatable mesh. **Generation (C1+C3) is real but MODEST
+on clean sim.** ⚠ **RETRACTED the "front-end ~5× vs the field" idea** — the cluster-vs-published
+footprint gap (0.40 vs 0.006–0.095) is CONFOUNDED (our gt-vocab near-oracle prompting vs their
+open-vocab; scene-level-pooled vs their unconfirmed footprint def; architecture ~ConceptGraphs). Only
+the asset-vs-cluster ABLATION is a controlled claim. See GENERATION_ABLATION_PLAN.md "Step 1 DONE" +
+WORKSHOP_PAPER_PLAN "DO NOT claim a front-end ~5× win". NEXT: val-10 aggregate (asset + denoised
+cluster); for a fair FIELD entry, produce open-vocab (`generic`/`pf`) rows or cite gt-vocab caveat. This session also finished the
+real-robot leg: 4-scene v2 table + v1 baseline + precision gate (`--track-gate`, helps all 4 scenes);
+ICP-drop probed and RETRACTED (do not drop ICP). Details below._
+
+_Last updated: 2026-07-19 (real-robot leg complete + v1 baseline established; see "Real-robot eval
+leg" section. Precision gate implemented. **`docs/GENERATION_ABLATION_PLAN.md` is the next focus.**)_
+
+_Prior 2026-07-18 (**FIRST REAL-ROBOT PLACEMENT NUMBERS** — full detect→track→SAM3D→register
+pipeline on Go2 hallway-1 via `RealSenseSource`, stride-2 gt masks: 33/57 tracks, scale-fit (reproj)
+cuts real-depth scale_err **0.375→0.240** (C3 confirmed on real data), best centroid 0.260 m +
+label_acc 0.75; but IoU/Scan2CAD floored — centroid ~0.26–0.31 m is scatter-dominated (systematic
+XY bias only ~0.24 m). Pose-only ICP hurts rotation on detector-mask clouds (5.9°→18°). Full table +
+next levers in the "Real-robot eval leg" section below.)_
+
+_Prior (2026-07-17): val-s200 **SAM3D layout baseline** produced on the correct houses:
+`sam3d_layout{,_icp,_scale,_scale_icp}` on oracle GT masks → Object-F1 **0.94** / iou_f1@.25
+**0.66–0.73**, vs object_track's **0.39** / **0.47–0.55** on YOLOE masks. The .39→.94 jump is
+the **perception gap** (detection recall ~0.48 + CLIP labels ~0.55), not asset geometry. Scale-fit
+HELPS on oracle masks (layout_scale_icp S2C .17→.33) but craters on the YOLOE fused cloud — regime-
+dependent. **generic/pf detector prompts through the real pipeline: RUNNING (2026-07-17).**_
+
+**📊 Running metrics visualization (keep adding to it):** a published Artifact compiles the
+ProcTHOR s200 experiment metrics into a coworker-facing table (mask-source column, coworker
+metric-name mapping, metric dictionary, provenance notes) — regenerated from `run.json`
+aggregates, never hand-edited. **URL: https://claude.ai/code/artifact/5896089c-86ab-4a45-9fe5-41f068be0fe3**
+As new experiments land (variants, prompts, other scenes), add rows here rather than making
+one-off tables. Source HTML lives in the session scratchpad; rebuild + republish the same file
+path to keep the URL. See [[procthor-mask-provenance-and-val-ceiling]].
+
+_Prior (2026-07-15): first REAL detector-driven val-s200 run (`object_track_icp` on gt-prompt
+YOLOE + SAM3D worker → iou_f1@.25 0.545, centroid 4.5cm, class-free recall 1.0, scan2cad 0.15,
+chamfer 0.10). Corrects the earlier "box inflation" scare (SAM3D-free cloud-OBB proxy artifact).
+GT mesh orientation fixed: placed by AI2-THOR true rotation not PCA (`_R_unity_euler`+
+`place_canonical_by_linmap`, cache v2). Split footgun fixed (`--split` on rescore/detect.run),
+CLIP-nearest-in-set label mapping (`eval/label_map.py`, `--label-map clip`)._
 
 ### Detector-driven ProcTHOR — val scene 200 (measured 2026-07-14, no SAM3D; recall/placement only)
 
@@ -161,9 +224,278 @@ set — ablating them is an eval re-run, **not** a SAM3D re-queue.
 | 3 | Localization stack (TEASER++ / ICP / refine) | 🟢 **scale fix found** | **`scale+ICP` is the win**: depth-extent scale-fit cuts scale err 0.31→0.14 (2.6×) and Scan2CAD 0.12→0.31. ICP fixes pose; TEASER-vs-depth shelved (shrink-to-fit). See below. |
 | 4 | Reconciliation + export | ⬜ not started | needs Isaac Sim |
 | 5 | Benchmark campaign | 🟡 side-thread started | **ProcTHOR/MolmoSpaces scene-graph comparison adapter built + validated** (see below). Main campaign dataset access is the long pole — [AI-2..5](ACTION_ITEMS.md) started early |
-| 6 | Paper rewrite | ⬜ not started | |
+| 6 | Paper rewrite | 🟡 planning | **Target: SeMaNa @ IROS 2026 workshop (non-archival, 2–4 pp, deadline 2026-07-29).** Plan + locked framing in `WORKSHOP_PAPER_PLAN.md`: rename to lead with method (USD demoted to sim-export), lead with "SAM 3D shape≠scene + our placement" (C1+C3), include compact real-robot Go2 fig. |
 
 Legend: ⬜ not started · 🟡 in progress / partially blocked · 🟢 done · 🔴 blocked
+
+## Real-robot eval leg — Go2 adapters BUILT + validated (2026-07-18)
+
+For the workshop-paper real-robot placement table (`WORKSHOP_PAPER_PLAN.md` Tier 2), the
+Go2 bags now flow through the same `SequenceSource` interface as Replica/ProcTHOR. **Two
+sensor sources:**
+
+- **`data/realsense.py` `RealSenseSource` (source `realsense`/`rs`) — PRIMARY.** All 4
+  scenes have proper RealSense bags under `/data/go2/rs/` with **rgb8 color + dense
+  hardware-aligned depth (~65–90% valid) + `/utlidar/robot_pose` in the GT odom frame**.
+  Depth-triggered RGB-D; `depth_mm/1000`; pose via `frames.T_odom_cam_go2`; no
+  cloud/projection/undistort. Scenes: lounge-0, smalloffice-0/1, hallway-1. Validated
+  lounge-0 (len 1014, 65–72% depth) + hallway GT-box overlay on objects. NOTE: an earlier
+  claim that lounge/smalloffice RS color was depth was a **topic-selector bug**
+  (`endswith("color/image_raw")` also matched the aligned-depth topic) — RS color is real
+  rgb8. Overlays in `r2s3d_core/results/rosbag_debug/`.
+  **TIME-SYNC GOTCHA (fixed):** `/utlidar/robot_pose` stamps its `header.stamp` on the
+  robot's internal clock — offset from the camera wall clock by **~months** though both
+  cover the same recording window — so pairing pose↔depth by header stamp pins every frame
+  to one pose (camera never moves → all tracks collapse to one corner, recall ~0). Fixed:
+  `RealSenseSource` syncs by **bag record time** (`tsn` from `r.messages`), a single clock
+  across topics. (Lidar `/odom` IS on the camera clock — RosbagSource unaffected.)
+  **First real-data tracker diagnostic (hallway-1, YOLOE gt-vocab, stride 5, 450 det → 22
+  mature tracks, no SAM3D):** per-track centroid recall vs 57 cuboid GT — full (reid+merge)
+  **@0.25m 0.07 / @0.5m 0.19 / @1.0m 0.32**, over-seg only 3/57. Association is NOT the
+  bottleneck (full≈naive track count, reid/merge lift recall 0.14→0.19@0.5m). Bottlenecks:
+  detection recall/coverage + centroid precision (RS extrinsic is the uncalibrated front-cam
+  `[0.285,0,0.01]`; masked-depth gives surface- not box-centroid — SAM3D+registration fixes
+  the latter). NEXT lever: calibrate the RS→odom extrinsic (v1 had a `realsense_to_lidar_transform`).
+  **Detector prompt probe (hallway-1 RS, STRIDE 2, multi-view DETECTION recall vs 57 GT):**
+  `gt` 1113 det/3 labels **@0.5m 0.65 / @1.0m 0.88**; `pf` 5779 det/**217 labels** @0.5m 0.89 /
+  @1.0m 0.96 (best recall but junk labels → needs CLIP relabel+filter before tracking);
+  `generic` 882 det/18 labels 0.60/0.82 (worst — drop). **Stride is the dominant lever**
+  (gt @1m 0.32→0.88 from stride 5→2). Recommended working config: **`gt` @ stride 2** (clean);
+  `pf` is the recall ceiling if CLIP relabeling is added. GT-box overlays (fixed pose) in
+  `results/rosbag_debug/RS_hallway_gtbox_fixed_*.png` show boxes in correct regions, ~0.4m off.
+  **Frame reconciliation (2026-07-18):** the v1 `/data/sam3d/*-{lidar,rs}/accumulated_points.ply`
+  clouds are in a **first-pose-relative** odom origin (lounge cloud X[-3,13] = GT X[33,43] minus
+  the start pose), NOT the absolute-odom GT frame — so they can't directly calibrate the RS
+  extrinsic to GT. `RealSenseSource` (absolute odom) IS in the GT frame — that choice is correct.
+  If extrinsic calibration is wanted, ICP **my** RS cloud ↔ **my** lidar-bag cloud (both GT frame).
+  **FIRST REAL PLACEMENT NUMBERS — hallway-1 (2026-07-18, full detect→track→SAM3D→register
+  pipeline, stride 2 gt masks, 33 mature tracks / 57 GT, SAM3D worker drained 33/33 on the 5090).**
+  The SAM3D mesh cache is registration-independent, so the 3-row ablation below is one SAM3D pass +
+  free eval re-runs (`--sam3d-queue results/phase0_hallway1_rs_icp/sam3d_queue` to reuse):
+
+  | metric | layout | +ICP (pose) | +scale+ICP (reproj) |
+  |---|---|---|---|
+  | iou_f1@.25 | 0.067 | 0.111 | 0.089 |
+  | Scan2CAD | 0.000 | 0.000 | 0.000 |
+  | centroid med | 0.292 m | 0.308 m | **0.260 m** |
+  | rotation med | **5.9°** | 18.2° | 19.8° |
+  | scale_err med | 0.375 | 0.357 | **0.240** |
+  | centroid recall@.5m | 0.211 | 0.228 | **0.246** |
+  | label_acc | 0.33 | 0.60 | **0.75** |
+
+  **Findings:** (1) **the depth-extent scale-fit earns its keep on REAL depth** — scale_err
+  0.375→**0.240** (~36%) with `scale_source=reproj`, plus best centroid + label_acc. This is the
+  paper C3 thesis confirmed in the real regime (on sim val, scale-fit ≈ ICP because SAM3D scale is
+  already decent; on real Go2 depth it clearly helps). (2) **[RETRACTED 2026-07-19] The earlier
+  "pose-only ICP HURTS rotation (5.9°→18°)" claim was a small-matched-set artifact.** The full
+  registration ablation (layout/icp/scale/scale_icp, both scenes) shows only TP=3–6 matched objects,
+  so rotation/centroid *medians* are high-variance and not comparable across variants (layout's low
+  rotation is over the 3 easiest objects; ICP matches 5–6 incl. harder-rotated ones). On the headline
+  **IoU-F1 ICP actually helps/ties** (hallway icp 0.111 > scale_icp 0.089 > layout 0.067; lounge
+  icp/scale_icp 0.156 > layout 0.130) — do NOT drop ICP. The robust effect is scale-fit ↓ scale_err;
+  registration mode otherwise barely moves iou_f1/cd_f1/coverage. (3) **Everything IoU/Scan2CAD-gated stays floored** because
+  the centroid is stuck at ~0.26–0.31 m (vs ~5 cm on sim val), far above what IoU@.25 / Scan2CAD's
+  20%-scale gate need. **Centroid residual is SCATTER-dominated** (matched-pred diagnostic: mean
+  signed XY offset ≈(−0.16,−0.18) m, |mean|=0.24 vs per-axis std 0.33–0.37, |std|=0.55; Z well-
+  aligned, median |Z| 0.16 m). So the uncalibrated front-cam RS extrinsic contributes a modest
+  ~0.24 m systematic XY bias, but the DOMINANT error is per-object scatter (depth/mask/surface-
+  centroid noise, partial views) — **extrinsic calibration will only partially help** (expect
+  median XY ~0.38→~0.30, not sim-level). Runs: `results/phase0_hallway1_rs_{layout,icp,
+  scale_icp_reproj}/`. Minor bug: compare-GLB export fails ("Can't export empty scenes") on all 3
+  runs — scene_graph.json writes fine (33 objects); visual-inspection GLB needs a fix.
+  **C2 COVERAGE DECOMPOSITION (2026-07-18, `scripts/rs_coverage_diag.py`).** WHY does detection
+  recall 0.88@1m collapse to mature-track recall 0.37@1m? Decomposed the 57 GT (τ=1.0m): recalled
+  **21 (0.37)**, never-detected **15 (0.26)**, localization-lost **12 (0.21)** (a mature track sits
+  ≤1m away but greedy 1-to-1 gave it to a neighboring GT — clutter contention + scatter), associable
+  fragmentation **5 (0.09)**, sparsity **5 (0.09)**. Mature-track disposition: **33 mature → 19
+  distinct GT, 4 duplicate, 10 (30%) FALSE-POSITIVE** (no GT within 1m). **Surprise result: the
+  multi-view association is NOT the leak** — fragmentation is only ~9% and late-merge already folds
+  18 tracks; the maturation gate is effectively `MIN_ACTIVE_OBS=3` (batch finalize matures every
+  ACTIVE track, so `MIN_MATURE_VIEWS=6` is dead code in eval). The real limiters are **(1) track
+  PRECISION** — 30% of mature tracks are FP spurious detections surviving ≥3 frames (drives eval
+  precision 0.15); **(2) LOCALIZATION scatter** — the same 0.55m scatter that floors placement also
+  breaks GT matching (12 GT lost to contention, and obs centroids sit 0.5–1m off box centers:
+  never-detected drops 24→15 as τ 0.5→1.0); **(3) detector COVERAGE** — 26% of GT never detected
+  within 1m (all 4 outlets, some chairs/tables). Also 166/1113 detections (15%) never became track
+  observations (likely no valid masked depth). [[perception-robustness-crux]] said multi-view
+  recall recovery was the thesis; on THIS real scene the mechanism works but is bottlenecked by
+  precision + localization, not association.
+  **Next levers, re-ranked by this evidence:** (a) **track precision/confidence gate** — reject the
+  10 FP mature tracks (persistence + label-vote/appearance consistency + fused-cloud density gate);
+  lifts precision AND placement F1; (b) **localization scatter** — box-centroid not surface-centroid,
+  tighter fused-cloud depth gating (helps placement AND matching/coverage — shared root cause);
+  (c) **detector coverage** — `pf` prompt + CLIP relabel, or stride 1 (raises the 0.74/0.88 ceiling);
+  (d) RS extrinsic calibration (partial, ~0.24 m systematic only); (e) extend to lounge-0/
+  smalloffice-0/1. Association tuning (assoc_reproj, lower gate) is LOW payoff here (~5 GT).
+
+  **TRACK PRECISION GATE — IMPLEMENTED (2026-07-18, lever a).** New opt-in `--track-gate`
+  (`tracks/tracker.py` `_passes_precision_gate`, applied AFTER late_merge so merged-in fragments
+  count toward persistence): demotes a MATURE track to REJECTED unless `n_obs >= gate_min_obs`
+  AND `mean(det_score) >= gate_min_score`. Defaults **6 / 0.40** (tuned by `scripts/rs_gate_sweep.py`
+  + full eval; knobs `--gate-min-obs`/`--gate-min-score`). Motivated by the FP-vs-TP characterization:
+  FP mature tracks are short-lived + low-confidence (median n_obs 6 vs 17, mean det_score 0.40 vs
+  0.50; 9/10 are hallucinated "door"). **Result on hallway-1 `object_track_scale_icp` (reproj):
+  cuts FP tracks 29→16, IoU-precision 0.121→0.200, IoU-F1 0.089→0.104, IoU-recall FLAT (0.070,
+  same 4 TP), centroid/scale/label unchanged.** Stricter 10/0.45 over-prunes (drops a TP, F1 back
+  to 0.088). On the loose class-free-1m metric the gate trades recall for precision (cd_recall
+  0.37→0.26) — expected; the honest IoU/Scan2CAD columns (the paper differentiator) improve.
+  Default OFF (prior runs reproduce). 91 tests pass (+2 gate unit tests in `test_tracks.py`).
+  Runs: `results/phase0_hallway1_rs_scaleicp_gate_{gentle,default}/`.
+
+  **CLIO BASELINE — scored with v2 metrics (2026-07-19, `scripts/score_clio_baseline.py`).**
+  Clio (Maggio RA-L'24) was run on the 4 Go2 scenes on an old machine; processed open-set object
+  graphs are at `/data/Clio/<scene>.graphml` (object nodes: open-set `name`, `bbox_pos` center,
+  `bbox_dim` extents, `bbox_orientation`). **Coordinates are ALREADY in the absolute-odom GT frame**
+  (per-scene X/Y ranges coincide with Supervisely GT → NO reconciliation, unlike v1). Scored directly
+  vs the SAME Supervisely GT + v2 `evaluate()`. A real published-method baseline on OUR real data,
+  **coworker-independent** (we do NOT reuse the coworker's benchmark numbers — Chris 2026-07-19).
+
+  | metric | Clio hallway | Clio lounge | Clio so-0 | Clio so-1 | **Clio mean** | **v2 mean (scale_icp+gate)** |
+  |---|---|---|---|---|---|---|
+  | n_pred / gt | 46/57 | 36/39 | 14/11 | 14/10 | — | — |
+  | IoU@.25 F1 | 0.019 | 0.053 | 0.000 | 0.083 | **0.039** | **~0.174** |
+  | recall@0.5 | 0.000 | 0.000 | 0.000 | 0.000 | **0.000** | ~0 (both floored) |
+  | centroid med | 0.358 | 0.343 | — | 0.270 | 0.324 | ~0.19 |
+  | scale_err med | 0.524 | 0.317 | — | 0.811 | 0.551 | ~0.35 |
+  | cd_f1@1m | 0.485 | 0.427 | 0.560 | 0.667 | **0.535** | ~0.63 |
+  | class-free@1m | 0.579 | 0.462 | 0.909 | 0.800 | **0.687** | ~0.75 |
+
+  **Read (honest + favorable):** Clio is COMPETITIVE on loose open-set recall (cd_f1@1m 0.535,
+  class-free 0.687 — occasionally ties v2, e.g. so-0 class-free 0.909) but FAILS strict metric
+  placement (IoU-F1 0.039, scale_err 0.55, recall@0.5=0 on all scenes). It boxes CLIP *segments* with
+  no metric-extent step → localizes objects roughly but can't size/pose them. **This is exactly the
+  C3 differentiator** (asset+registration → well-sized, well-placed boxes). Caveat: Clio boxes are
+  CLIP-segment extents (some tiny fragments), so the strict-IoU gap partly reflects that Clio isn't
+  built for metric boxes — report BOTH the loose (Clio ≈ v2) and strict (v2 ≫ Clio) columns; lead the
+  differentiator on the strict/scale metrics. Label_acc is noise here (matched sets 0–3 objects);
+  `--label-map clip` is an IDENTITY no-op for Clio (its stripped labels chair/table/door are already
+  in the GT vocab → don't re-run expecting movement; Clio emits only 3 coarse categories, misses outlet).
+  **This is the workshop's field baseline — no need to install/run Clio or ConceptGraphs for the
+  submission; ConceptGraphs-on-our-data + ScanNet are resubmission investments.**
+
+  **[PAPER DECISION 2026-07-19, Chris] v1 is NOT a comparison row in the paper.** The v1→v2 delta
+  bundles multiple changes (consolidation + scale-fit + gate) AND is confounded (different detector,
+  open-vocab vs gt-vocab labels, 2/4 scenes), so it can't cleanly attribute any single change. The
+  v2-INTERNAL ablations (±scale-fit, ±gate — same front-end) carry "what our method buys"; the field
+  comparison is v2 vs Clio. v1 stays here for the record + a one-line provenance mention in the paper.
+
+  **V1 (OLD real2sam3d) BASELINE — scored with v2 metrics (2026-07-18, `scripts/score_v1_baseline.py`).**
+  To know whether v2 actually improves on the paper's v1 method, scored the committed v1 outputs at
+  `/data/sam3d/<scene>/scene_graph.json` (+ `glbs_world/` posed meshes) against the SAME Supervisely
+  GT + v2 `evaluate()`. **Frame reconciliation (load-bearing):** v1's world frame is absolute-odom in
+  orientation+Z but XY-shifted by the first robot pose (`demo_go2.py` subtracts `init_odom["t"][:2]`) —
+  so the map to the GT frame is a **pure XY translation**, read authoritatively from the v1-saved
+  `step_init/odom_rs.json` (validated: ADD → 15/57 matches on hallway, SUB/raw → 0). Boxes recomputed
+  as oriented bboxes from the posed `glbs_world` meshes (v1's `scene_graph` only stores inflated AABBs).
+  Old `humble_ws/evaluations` harness CANNOT score these as-is (reads a flat `objects` list, not the
+  step-wise on-disk schema; does no frame reconciliation; **no v1 numbers were ever saved**).
+
+  | metric | v1 hallway | v2 hallway (best) | v1 lounge (raw) | v1 lounge (dedup .5) |
+  |---|---|---|---|---|
+  | n_pred / gt | 33 / 57 | 20 / 57 | 69 / 39 | 39 / 39 |
+  | IoU@.25 F1 | 0.067 | **0.104** | 0.204 | 0.154 |
+  | IoU precision | 0.091 | **0.200** | 0.159 | 0.154 |
+  | centroid med | **0.239 m** | 0.260 | 0.234 | 0.199 |
+  | rotation med | **10.8°** | 19.8° | 8.1° | 6.8° |
+  | scale err med | 0.471 | **0.240** | 0.591 | 0.804 |
+  | cd-F1 @1m | 0.311 | **0.489** | 0.556 | 0.641 |
+  | class-free recall@1m | 0.404 | **0.579** | 0.923 | 0.897 |
+  | label acc | 0.33* | 0.75 | 0.27* | 0.33* |
+
+  *v1 uses OPEN-VOCAB labels (prompt-free SAM3D), v2 YOLOE gt-vocab — label_acc not comparable, and
+  the coverage/recall gap is partly a detector difference, not just the pipeline. **Read:** on
+  *matched* objects v1's centroid (0.20–0.24 m) and rotation (7–11°) are already as good as / better
+  than v2 — v2's ICP even hurts rotation on real detector-mask clouds. **v2's real wins are (1) SCALE**
+  (scale-fit 0.47/0.59→0.24, the C3 contribution), **(2) consolidation/precision** (v1 duplicate_rate
+  0.18 on lounge vs v2 ~0; ObjectTrack collapses per-step dups), **(3) closed-vocab labels.** But v1's
+  per-step coverage is strong on dense scenes (lounge class-free recall 0.92 raw). Both are floored on
+  IoU@.25/Scan2CAD by scale (recall@0.5 = 0 for both). The Feb-2026 `_out_2112026` v1 runs have 158/92
+  objects (per-step, little filtering → heavy dups) + `timing_metrics.json` (~20–100 s/frame — v1 runtime
+  line for the paper). **Implication for next steps:** v2's differentiators on real data are scale +
+  consolidation, NOT centroid/rotation; and coverage is detector-bound — reinforces the localization
+  (box-centroid) + detector-coverage levers over more registration tuning.
+
+  **V2 ON LOUNGE-0 — head-to-head with v1 (2026-07-18).** Ran the full v2 pipeline on lounge-0
+  (stride-2 gt YOLOE, 643 det → **38 mature tracks / 39 GT = tracks/gt 0.97**, SAM3D 38/38 drained).
+  Ablation reusing the cached meshes (`results/phase0_lounge0_rs_{layout,icp,scaleicp,scaleicp_gate}/`):
+
+  | metric | v1 raw (69) | v1 dedup (39) | v2 layout (38) | v2 scale+ICP (38) | v2 +gate (16) |
+  |---|---|---|---|---|---|
+  | IoU@.25 F1 | **0.204** | 0.154 | 0.130 | 0.156 | 0.182 |
+  | IoU precision | 0.159 | 0.154 | 0.132 | 0.158 | **0.312** |
+  | IoU recall | **0.282** | 0.154 | 0.128 | 0.154 | 0.128 |
+  | centroid med | 0.234 | **0.199** | 0.283 | 0.244 | 0.279 |
+  | rotation med | 8.1° | 6.8° | **4.8°** | 15.3° | 12.4° |
+  | scale err | 0.591 | 0.804 | 0.653 | **0.477** | 0.500 |
+  | cd-F1 @1m | 0.556 | 0.641 | **0.675** | 0.623 | 0.509 |
+  | class-free recall@1m | **0.923** | 0.897 | 0.872 | 0.795 | 0.564 |
+  | label acc | 0.27* | 0.33* | **1.00** | 1.00 | 1.00 |
+  | duplicate rate | 0.179 | 0 | 0 | 0.026 | 0 |
+
+  *open-vocab (v1) vs YOLOE gt-vocab (v2) — not comparable, and confounds coverage. **Honest read
+  (lounge is v1's strongest scene):** v1 raw actually WINS on IoU-F1 (0.204) — on a dense room the loose
+  IoU@.25 metric rewards its flood of 69 per-step detections (recall 0.28) despite dups (0.18). v2's
+  consolidation (69→38) TRADES that recall for a clean map: **label acc 1.00 vs 0.27, scale 0.48 vs 0.59,
+  cd-F1 0.675 vs 0.556, rotation 4.8° (layout) vs 8.1°, dup 0, and precision 0.31 with the gate.** So the
+  v1-vs-v2 verdict is **metric-dependent**: v1 on raw recall-driven IoU-F1 + coverage; v2 on precision,
+  labels, scale, non-duplication — a *usable* asset map vs a flood of boxes. **[CORRECTED 2026-07-19]
+  ICP-DROP ABLATION — inconclusive, do NOT drop ICP.** Full reg ablation on both scenes (see hallway
+  block): matched sets are tiny (TP 3–6), so rotation medians are unreliable; on IoU-F1 ICP helps/ties
+  everywhere (lounge icp/scale_icp 0.156 > layout/scale 0.130). The only robust registration effect is
+  scale-fit lowering scale_err. So the recommended real recipe stays **scale_icp (scale-fit + ICP)**,
+  optionally + precision gate; layout-only is not better. The gate is more aggressive on lounge (38→16);
+  its 6-obs floor is scene-density-dependent → may want adaptive/per-scene tuning. Both scenes:
+  recall@0.5=0, Scan2CAD=0 → scale still floors the strict metrics for v1 AND v2.
+
+  **FULL 4-SCENE v2 REAL-ROBOT TABLE (2026-07-19, scale_icp reproj ± precision gate).** smalloffice-0/1
+  added (v2-only — no v1 outputs in /data/sam3d). Detect stride-2 gt; SAM3D drained (SO0 10/10, SO1 8/8).
+
+  | scene (GT) | scale_icp F1 | +gate F1 | +gate prec | centroid | scale_err | cd-F1@1m | class-free@1m |
+  |---|---|---|---|---|---|---|---|
+  | hallway-1 (57) | 0.089 | 0.104 | 0.20 | 0.260 | 0.240 | 0.47 | 0.58 |
+  | lounge-0 (39) | 0.156 | 0.182 | 0.31 | 0.244 | 0.477 | 0.62 | 0.80 |
+  | smalloffice-0 (11) | 0.190 | 0.267 | 0.50 | 0.206 | 0.262 | 0.67 | 0.91 |
+  | smalloffice-1 (10) | 0.111 | 0.143 | 0.25 | 0.051 | 0.404 | 0.78 | 0.70 |
+
+  **The precision gate improves IoU-F1 AND precision on ALL 4 scenes** (0.089→0.104, 0.156→0.182,
+  0.190→0.267, 0.111→0.143) — the most consistent v2 finding on real data (unlike the noisy registration
+  medians). smalloffice-1 reaches **5 cm centroid / 5.6° rot** (small room, dense coverage → near sim
+  quality); smalloffice tracks/gt 0.80–0.91. **Caveat: TP=1–6 per scene → per-scene IoU-F1/rotation are
+  noisy; trust the cross-scene consistency (gate) and the pooled aggregate, not single-scene medians.**
+  Runs: `results/phase0_smalloffice{0,1}_rs_scaleicp{,_gate}/`, `results/phase0_hallway1_rs_scaleicp_gate_gentle/`.
+  Re-cache stride-2 gt detections first (`detect.run --source realsense --scene hallway-1
+  --prompt gt --stride 2`); **run eval at `--stride 2` to match the detection cache** (default
+  stride 20 would visit only 1/10 of the detected frames and gut multi-view coverage).
+  Diagnostic scripts persisted in `r2s3d_core/scripts/`:
+  `rs_detect_probe.py` (prompt-mode recall probe + GT overlays), `rs_tracker_diag.py`
+  (naive-vs-full tracker recall), `rs_loc_diag.py` (centroid localization vs GT). **SAM3D
+  worker:** `conda activate sam3d-objects && python humble_ws/src_Real2USD/real2sam3d/
+  scripts_sam3d_worker/run_sam3d_worker.py --queue-dir <out>/sam3d_queue --sam3d-repo
+  humble_ws/src_Real2USD/real2sam3d/sam-3d-objects --use-depth` (add `--once` to drain then exit); then re-run
+  `eval.run` to collect. See `real2sam3d/config/USER_NEXT_STEPS.md`.
+- **`data/rosbag.py` `RosbagSource` (source `rosbag`/`lidar`) — SECONDARY** (LiDAR-vs-RS
+  depth ablation): front-cam RGB + projected sparse lidar depth. Details below.
+
+The lidar path (below) flows the same way:
+- **`data/rosbag.py` `RosbagSource`** (source `rosbag`/`go2`) — pure-Python bag read via
+  `rosbags` (new `rosbag` uv extra; NO ROS install; only standard sensor/nav/tf topics
+  deserialized, never the custom `go2_interfaces` msgs). The Go2 has **no depth camera**, so
+  it accumulates `/point_cloud2` (already odom-frame) into one cloud and **projects it into
+  each `/camera/image_raw` pose to synthesize metric depth** (`lidar_depth.py`, ROS-free port
+  of v1 `ProjectionUtils.lidar2depth`; meters + nearest-wins z-buffer). Poses via
+  `frames.T_odom_cam_go2` (extrinsic verified **==** v1 to 1e-16). RGB is **undistorted**
+  (plumb_bob k1≈−0.34) into the pinhole-K frame so RGB↔projected-depth align. Cloud cached
+  to `$R2S3D_DATA/rosbag_cache`.
+- **`data/supervisely.py` `load_supervisely_gt`** — the v1 hand-labeled 3D cuboids
+  (`evaluations/supervisely/<scene>.pcd.json`, copied into the repo) → `GTObject` (radians
+  xyz-euler, position=center, dimensions=full extents, label aliases → chair/table/door).
+  GT is **absolute odom Z-up** = the same frame the cloud+poses use, so preds align directly.
+- **4 scenes** wired: smalloffice-0/1, hallway-1, lounge-0 (bags under `/data/go2/lidar/`).
+  Validated on lounge-0: cloud 331k pts, GT XY ⊂ cloud XY ⊂ camera-traj, depth median 5.5 m,
+  RGB↔depth overlay eyeballed (`r2s3d_core/results/rosbag_debug/`). **89 tests pass** (+9 new:
+  `test_lidar_depth.py`, `test_supervisely.py`). Metrics available: centroid / 3D-IoU / rot /
+  scale / label F1 (box GT, no mesh Chamfer). NEXT: run detector→track→SAM3D→register on the
+  4 scenes and score vs the cuboid GT (the real-robot column).
 
 ## Phase 5 side-thread — ProcTHOR / MolmoSpaces scene-graph comparison (2026-07-13)
 

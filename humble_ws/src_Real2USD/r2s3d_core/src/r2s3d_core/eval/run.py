@@ -70,9 +70,14 @@ def run(args: argparse.Namespace) -> Path:
         "assoc_reproj": args.assoc_reproj,
         "reproj_pix_gate": args.reproj_pix_gate,
         "reproj_depth_ratio_tol": args.reproj_depth_ratio_tol,
+        "track_gate": args.track_gate,
+        "gate_min_obs": args.gate_min_obs,
+        "gate_min_score": args.gate_min_score,
         "v1_dedup": args.v1_dedup,
         "icp": args.icp,
         "registration": args.registration,
+        "node_payload": args.node_payload,
+        "cluster_denoise": args.cluster_denoise,
         "scale_source": args.scale_source,
         "scale_icp_iters": args.scale_icp_iters,
         "debug_html": args.debug_html,
@@ -267,6 +272,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reproj-depth-ratio-tol", type=float, default=None,
                    help="tuning (with --assoc-reproj): along-ray depth-ratio tolerance "
                         "(default 0.35; PROVISIONAL, needs a sweep on scene 200)")
+    p.add_argument("--track-gate", action="store_true",
+                   help="object_track: precision gate — demote weakly-supported MATURE tracks "
+                        "(short-lived / low-confidence spurious detections) to REJECTED. "
+                        "Default off; cuts the detector-driven false-positive tracks that floor "
+                        "precision on real data (see scripts/rs_coverage_diag.py).")
+    p.add_argument("--gate-min-obs", type=int, default=None,
+                   help="tuning (with --track-gate): min associated observations to keep a "
+                        "mature track (default 6)")
+    p.add_argument("--gate-min-score", type=float, default=None,
+                   help="tuning (with --track-gate): min mean detector confidence to keep a "
+                        "mature track (default 0.40)")
     p.add_argument("--v1-dedup", action="store_true",
                    help="object_track_naive: add v1's 0.5 m same-label position suppression")
     p.add_argument("--icp", action="store_true",
@@ -277,6 +293,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="object_track: registration mode against the track's fused cloud. "
                         "'scale'/'scale_icp' add the depth-extent scale-fit (the lever rigid "
                         "ICP lacks); overrides --icp when set.")
+    p.add_argument("--no-cluster-denoise", dest="cluster_denoise", action="store_false",
+                   default=True,
+                   help="node-payload cluster: use the RAW fused cloud (no SOR+DBSCAN cleaning). "
+                        "Default cleans it (ConceptGraphs/HOV-SG convention) for a faithful "
+                        "clustering-method node; --no-cluster-denoise is the raw-cloud ablation.")
+    p.add_argument("--node-payload", default="asset", choices=["asset", "cluster"],
+                   help="object_track: object representation. 'asset' (default) = SAM3D mesh + "
+                        "scale-fit + ICP; 'cluster' = the track's fused observed point cloud (no "
+                        "SAM3D, no registration) -- the ablation baseline isolating generation "
+                        "(stands in for clustering scene-graph methods). See "
+                        "docs/GENERATION_ABLATION_PLAN.md.")
     p.add_argument("--scale-source", default="fused",
                    choices=["fused", "fused_robust", "reproj", "reproj_mv"],
                    help="how scale-fit measures the object's metric size: 'fused' = raw "

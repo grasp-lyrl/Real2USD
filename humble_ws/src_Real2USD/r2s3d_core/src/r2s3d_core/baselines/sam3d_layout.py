@@ -292,20 +292,21 @@ def _observed_obb_extent(target_pts: np.ndarray):
     return np.sort(e)[::-1]
 
 
-def _robust_obb_extent(target_pts: np.ndarray, nb_neighbors: int = 20, std_ratio: float = 2.0,
-                       eps: float = 0.10, min_points: int = 10):
-    """Sorted (desc) OBB extents after OUTLIER REJECTION -- Method A for detector masks.
+def _denoise_cloud(target_pts: np.ndarray, nb_neighbors: int = 20, std_ratio: float = 2.0,
+                   eps: float = 0.10, min_points: int = 10) -> np.ndarray:
+    """Return the object body of a detector-mask fused cloud via OUTLIER REJECTION.
 
     A detector-mask fused cloud carries edge-bleed / mis-fused points that sit off the object
     and inflate the raw OBB ~3x. They are few vs the bulk, so statistical outlier removal
     (drop points whose kNN distance is > mean + ``std_ratio``*std) + keep-largest-DBSCAN-cluster
-    recovers the object body. Falls back to the raw extent if cleaning collapses the cloud.
+    recovers the object body. This is the standard clustering-scene-graph node cleaning
+    (ConceptGraphs / HOV-SG denoise the accumulated cloud before boxing it). Falls back to the
+    raw cloud if cleaning would collapse it (< max(30, 15%) points) or open3d is unavailable.
     """
     import open3d as o3d
     pts = np.asarray(target_pts, dtype=np.float64)
     if len(pts) < 30:
-        return None
-    q = pts
+        return pts
     try:
         pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
         pc, _ = pc.remove_statistical_outlier(nb_neighbors=nb_neighbors, std_ratio=std_ratio)
@@ -315,13 +316,22 @@ def _robust_obb_extent(target_pts: np.ndarray, nb_neighbors: int = 20, std_ratio
             good = labels[labels >= 0]
             if len(good):
                 best = np.bincount(good).argmax()
-                keep = labels == best
-                cand = cand[keep]
+                cand = cand[labels == best]
             if len(cand) >= max(30, int(0.15 * len(pts))):
-                q = cand
+                return cand
     except Exception:
-        q = pts
-    return _observed_obb_extent(q)
+        pass
+    return pts
+
+
+def _robust_obb_extent(target_pts: np.ndarray, nb_neighbors: int = 20, std_ratio: float = 2.0,
+                       eps: float = 0.10, min_points: int = 10):
+    """Sorted (desc) OBB extents after OUTLIER REJECTION -- Method A for detector masks.
+    Thin wrapper over :func:`_denoise_cloud` + :func:`_observed_obb_extent`."""
+    pts = np.asarray(target_pts, dtype=np.float64)
+    if len(pts) < 30:
+        return None
+    return _observed_obb_extent(_denoise_cloud(pts, nb_neighbors, std_ratio, eps, min_points))
 
 
 def _mask_inplane_metric(mask, depth, K):
@@ -419,6 +429,18 @@ def _fast_obb(mesh: trimesh.Trimesh, n: int = 3000, seed: int = 0):
     ``mesh.bounding_box_oriented`` on SAM3D meshes (up to ~1M faces; the OBB is called
     several times per object in the scale/registration path)."""
     pts = geo.sample_surface(mesh, n, seed=seed) if len(mesh.faces) else np.asarray(mesh.vertices)
+    p = trimesh.points.PointCloud(pts).bounding_box_oriented.primitive
+    return np.asarray(p.transform, dtype=np.float64), np.asarray(p.extents, dtype=np.float64)
+
+
+def _cloud_obb(pts: np.ndarray):
+    """(transform, extents) of a point cloud's oriented bounding box — the SAME OBB
+    convention as ``_fast_obb`` (``trimesh`` bounding_box_oriented), so a cluster-payload
+    box and an asset-mesh box are directly comparable (GENERATION_ABLATION_PLAN.md, decision
+    #3). Raises on <4 points (degenerate OBB)."""
+    pts = np.asarray(pts, dtype=np.float64)
+    if len(pts) < 4:
+        raise ValueError(f"cloud OBB needs >=4 points, got {len(pts)}")
     p = trimesh.points.PointCloud(pts).bounding_box_oriented.primitive
     return np.asarray(p.transform, dtype=np.float64), np.asarray(p.extents, dtype=np.float64)
 
