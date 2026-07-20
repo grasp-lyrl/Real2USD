@@ -38,7 +38,17 @@ GT-mask ceiling on all 10 (s200 only).
 | config | method | prompt | SAM3D? | out-dir | status |
 |---|---|---|---|---|---|
 | cluster_gt | object_track_cluster | gt | no (FREE) | paper/sim/cluster_gt_s<id> | **✓ DONE 10/10 (AI-9 fixed)** |
-| asset_icp_gt | object_track_icp | gt | YES | paper/sim/asset_icp_gt_s200 | **s200 ONLY (decision)** |
+| asset_{layout,icp,scaleicp}_gt | object_track --registration {none,icp,scale_icp} | gt | YES (1 gen pass/id → 3 variants free) | paper/sim/asset_<reg>_gt_s<id> | **val-10 IN FLIGHT (2026-07-19, AI-9 fixed)** |
+
+**ASSET VAL-10 CAMPAIGN (2026-07-19) — `scripts/run_paper_asset_val10.sh`.** Now that rendering
+works, run the asset side at n=10 to (a) lift the shape-completion experiment (Fig 4, the strongest
+generation claim) from n=1 scene to n=10, and (b) build the **C1 table: SAM3D-native localization vs
+our registration** — `layout` (registration none = SAM 3D's OWN predicted scale/rotation/translation,
+make_scene-style) vs `+icp` (our pose fix) vs `+scale_icp` (our scale-fit+pose). All three share ONE
+SAM3D generation pass per id (mesh cache is registration-independent). Goal: show our ICP/scale-fit
+BEAT SAM3D's raw predicted placement. Stages: `queue` (fast, renders cached) → **SAM3D worker drains
+`results/paper/sim/_assetq`** (slow, ~hours on the 5090) → `collect` (free variants) → agg_paper +
+re-run gen_shape_completion at n=10. s200 reuses its existing drained queue.
 
 Prereq: gt-vocab **detections** for all 10 (only s200 exists → 9 to run; detector pass, no SAM3D).
 

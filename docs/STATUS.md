@@ -26,7 +26,14 @@ coverage diagnostic (placement is observation-limited). Also this session: **Cli
 (4 scenes, coworker-independent — v2 ≫ Clio on strict placement), **v1 dropped as a comparison row**
 (confounded; internal ±scale-fit/±gate ablations carry contributions), paper structure built out
 (`WORKSHOP_PAPER_PLAN.md`), experiment index + naming + aggregator (`docs/EXPERIMENT_MATRIX.md`,
-`scripts/agg_paper.py`). **AI-9 RESOLVED (Wayland→Xorg; render on `:0`+gdm auth). VAL-10 CLUSTER DONE (n=10):** iou_f1 0.405,
+`scripts/agg_paper.py`). **★ ASSET VAL-10 CAMPAIGN DONE (2026-07-19):** 663 SAM3D meshes (0 fail) → C1 table + shape-completion
+at n=10. **C1 (SAM3D-native localization vs our registration):** +ICP beats layout +20% IoU-F1
+(0.404→0.485), +52% recall@0.5 (0.147→0.224), ~half rotation err; scale-fit neutral on sim (its win is
+real-robot). **Shape-completion n=10 (212 objs): asset reconstructs unseen surface 2.9× better than
+cluster at low coverage (0.081 vs 0.232 m, 68/69 objs); 166/212 overall** — the strongest generation
+claim, now robust across scenes. Runs `results/paper/sim/asset_{layout,icp,scaleicp}_gt_s*`.
+
+**AI-9 RESOLVED (Wayland→Xorg; render on `:0`+gdm auth). VAL-10 CLUSTER DONE (n=10):** iou_f1 0.405,
 footprint 0.446, scale_err 0.306, cd_f1@1m 0.686 — tracks s200 (0.386) → **Claim B has n=10 breadth**
 ("observed cluster localizes/covers consistently across 10 scenes; generation not needed for
 localization"). Asset stays s200 per decision (0.545/0.420/0.233/0.727). Runs `results/paper/sim/`,

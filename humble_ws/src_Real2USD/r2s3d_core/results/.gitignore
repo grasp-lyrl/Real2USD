@@ -6,6 +6,10 @@
 # ...but the per-run SAM3D queue is regenerable scratch — its per-job meta.json would
 # otherwise be re-included by the !*.json rule above. Re-exclude the whole queue subtree.
 sam3d_queue/
+# shared per-campaign SAM3D queues use other names (e.g. _assetq) — same regenerable scratch.
+_assetq/
+*_queue/
+*_assetq/
 # scene_graph.json / placements.json are regenerable object-map exports (rebuilt from
 # run.json + the cached SAM3D meshes with no re-run) — scratch like the GLBs, not tracked.
 scene_graph.json

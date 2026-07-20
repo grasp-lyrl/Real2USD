@@ -138,13 +138,14 @@ open-vocab (`generic`/`pf`) rows, not the gt-vocab ones. See GENERATION_ABLATION
 fig; read as instance-forward).
 **Fig 2 — C1:** SAM 3D `make_scene()` vs ours vs GT, with the scale-err number.
 **Fig 3 — C2:** per-frame vs per-track recall bar (0.35–0.50 → 0.71).
-**Fig 4 — ★ "why generate" (the generation-value figure):** unobserved-surface reconstruction vs
-observation coverage — oracle-placed asset vs clean cluster (s200, 22 large objects). Two curves that
-DIVERGE as coverage drops (asset ~flat 6–8 cm; cluster 8→17 cm), i.e. generation's value concentrates
-in the partial-view regime real robots face. Inset qualitative panel: a chair at 2% coverage →
-observed cluster (fragment) vs completed asset (whole chair, 7.4 cm vs 25 cm) vs GT.
-`scripts/gen_shape_completion.py`. Honesty: oracle placement isolates the shape prior (pair with the
-end-to-end coverage note that placement is observation-limited).
+**Fig 4 — ★ "why generate" (the generation-value figure; n=10, 212 objects):** unobserved-surface
+reconstruction vs observation coverage — oracle-placed asset vs clean cluster. Two curves that DIVERGE
+as coverage drops: low-coverage (86% unseen) asset **0.081 m** vs cluster **0.232 m** (2.9×, 68/69
+objects); near-tie at high coverage. 166/212 objects favor the asset. Generation's value concentrates
+in the partial-view regime real robots face. Inset qualitative panel: armchair at 44% observed →
+generation fills the unobserved base (red=seen, blue=generated) vs GT.
+`scripts/gen_shape_completion.py` + `run_shape_completion_val10.sh`. Honesty: oracle placement isolates
+the shape prior (pair with the end-to-end coverage note that placement is observation-limited).
 
 ### Table 1 — SIM placement + node-payload ablation (ProcTHOR val; the controlled C1+C3 experiment)
 Everything varies ONE factor at a time on the same front-end/tracks/depth/metrics. Cols: 3D-IoU F1@.25

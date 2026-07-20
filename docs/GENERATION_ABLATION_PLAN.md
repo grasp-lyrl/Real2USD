@@ -100,6 +100,19 @@ clean the cluster (clip observed points to the GT OBB), measure mean NN distance
 (2× at <0.3, near-tie at >0.6) — exactly the partial-view thesis. **Qualitative panel: track 128, a
 chair at 2% coverage → asset completes it to 7.4 cm, cluster 24.5 cm (3.3×).**
 
+**★ VAL-10 (n=10, DONE 2026-07-19) — STRONGER at scale. 212 objects across 10 scenes:**
+
+| coverage bin | n | unseen | asset recon | cluster recon | asset wins |
+|---|---|---|---|---|---|
+| low <0.3 | 69 | 86% | **0.081 m** | 0.232 m | **68/69** |
+| mid .3–.6 | 51 | 56% | 0.068 | 0.131 | 46/51 |
+| high >0.6 | 92 | 18% | 0.074 | 0.083 | 52/92 |
+
+**166/212 objects overall; at low coverage the asset completes the unseen surface to 8 cm vs the
+cluster's 23 cm (2.9×), on 68/69 objects.** Gap collapses at high coverage (little unseen). This is
+Fig 4 at n=10 — the strongest, most robust generation-value result. Qualitative panel: armchair
+`results/paper/_figs/completion_panel_s200_t26.png`. Runner: `scripts/run_shape_completion_val10.sh`.
+
 **Honesty guardrails (write these in):** (1) oracle placement uses GT pose → isolates the *shape
 prior's* information, NOT an end-to-end capability; pair it with the end-to-end coverage diagnostic
 (`gen_coverage_diag.py`) which shows placement is coverage-limited. Combined claim: *the shape prior
@@ -108,6 +121,24 @@ register.* (2) the 24-rotation search only picks discrete orientation (standard 
 does not fit shape to GT. (3) s200-only (asset is s200-only per the val-10 decision); n=22 large objects
 is a solid single-scene figure — note val-N as future strengthening. This is the paper's Fig for "why
 generate": divergence plot + the chair panel. See WORKSHOP_PAPER_PLAN.md.
+
+## ★ C1 TABLE — SAM3D-native localization vs our registration (val-10, DONE 2026-07-19)
+
+`scripts/run_paper_asset_val10.sh` (663 SAM3D meshes, 0 fail) → layout/icp/scaleicp share one gen pass.
+`results/paper/sim/asset_{layout,icp,scaleicp}_gt_s*`, agg `scripts/agg_paper.py`:
+
+| variant | IoU-F1 | recall@0.5 | centroid | scale_err | Scan2CAD | cd_f1@1m |
+|---|---|---|---|---|---|---|
+| **layout** (SAM 3D's OWN predicted scale/rot/translation) | 0.404 | 0.147 | 0.085 | 0.319 | 0.075 | 0.707 |
+| **+ICP** (our pose fix) | **0.485** | **0.224** | 0.066 | 0.319 | 0.088 | 0.706 |
+| **+scale+ICP** (our scale-fit + pose) | 0.449 | 0.190 | 0.066 | 0.335 | 0.043 | 0.708 |
+
+**C1 confirmed: our registration beats SAM 3D's own localization** — +ICP gives +20% IoU-F1
+(0.404→0.485), **+52% recall@0.5** (0.147→0.224), ~half the rotation error (per-scene ~11°→~6°).
+**Honest:** on SIM, scale-fit does NOT beat plain ICP (SAM 3D's sim scale is already decent; scale_err
+0.335 vs 0.319, Scan2CAD lower) — **scale-fit's win is the real-robot regime** (SAM 3D ~3× off →
+0.47→0.24, STATUS real-robot leg). Combined C1/C3: ICP wins on sim, scale-fit wins on real. So `icp` is
+the sim headline asset; `scale_icp` is the real-robot recipe.
 
 ## The ablation (hold everything fixed except the node payload)
 
