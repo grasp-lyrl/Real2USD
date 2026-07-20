@@ -109,8 +109,8 @@ from each mature track's fused-cloud OBB.
   0.484, cd_f1@1m 0.727, class-free 1.0, centroid 4.5cm, rot 3.6°, scan2cad 0.151, chamfer 0.10,
   micro-F1 (CLIP) 0.388.** This CORRECTS the earlier "box inflation is the #1 lever" claim: that
   0.11 iou_f1 was a **SAM3D-free cloud-OBB proxy artifact** (raw depth-cloud boxes ~3×/side too
-  big). The real pipeline (SAM3D shape + depth-extent + ICP) already produces well-sized,
-  well-localized boxes — iou_f1 is a healthy 0.545, centroid 4.5cm. Robust extent estimation is
+  big). The real pipeline (SAM3D shape + ICP; SAM3D's native scale, no scale-fit in this run) already
+  produces well-sized, well-localized boxes — iou_f1 is a healthy 0.545, centroid 4.5cm. Robust extent estimation is
   NOT the bottleneck; the SAM3D+scale-fit design handles it. (The SAM3D-free tracker numbers
   above remain valid — they use track centroids, which are legit; only the cloud-OBB *extent* was
   the proxy artifact.)
@@ -201,7 +201,7 @@ not implemented.
 Per-frame detector recall (diagnose) = 0.50. **Two findings:** (a) with `icp`, the gap to the
 ceiling is modest (~0.10 F1) and recall-dominated (TP 30→25); per-track≈per-frame recall so
 association isn't losing objects — the loss is objects never detected (scene 200 is a weak
-multi-view showcase, few objects; test 137/428). (b) **The depth-extent scale-fit — the GT-mask
+multi-view showcase, few objects; test 137/428). (b) **The depth-CLOUD-extent (fused) scale-fit — the GT-mask
 win — is a LIABILITY on detector masks:** it craters detector F1 (layout 0.452 → scale 0.151),
 because noisy masks contaminate the fused cloud → inflated OBB extent → wrong scale → boxes miss
 the IoU gate. So for detector-driven runs use `object_track_icp`, and step 4 (robustify the
@@ -228,7 +228,7 @@ set — ablating them is an eval re-run, **not** a SAM3D re-queue.
 | 0 | Dataset + harness + naive baseline | 🟢 **done** | harness verified on 8 Replica scenes; SAM3D worker validated; `sam3d_layout` row on room0. **Full-frame >> crop input (F1 .58→.77, Scan2CAD 0→.16) — now the default.** all-scene aggregate + full-frame ICP pending |
 | 1 | frames.py + validation + loud fallbacks | 🟢 **done** | `frames/` matches v1 `ply_frame_utils` to 1e-9; Phase 0 numbers reproduce exactly; ROS-node dedup deferred to the Phase 2 wrapper |
 | 2 | ObjectTrack node | 🟡 **in progress** | ROS-free `tracks/` + `detect/` (YOLOE) built; tracker tests pass; **detector-in-sim fragmentation cleanup verified room0+room1** (SAM3D calls ↓~4×, tracks/GT 1.3→0.33). SAM3D-mesh placement-degradation (vs GT-mask ceiling) collecting; ROS wrapper deferred |
-| 3 | Localization stack (TEASER++ / ICP / refine) | 🟢 **scale fix found** | **`scale+ICP` is the win**: depth-extent scale-fit cuts scale err 0.31→0.14 (2.6×) and Scan2CAD 0.12→0.31. ICP fixes pose; TEASER-vs-depth shelved (shrink-to-fit). See below. |
+| 3 | Localization stack (TEASER++ / ICP / refine) | 🟢 **scale fix found** | **`scale+ICP` is the win**: scale-fit cuts scale err 0.31→0.14 (2.6×) and Scan2CAD 0.12→0.31 (GT-mask, via fused masked-depth extent; on DETECTOR masks the recipe switched to **RGB-mask reprojection** — depth-cloud extent craters there). ICP fixes pose; TEASER-vs-depth shelved. See below. |
 | 4 | Reconciliation + export | ⬜ not started | needs Isaac Sim |
 | 5 | Benchmark campaign | 🟡 side-thread started | **ProcTHOR/MolmoSpaces scene-graph comparison adapter built + validated** (see below). Main campaign dataset access is the long pole — [AI-2..5](ACTION_ITEMS.md) started early |
 | 6 | Paper rewrite | 🟡 planning | **Target: SeMaNa @ IROS 2026 workshop (non-archival, 2–4 pp, deadline 2026-07-29).** Plan + locked framing in `WORKSHOP_PAPER_PLAN.md`: rename to lead with method (USD demoted to sim-export), lead with "SAM 3D shape≠scene + our placement" (C1+C3), include compact real-robot Go2 fig. |
@@ -290,7 +290,8 @@ sensor sources:**
   | centroid recall@.5m | 0.211 | 0.228 | **0.246** |
   | label_acc | 0.33 | 0.60 | **0.75** |
 
-  **Findings:** (1) **the depth-extent scale-fit earns its keep on REAL depth** — scale_err
+  **Findings:** (1) **the reprojection scale-fit (RGB-mask span + median depth + SAM3D aspect, NOT the
+  depth-cloud OBB) earns its keep on REAL depth** — scale_err
   0.375→**0.240** (~36%) with `scale_source=reproj`, plus best centroid + label_acc. This is the
   paper C3 thesis confirmed in the real regime (on sim val, scale-fit ≈ ICP because SAM3D scale is
   already decent; on real Go2 depth it clearly helps). (2) **[RETRACTED 2026-07-19] The earlier
@@ -453,6 +454,19 @@ sensor sources:**
   optionally + precision gate; layout-only is not better. The gate is more aggressive on lounge (38→16);
   its 6-obs floor is scene-density-dependent → may want adaptive/per-scene tuning. Both scenes:
   recall@0.5=0, Scan2CAD=0 → scale still floors the strict metrics for v1 AND v2.
+
+  **REGISTRATION ABLATION COMPLETED w/ LAYOUT BASELINE (2026-07-20) — corrected the real-robot story.**
+  Added `layout` (SAM3D-native) + `icp` runs for smalloffice-0/1 (reused drained queues) so all 4 scenes
+  have layout/icp/scale_icp/+gate. 4-scene means: IoU-F1 layout 0.172 / icp 0.190 / scale_icp 0.137 /
+  +gate 0.174; scale_err 0.495 / 0.490 / **0.346** / 0.351; centroid 0.219/0.224/**0.190**/0.199.
+  **CORRECTED + SAVED finding: scale-fit's real win is SCALE, proven by a PAIRED per-object test**
+  (`scripts/paired_scale_test.py`, 61 objects): layout scale-err median 0.739 (mean 1.14 — some objs
+  2–4× off) → scale-fit 0.592, **38/61 objs better, Wilcoxon p=9.5e-5**. NOT centroid (paired unchanged,
+  p=0.33 — aggregate 0.19 was an IoU-matched-set selection artifact) and NOT IoU-F1 (noise-dominated on
+  TP 1–6/scene; scale-fit hurts it, gate recovers via precision; floored by ~0.5 m centroid scatter from
+  the uncalibrated extrinsic). ICP hurts rotation (small-set artifact). v2-vs-Clio IoU gap is
+  pipeline-level (even layout 0.172 ≫ Clio 0.039). Lead the real C3 claim on the PAIRED SCALE test, not
+  IoU-F1. Full table in WORKSHOP_PAPER_PLAN Table 2. Runs: `results/phase0_*_rs_{layout,icp}`.
 
   **FULL 4-SCENE v2 REAL-ROBOT TABLE (2026-07-19, scale_icp reproj ± precision gate).** smalloffice-0/1
   added (v2-only — no v1 outputs in /data/sam3d). Detect stride-2 gt; SAM3D drained (SO0 10/10, SO1 8/8).

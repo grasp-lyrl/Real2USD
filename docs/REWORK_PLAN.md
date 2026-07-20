@@ -395,7 +395,8 @@ quality feeding SAM3D + the scale-fit's extent estimate.
 **multi-view-tracked** map is robust to imperfect per-frame perception: an object missed in one
 frame is detected in another, so **per-track recall (union over the trajectory) ≫ per-frame
 recall**, and best-view selection recovers mask/shape quality. That robustness — plus the
-depth-extent scale fix — is the story, and ProcTHOR is the ideal testbed because it has GT to
+reprojection scale fix (extent read from the RGB mask + SAM3D aspect; depth-cloud OBB extent craters on
+detector masks) — is the story, and ProcTHOR is the ideal testbed because it has GT to
 *measure* the degradation while we feed it real detections.
 
 **Approach, prioritized** (details + acceptance in `PHASE_SPECS.md §Perception robustness):

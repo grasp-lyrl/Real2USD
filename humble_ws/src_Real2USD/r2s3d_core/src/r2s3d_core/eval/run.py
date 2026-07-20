@@ -305,7 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(stands in for clustering scene-graph methods). See "
                         "docs/GENERATION_ABLATION_PLAN.md.")
     p.add_argument("--scale-source", default="fused",
-                   choices=["fused", "fused_robust", "reproj", "reproj_mv"],
+                   choices=["fused", "fused_robust", "reproj", "reproj_mv", "silhouette"],
                    help="how scale-fit measures the object's metric size: 'fused' = raw "
                         "fused-cloud OBB (contaminated on detector masks); 'fused_robust' = "
                         "outlier-rejected cloud (Method A); 'reproj' = clean 2D mask + median "

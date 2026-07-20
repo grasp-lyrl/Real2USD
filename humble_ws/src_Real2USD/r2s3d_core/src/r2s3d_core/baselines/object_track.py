@@ -236,6 +236,8 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
                         tgt_ext = s3d._reproj_target_extent(posed, obs.mask, frame.depth, frame.K)
                     elif _ss == "fused_robust":
                         tgt_ext = s3d._robust_obb_extent(target)
+                    elif _ss == "silhouette":
+                        tgt_ext = None  # optimised directly against the mask in _scale_step
                     else:
                         tgt_ext = s3d._observed_obb_extent(target)
                     prov["scale_source"] = _ss
@@ -244,6 +246,13 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
                     # Match mesh OBB extents to the (fixed) depth-derived target extent; the
                     # scale lever rigid ICP lacks (see sam3d_layout._fit_scale_to_extent).
                     # Returns (max |scale-1|, transform) so callers can measure convergence.
+                    if config.get("scale_source") == "silhouette":
+                        # Method C: optimise per-axis scale so the projected silhouette matches the mask.
+                        M, sinfo = s3d._silhouette_scale_transform(posed, obs.mask, frame)
+                        posed.apply_transform(M)
+                        prov["scale_fit"] = sinfo
+                        sc = np.asarray(sinfo.get("scales", [1.0, 1.0, 1.0]))
+                        return float(np.max(np.abs(sc - 1.0))), M
                     if tgt_ext is None:
                         prov["scale_fit"] = {"skipped": "degenerate_target"}
                         return 0.0, np.eye(4)

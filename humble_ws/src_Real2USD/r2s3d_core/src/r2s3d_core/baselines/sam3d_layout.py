@@ -445,6 +445,45 @@ def _cloud_obb(pts: np.ndarray):
     return np.asarray(p.transform, dtype=np.float64), np.asarray(p.extents, dtype=np.float64)
 
 
+def _silhouette_scale_transform(posed: trimesh.Trimesh, obs_mask, frame, reg: float = 0.04,
+                                n_pts: int = 1500, clamp=(0.4, 2.5), maxiter: int = 40):
+    """Anisotropic scale (about the mesh OBB centre, along its OBB axes) chosen so the mesh's
+    PROJECTED silhouette best matches the observed 2D mask under the current (posed) orientation.
+
+    Method C (2026-07-20). Unlike `_reproj_target_extent` (which reads image-plane silhouette-PCA
+    spans and sorted-matches them to the OBB — a front-on approximation), this optimises the three
+    per-axis scales directly against the projected silhouette, so it accounts for ARBITRARY object
+    orientation (off-axis objects) and uses the full generated shape. The regulariser keeps
+    under-observed (along-ray) axes near the SAM3D aspect (s=1). Returns (world transform M, info);
+    identity if degenerate.
+    """
+    from ..tracks import fusion
+    from scipy.optimize import minimize
+    T, _ = _fast_obb(posed)
+    R, c = T[:3, :3], T[:3, 3]
+    P = geo.sample_surface(posed, n_pts, seed=0)
+    obs = np.asarray(obs_mask, bool)
+    if len(P) == 0 or obs.shape != tuple(frame.depth.shape[:2]) or obs.sum() < 30:
+        return np.eye(4), {"skipped": "degenerate", "scales": [1.0, 1.0, 1.0]}
+
+    def _iou(s):
+        A = R @ np.diag(np.clip(s, *clamp)) @ R.T
+        m = fusion.project_cloud_mask((A @ (P - c).T).T + c, frame, fill_hull=True)
+        return fusion.mask_iou(m, obs) if m is not None else 0.0
+
+    def _loss(s):
+        return -_iou(s) + reg * float(np.sum((np.asarray(s) - 1.0) ** 2))
+
+    iou0 = _iou(np.ones(3))
+    res = minimize(_loss, np.ones(3), method="Powell",
+                   options={"maxiter": maxiter, "xtol": 0.02, "ftol": 0.01})
+    s = np.clip(np.asarray(res.x, float), *clamp)
+    A = R @ np.diag(s) @ R.T
+    M = np.eye(4); M[:3, :3] = A; M[:3, 3] = c - A @ c
+    return M, {"scales": s.tolist(), "sil_iou": float(_iou(s)), "sil_iou_at_1": float(iou0),
+               "method": "silhouette"}
+
+
 def _fit_scale_to_extent(posed: trimesh.Trimesh, target_extent_sorted: np.ndarray,
                          clamp=(0.25, 4.0)):
     """World transform that rescales ``posed`` so its OBB extents match the (metric,

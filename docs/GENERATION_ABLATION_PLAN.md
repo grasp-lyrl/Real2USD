@@ -147,7 +147,7 @@ Same ObjectTrack front-end, same tracks, same depth, same GT-mesh scoring. Vary 
 | payload | representation | what it isolates |
 |---|---|---|
 | **A. cluster** | the track's fused observed point cloud (`t.fused_cloud`); OBB for box metrics, raw points for surface metrics | what clustering methods output (partial observed surface) |
-| **B. asset** (current) | SAM3D mesh + depth-extent scale-fit + ICP | generation + our placement |
+| **B. asset** (current) | SAM3D mesh + reprojection scale-fit (RGB-mask span + SAM3D aspect) + ICP | generation + our placement |
 | (optional C. box) | OBB-as-box mesh | crudest baseline |
 
 **Fairness rule:** the cluster payload MUST use the same tracks and (for the box metrics) the
@@ -221,7 +221,7 @@ system would re-introduce the front-end confound). The FIELD comparison is the c
 convention. The first result above used the RAW cloud (edge-bleed-inflated → scale_err 0.69, unfairly
 bad). Fair baseline = **denoised cluster** (implemented: `object_track_cluster` default
 `cluster_denoise=on`; `--no-cluster-denoise` = raw ablation; `s3d._denoise_cloud`). Do NOT lend the
-cluster our depth-extent scale-fit — that is our pipeline machinery, indefensible to give the
+cluster our reprojection scale-fit — that is our pipeline machinery, indefensible to give the
 baseline; denoising is standard cloud cleaning any clustering method does.
 
 **Step 1 DONE (2026-07-19): denoised cluster on s200 CHANGED THE CONCLUSION** (why the row mattered).

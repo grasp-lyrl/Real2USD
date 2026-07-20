@@ -361,9 +361,11 @@ Steps (prioritized; reuse Phase-2 `detect/` + `tracks/` on the new adapter):
 3. **Segment-everything → track → label.** Class-agnostic SAM2/SAM3 masks (high object recall)
    → track → open-vocab (CLIP) label per track; decouples recall from a fixed vocabulary.
 4. **Robustify the scale-fit to noisy masks — HIGH priority (2026-07-14 finding).** The
-   depth-extent scale-fit is the GT-mask *win* but a *liability* on detector masks: scene-200
+   depth-CLOUD-extent (fused) scale-fit is the GT-mask *win* but a *liability* on detector masks: scene-200
    detector F1 layout 0.452 → +scale 0.151 → +scale_icp 0.237, vs +icp 0.538. `_observed_obb_extent`
-   trusts the mask, so noisy detector masks contaminate the fused cloud → inflated OBB extent →
+   trusts the cloud, so noisy detector masks contaminate the fused cloud → inflated OBB extent →
+   **RESOLVED: switched to RGB-mask reprojection (`scale_source=reproj`) — read the frontal extent off the
+   clean 2D mask, along-ray axis from SAM3D aspect; this is the current recipe.** Original finding:
    wrong scale → boxes miss the IoU gate. Add percentile/outlier-robust extent (e.g. drop the
    top/bottom k% per axis, or MCD/convex-hull-trim) and measure scale-err vs mask-IoU. Until
    fixed, detector-driven uses `object_track_icp`. See [[scale-fit-hurts-on-detector-masks]].
@@ -406,8 +408,10 @@ Steps (prioritized; reuse Phase-2 `detect/` + `tracks/` on the new adapter):
      the confidence-reject on FP count. Second, after 6a.
 
 Note: `object_track` passes a stable `job_key` (`{source}_{scene}_t{track_id}_{framing}`) and
-honours `full_frame`. The depth-extent scale-fit is **done (2026-07-14)**: the track path reuses
-`_fit_scale_to_extent` against the track's fused multi-view cloud. Registration modes: `none` |
-`icp` (rigid pose) | `scale` (scale-fit only) | `scale_icp` (scale-fit + rigid pose), exposed
+honours `full_frame`. The scale-fit is **done (2026-07-14)**: `_fit_scale_to_extent` fits the mesh OBB to
+a target extent whose SOURCE is set by `--scale-source` — **current recipe = `reproj`** (frontal extent
+from the clean 2D mask span + median depth, along-ray axis from SAM3D aspect); `fused` (raw depth-cloud
+OBB) and `fused_robust` (denoised) are kept as ablations and craters/underperform on detector masks.
+Registration modes: `none` | `icp` (rigid pose) | `scale` (scale-fit only) | `scale_icp` (scale-fit + rigid pose), exposed
 as named methods `object_track_{icp,scale,scale_icp}` (mirroring `sam3d_layout_*`) or via
 `object_track --registration <mode>` (`--icp` is the legacy alias for `icp`).
