@@ -8,6 +8,33 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 - **Things only the human can do: `ACTION_ITEMS.md`** (Claude adds to it on every gated dependency)
 - Datasets & access: `DATASETS.md` · In-family systems & ideas to steal: `RELATED_WORK.md`
 
+_**★ SESSION 2026-07-22 — VAL-10 ORACLE UPPER BOUND + SAM 3 DETECTOR ABLATION + PAPER TIGHTENED.**
+Committed `e33d0d3` (v2-rework; SAM3D queue meshes gitignored, only run.json/CSV provenance tracked).
+- **Val-10 oracle campaign DONE** (744 GT-mask SAM3D meshes, 0 fail; `scripts/run_paper_oracle_val10.sh`
+  queue+collect, **stride 1** — fixes the old s200 stride-20 confound). Numbers `results/paper/_tables/
+  oracle_val10_mean.csv` (regen `scripts/agg_oracle.py`). **Perception ceiling is now val-10**: oracle
+  +icp IoU-F1 **0.744** vs detector 0.485; oracle +scale+icp **scale 0.130** vs 0.335 (scale-fit shines
+  on clean masks); **oracle layout 0.62 → +icp 0.74** ⇒ the registration back-end is needed EVEN with
+  perfect masks (reinforces C1). `tab:oracle` in `paper/main.tex`.
+- **SAM 3 detector ablation DONE** (s200, stride 10). New `detect/sam3.py` (HF transformers `Sam3`
+  open-vocab backend, `--backend sam3`, batched concept prompts), `scripts/run_s200_e2e.sh` +
+  `probe_mask_cleanliness.py`, `results/paper/_tables/s200_frontend_e2e.csv`. **Verdict:** SAM 3 raises
+  open-set recall (cd-F1 0.82 w/ gate, best detector-driven) + cleaner masks (leak_frac 0.56→0.34) but
+  NOT strict placement — it over-detects (116 tracks/93 GT → precision 0.41; ungated IoU-F1 0.45 <
+  YOLOE 0.52), at **~55× detector compute** (O(vocab); no multi-concept single pass). **Default YOLOE.**
+  Framed as the "strong" middle of the front-end axis (Appendix `tab:detector`); see [[sam3-detector-cost]],
+  [[sam3d-worker-launch]].
+- **Paper experiments restructured** (`paper/main.tex`): perception-ceiling subsection reframed to
+  "The Front-End Is the Bottleneck" (weak YOLOE → strong SAM 3 → perfect oracle); the two real-robot
+  tables combined into one `tab:real` — this **surfaced + fixed a mixed-config bug** in the old vs-Clio
+  "v2" row (strict from +gate, loose from +scale_icp). Dropped redundant `fig_c1_sim`; moved the scene
+  figure into the ceiling subsection; **all result tables standardized to 2dp** (rotation 1dp).
+- **Honest-read correction:** the gated "v2" loose recall (cd-F1 0.50) is BELOW Clio (0.54); the
+  loose-recall tie belongs to **+scale_icp (0.63)**, not the gated config. C3 lead stays the paired scale test.
+- **NEXT:** write the section PROSE from the `\todo`/POINTS-TO-HIT bullets (Intro/C1–C3/ablations still
+  scaffolded, not written); build Fig 1 (pipeline teaser — only remaining placeholder). Paper is
+  self-consistent (compiles; 5 tables/3 figures + appendix)._
+
 _**▶ NEXT SESSION FOCUS (2026-07-19): `docs/GENERATION_ABLATION_PLAN.md`** — the confound-free
 internal ablation (cluster-cloud vs SAM3D-asset, same tracks) + a new Footprint IoU metric, on
 ProcTHOR val, to prove whether generation improves geometry ACCURACY (not just richness) and to
@@ -55,8 +82,9 @@ cluster); for a fair FIELD entry, produce open-vocab (`generic`/`pf`) rows or ci
 real-robot leg: 4-scene v2 table + v1 baseline + precision gate (`--track-gate`, helps all 4 scenes);
 ICP-drop probed and RETRACTED (do not drop ICP). Details below._
 
-_Last updated: 2026-07-19 (real-robot leg complete + v1 baseline established; see "Real-robot eval
-leg" section. Precision gate implemented. **`docs/GENERATION_ABLATION_PLAN.md` is the next focus.**)_
+_Last updated: 2026-07-22 (val-10 oracle upper bound + SAM 3 detector ablation done; paper
+experiments restructured/tightened, committed e33d0d3. **Next: write section prose + Fig 1 teaser.**
+Earlier 2026-07-19: real-robot leg + v1 baseline + precision gate; GENERATION_ABLATION_PLAN done.)_
 
 _Prior 2026-07-18 (**FIRST REAL-ROBOT PLACEMENT NUMBERS** — full detect→track→SAM3D→register
 pipeline on Go2 hallway-1 via `RealSenseSource`, stride-2 gt masks: 33/57 tracks, scale-fit (reproj)
