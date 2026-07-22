@@ -1,0 +1,110 @@
+%==============================================================================
+%  references.bib — stub. Verify/complete each entry (year, venue, pages, DOI)
+%  before submission. Grouped by role in the paper.
+%==============================================================================
+
+% --- Single-image 3D generation (the node we build on) -----------------------
+@article{sam3d,
+  title   = {{SAM 3D}: 3D-fy Anything in Images},
+  author  = {{Meta AI}},
+  journal = {arXiv preprint arXiv:2511.16624},
+  year    = {2025},
+  note    = {Single-image 3D shape generator. NOT Yang et al. SegmentAnything3D.}
+}
+
+@article{sam3,
+  title   = {{SAM 3}: Segment Anything with Concepts},
+  author  = {{Meta AI}},
+  journal = {arXiv preprint},
+  year    = {2025},
+  note    = {2D open-vocab detect/segment/track. Disambiguate from SAM 3D.}
+}
+
+% --- Clustering metric-semantic scene graphs (same family / baselines) --------
+@article{conceptgraphs,
+  title   = {{ConceptGraphs}: Open-Vocabulary 3D Scene Graphs for Perception and Planning},
+  author  = {Gu, Qiao and others},
+  journal = {ICRA},
+  year    = {2024}
+}
+
+@article{hovsg,
+  title   = {{HOV-SG}: Hierarchical Open-Vocabulary 3D Scene Graphs for Language-Grounded Robot Navigation},
+  author  = {Werby, Abdelrhman and others},
+  journal = {RSS},
+  year    = {2024}
+}
+
+@article{hydra,
+  title   = {{Hydra}: A Real-time Spatial Perception System for 3D Scene Graph Construction and Optimization},
+  author  = {Hughes, Nathan and Chang, Yun and Carlone, Luca},
+  journal = {RSS},
+  year    = {2022}
+}
+
+@article{khronos,
+  title   = {{Khronos}: A Unified Approach for Spatio-Temporal Metric-Semantic {SLAM} in Dynamic Environments},
+  author  = {Schmid, Lukas and others},
+  journal = {RSS},
+  year    = {2024}
+}
+
+@article{clio,
+  title   = {{Clio}: Real-time Task-Driven Open-Set 3D Scene Graphs},
+  author  = {Maggio, Dominic and others},
+  journal = {IEEE Robotics and Automation Letters},
+  year    = {2024}
+}
+
+@inproceedings{supermap,
+  title     = {{SuperMap}: A Spatio-Temporal {SLAM} System for Visual-Language Navigation},
+  author    = {Zhao, Shibo and Chen, Guofei and Zhu, Honghao and Li, Zhiheng and
+               Yao, Changwei and Zantout, Nader and Kim, Seungchan and
+               Wang, Wenshan and Zhang, Ji and Scherer, Sebastian},
+  booktitle = {Robotics: Science and Systems (RSS)},
+  year      = {2026}
+}
+
+% --- Scene / shape completion -------------------------------------------------
+@article{scenecomplete,
+  title   = {{SceneComplete}: Open-World 3D Scene Completion in Cluttered Real World Environments for Robot Manipulation},
+  author  = {Anonymous},
+  journal = {arXiv preprint},
+  year    = {2024}
+}
+
+@article{metascenes,
+  title   = {{MetaScenes}: \todo{fill}},
+  author  = {Anonymous},
+  journal = {arXiv preprint},
+  year    = {2025}
+}
+
+@article{flowmatching,
+  title   = {Flow Matching for Generative Modeling},
+  author  = {Lipman, Yaron and Chen, Ricky T. Q. and Ben-Hamu, Heli and
+             Nickel, Maximilian and Le, Matthew},
+  journal = {ICLR},
+  year    = {2023},
+  note    = {v1 ref [33] — backs "SAM 3D pose from flow matching is unreliable".}
+}
+
+% --- Registration -------------------------------------------------------------
+@article{icp,
+  title   = {A Method for Registration of 3-D Shapes},
+  author  = {Besl, Paul J. and McKay, Neil D.},
+  journal = {IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  volume  = {14},
+  number  = {2},
+  pages   = {239--256},
+  year    = {1992},
+  note    = {Point-to-point ICP. (v2 seeds from SAM 3D pose, so no FGR entry needed.)}
+}
+
+% --- Detector stack -----------------------------------------------------------
+@article{yoloe,
+  title   = {{YOLOE}: Real-Time Seeing Anything},
+  author  = {Anonymous},
+  journal = {arXiv preprint},
+  year    = {2025}
+}

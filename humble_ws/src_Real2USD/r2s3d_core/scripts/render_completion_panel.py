@@ -55,6 +55,9 @@ def main() -> None:
     ap.add_argument("--elev", type=float, default=18)
     ap.add_argument("--azim", type=float, default=None, help="default None = auto (view unobserved side)")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--separate", action="store_true",
+                    help="save 3 tight, title-less panels (<base>_a/_b/_c.png) for "
+                         "LaTeX subfigure arrangement instead of one combined image")
     args = ap.parse_args()
 
     src = make_source("procthor", args.scene, split=args.split, gt_mesh="asset", stride=1)
@@ -106,32 +109,84 @@ def main() -> None:
     # the part GENERATION ADDS = asset surface not explained by the observed cluster
     added = asset_world[cKDTree(obs_clip).query(asset_world)[0] > args.tau]
 
-    lim = 0.5 * float(np.max(gext)) * 1.1
-    fig = plt.figure(figsize=(11, 4.2))
+    # ---- render knobs (edit here) ------------------------------------------
+    PT = 2.0                                  # scatter point size
+    PAD = 1.05                                # bbox padding (1.0 = hug tight)
+    RED, BLUE, GREY = "#d1495b", "#2e86ab", "#6b7280"
+    plt.rcParams["pdf.fonttype"] = 42         # embed TrueType (correct for any PDF text)
+    plt.rcParams["ps.fonttype"] = 42
+    # ------------------------------------------------------------------------
 
-    def _ax(k, title):
-        axp = fig.add_subplot(1, 3, k, projection="3d")
-        axp.set_title(title, fontsize=11)
-        axp.set_xlim(-lim, lim); axp.set_ylim(-lim, lim); axp.set_zlim(-lim, lim)
-        axp.set_box_aspect((1, 1, 1)); axp.view_init(elev=args.elev, azim=azim)
-        axp.set_xticks([]); axp.set_yticks([]); axp.set_zticks([])
-        return axp
+    # Shared, object-hugging bounding box (from the full GT points) so all three
+    # panels use identical limits AND the 3D box matches the object's real shape
+    # -> no cubic whitespace around a short/wide object like an armchair.
+    Pref = L(gpts)
+    bmin, bmax = Pref.min(0), Pref.max(0)
+    bctr, bhalf = 0.5 * (bmin + bmax), 0.5 * (bmax - bmin) * PAD
 
-    a1 = _ax(1, f"observed cluster ({coverage*100:.0f}% seen)")
-    P = L(obs_viz); a1.scatter(P[:, 0], P[:, 1], P[:, 2], s=2.0, c="#d1495b", linewidths=0)
-    a2 = _ax(2, "seen + generation-completed")
-    P = L(obs_viz); a2.scatter(P[:, 0], P[:, 1], P[:, 2], s=2.0, c="#d1495b", linewidths=0, label="observed")
-    P = L(added); a2.scatter(P[:, 0], P[:, 1], P[:, 2], s=2.0, c="#2e86ab", linewidths=0, label="generated")
-    a2.legend(loc="upper right", fontsize=8, markerscale=3, frameon=False)
-    a3 = _ax(3, "ground truth")
-    P = L(gpts); a3.scatter(P[:, 0], P[:, 1], P[:, 2], s=2.0, c="#6b7280", linewidths=0)
-    fig.suptitle(f"{g.label} — {coverage*100:.0f}% observed  (track {args.track_id}, scene {args.scene})",
-                 fontsize=12)
-    fig.tight_layout()
-    out = Path(args.out or f"results/paper/_figs/completion_panel_s{args.scene}_t{args.track_id}.png")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=160, bbox_inches="tight")
-    print(f"coverage {coverage:.2f} | obs_clip {len(obs_clip)} pts | wrote {out}")
+    # each panel = list of (points, colour, legend-label); NO titles (caption describes).
+    panels = {
+        "a": [(L(obs_viz), RED, None)],                                   # observed cluster
+        "b": [(L(obs_viz), RED, "observed"), (L(added), BLUE, "generated")],  # seen + generated
+        "c": [(L(gpts), GREY, None)],                                     # ground truth
+    }
+
+    def _draw(axp, key, legend=False):
+        for P, c, lab in panels[key]:
+            axp.scatter(P[:, 0], P[:, 1], P[:, 2], s=PT, c=c, linewidths=0, label=lab)
+        axp.set_xlim(bctr[0] - bhalf[0], bctr[0] + bhalf[0])
+        axp.set_ylim(bctr[1] - bhalf[1], bctr[1] + bhalf[1])
+        axp.set_zlim(bctr[2] - bhalf[2], bctr[2] + bhalf[2])
+        axp.set_box_aspect(tuple(bhalf))  # box matches object extents -> dense
+        axp.view_init(elev=args.elev, azim=azim)
+        axp.set_axis_off()  # drop panes/ticks/labels -> no chrome
+        if key == "b" and legend:
+            axp.legend(loc="upper right", fontsize=8, markerscale=3, frameon=False)
+
+    def _autocrop(path, pad=6, also_pdf=False):
+        """Crop the saved PNG to its non-white bounding box -> kills the
+        whitespace matplotlib's 3D axes reserve that bbox_inches can't. With
+        ``also_pdf``, wrap the cropped raster in a PDF (right choice for a dense
+        point cloud -- a vector PDF of ~24k scatter points would bloat)."""
+        from PIL import Image, ImageChops
+        im = Image.open(path).convert("RGB")
+        bg = Image.new("RGB", im.size, (255, 255, 255))
+        diff = ImageChops.difference(im, bg).convert("L").point(lambda p: 255 if p > 8 else 0)
+        bb = diff.getbbox()
+        if bb:
+            l, t, r, b = bb
+            im = im.crop((max(0, l - pad), max(0, t - pad),
+                          min(im.width, r + pad), min(im.height, b + pad)))
+            im.save(path)
+        if also_pdf:
+            pdf = str(Path(path).with_suffix(".pdf"))
+            im.save(pdf, "PDF", resolution=200.0)
+            print(f"wrote {pdf}")
+
+    base = (Path(args.out) if args.out else
+            Path(f"results/paper/_figs/completion_panel_s{args.scene}_t{args.track_id}"))
+    base = base.with_suffix("")
+    base.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.separate:
+        # three tight, title-less, legend-less images -> arrange with LaTeX
+        # subfigures; put the red=observed / blue=generated key in the caption.
+        for key in ("a", "b", "c"):
+            f = plt.figure(figsize=(3.0, 3.0))
+            _draw(f.add_subplot(111, projection="3d"), key)
+            f.subplots_adjust(left=0, right=1, bottom=0, top=1)
+            out = f"{base}_{key}.png"
+            f.savefig(out, dpi=200, bbox_inches="tight", pad_inches=0.0)
+            plt.close(f); _autocrop(out, also_pdf=True); print(f"wrote {out}")
+    else:
+        fig = plt.figure(figsize=(9.0, 3.1))
+        for k, key in enumerate(("a", "b", "c"), start=1):
+            _draw(fig.add_subplot(1, 3, k, projection="3d"), key, legend=True)
+        fig.subplots_adjust(left=0, right=1, bottom=0, top=1, wspace=0.0)
+        out = f"{base}.png"
+        fig.savefig(out, dpi=200, bbox_inches="tight", pad_inches=0.02)
+        _autocrop(out); print(f"wrote {out}")
+    print(f"coverage {coverage:.2f} | obs_clip {len(obs_clip)} pts")
 
 
 if __name__ == "__main__":

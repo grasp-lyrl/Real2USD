@@ -147,9 +147,14 @@ def main(argv=None):
     p.add_argument("--device", default=None, help="e.g. cuda:0 or cpu (default auto)")
     p.add_argument("--diagnose", action="store_true",
                    help="print GT detection-recall / mask-IoU (the prompting study)")
+    p.add_argument("--backend", choices=["yoloe", "sam3"], default="yoloe",
+                   help="detector backend: yoloe (default) or sam3 (transformers Sam3, gt-vocab)")
     args = p.parse_args(argv)
 
-    from .yoloe import run_detector  # lazy: needs the detector extra
+    if args.backend == "sam3":
+        from .sam3 import run_detector  # lazy: needs the sam3 extra (transformers)
+    else:
+        from .yoloe import run_detector  # lazy: needs the detector extra
 
     out = Path(args.out) / args.prompt
     src_kwargs = {"stride": args.stride}

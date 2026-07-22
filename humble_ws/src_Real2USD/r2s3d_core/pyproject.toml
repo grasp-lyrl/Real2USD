@@ -26,9 +26,19 @@ registration = [
 dev = [
     "pytest>=8.0",
 ]
-# mesh decimation for lite GLB inspection exports (recon/scene_glb.py)
+# SAM 3 detector backend (detect/sam3.py). transformers with Sam3 support; torch
+# comes from the `detector` extra (cu128 for the RTX 5090). Run both extras.
+sam3 = [
+    "transformers>=4.57",
+    "pillow>=10.0",
+]
+# mesh decimation for lite GLB inspection exports (recon/scene_glb.py) +
+# paper figure plotting (scripts/figs/*, seaborn/matplotlib).
 viz = [
     "fast-simplification>=0.1",
+    "seaborn>=0.13",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
 ]
 # GT asset-mesh reading for the ProcTHOR/MolmoSpaces Mesh rows (data/thor_assets.py).
 # The MolmoSpaces `isaac/objects/thor` source ships USDA (ASCII USD), which trimesh

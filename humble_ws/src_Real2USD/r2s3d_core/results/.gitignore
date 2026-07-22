@@ -12,6 +12,10 @@ sam3d_queue/
 _assetq/
 *_queue/
 *_assetq/
+# val-10 oracle campaign + s200 front-end e2e queues (run_paper_oracle_val10.sh,
+# run_s200_e2e.sh): _oracleq/ and _feq_*/ (incl. _feq_stage_* throwaway).
+_oracleq/
+_feq_*/
 # scene_graph.json / placements.json are regenerable object-map exports (rebuilt from
 # run.json + the cached SAM3D meshes with no re-run) — scratch like the GLBs, not tracked.
 scene_graph.json
