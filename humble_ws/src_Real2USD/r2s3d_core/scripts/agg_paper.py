@@ -22,6 +22,7 @@ OUT = Path("results/paper/_tables")
 COLS = [
     ("n_pred", "n_pred"), ("iou_f1", "f1"), ("recall@0.5", "recall@0.5"),
     ("scan2cad", "scan2cad_accuracy"), ("centroid_m", "centroid_err_median_m"),
+    ("rot_deg", "rotation_err_median_deg"),
     ("scale_err", "scale_err_median"), ("chamfer_m", "scene_chamfer_mean_m"),
     ("footprint_iou", "footprint_iou"), ("cd_f1@1m", "cd_f1"),
     ("cd_micro_f1", "cd_micro_f1"), ("class_free@1m", "class_free_recall_1m"),

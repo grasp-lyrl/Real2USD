@@ -1,0 +1,24 @@
+{
+  "scene": "hallway-1",
+  "stride": 2,
+  "n_frames": 758,
+  "frame_decode_s_per_frame_cold": 0.0024115117770523854,
+  "frame_decode_s_per_frame_warm": 0.0023917724023785657,
+  "yoloe_s_per_frame": {
+    "median": 0.012478202988859266,
+    "mean": 0.012539634619512269,
+    "n": 37
+  },
+  "tracker_s_per_frame": 0.02774967930613253,
+  "n_tracks": 109,
+  "placement_s_per_object": 1.5077015799999407,
+  "n_objects_placed": 33,
+  "run_total_s": 72.60137253504945,
+  "sam3d_generation": {
+    "n_jobs": 663,
+    "n_busy_gaps": 662,
+    "median_s": 20.55113112926483,
+    "p10_s": 18.12433264255524,
+    "p90_s": 27.483458232879638
+  }
+}
