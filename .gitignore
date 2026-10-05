@@ -76,3 +76,6 @@ lib
 lib64
 .pytest_cache/
 .pytest_ros_log/
+# paper/figs: PDFs are the figures the paper includes; the fig scripts also dump PNG
+# previews of the same renders (~0.6 MB each). Regenerable duplicates — don't track.
+paper/figs/*.png

@@ -28,13 +28,13 @@ FIG_W = fs.FIG_1COL_W
 FIG_H = 2.35                       # inches
 X_LABEL = "Observed surface coverage"
 Y_LABEL = "Unobserved-surface error (m)"
-ASSET_LABEL = "Generated asset (ours)"
-CLUSTER_LABEL = "Observed cluster"
+ASSET_LABEL = "Generated object (ours)"
+CLUSTER_LABEL = "Observed pointcloud"
 COV_BINS = np.arange(0.0, 1.0001, 0.1)   # coverage bin edges; coarsen if sparse
 SHOW_SCATTER = True                       # raw points behind the trend lines
 ERRORBAR = ("ci", 95)                     # seaborn aggregation band; e.g. ("se",1)
 XLIM = (0.0, 1.0)
-YLIM = None                               # e.g. (0, 0.30) to pin the axis
+YLIM = (0, 0.4)                           # pin the axis; scatter outliers above clip
 
 
 def load() -> pd.DataFrame:
