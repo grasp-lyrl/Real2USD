@@ -80,6 +80,13 @@ def run(args: argparse.Namespace) -> Path:
         "cluster_denoise": args.cluster_denoise,
         "scale_source": args.scale_source,
         "scale_icp_iters": args.scale_icp_iters,
+        "icp_gravity": args.icp_gravity,
+        "icp_denoise": args.icp_denoise,
+        "icp_transonly": args.icp_transonly,
+        "scale_grow_only": args.scale_grow_only,
+        "render_compare": args.render_compare,
+        "rc_scale_only": args.rc_scale_only,
+        "rc_max_views": args.rc_max_views,
         "debug_html": args.debug_html,
         "corrupt": {"dropout": args.det_dropout, "jitter_px": args.det_jitter,
                     "track_break": args.det_track_break, "split": args.det_split_prob},
@@ -313,6 +320,36 @@ def build_parser() -> argparse.ArgumentParser:
                         "3rd axis from a second ~orthogonal view (Method B2).")
     p.add_argument("--scale-icp-iters", type=int, default=5,
                    help="scale_icp: max scale<->ICP alternations (converges early per object).")
+    p.add_argument("--icp-gravity", action="store_true",
+                   help="object_track icp/scale_icp: constrain the ICP delta to translation + "
+                        "yaw about world-up (gravity-aligned), so registration cannot tip an "
+                        "upright object off vertical. Fixes ICP degrading rotation on one-sided "
+                        "real clouds.")
+    p.add_argument("--icp-denoise", action="store_true",
+                   help="object_track icp/scale_icp: denoise the fused-cloud ICP target "
+                        "(SOR + largest-DBSCAN-cluster) before registering, so ICP fits the "
+                        "object body rather than detector-mask edge-bleed.")
+    p.add_argument("--icp-transonly", action="store_true",
+                   help="object_track icp/scale_icp: translation-only ICP -- keep the SAM3D "
+                        "layout orientation entirely and only snap position. Use when the "
+                        "generator's orientation is already good and ICP would only perturb it.")
+    p.add_argument("--scale-grow-only", action="store_true",
+                   help="object_track scale/scale_icp: grow-only scale-fit -- only ENLARGE the "
+                        "mesh to the observed depth extent, never shrink. The observed extent is "
+                        "a lower bound on true size, so this fixes under-sized (OOD) meshes "
+                        "without regressing already-correct (in-distribution) ones.")
+    p.add_argument("--render-compare", action="store_true",
+                   help="object_track icp/scale_icp: fit pose+scale by matching the mesh's "
+                        "rendered silhouette+depth to the observed masks across the track's kept "
+                        "views (replaces ICP/scale-fit). Needs a GPU EGL context.")
+    p.add_argument("--rc-scale-only", action="store_true",
+                   help="render-compare: freeze pose to the layout and optimize ONLY per-axis "
+                        "scale (silhouette fixes size without the pose search degrading rotation "
+                        "on viewpoint-clustered tracks). Use with --render-compare.")
+    p.add_argument("--rc-max-views", type=int, default=4,
+                   help="render-compare: max views matched against (largest mask first). "
+                        "Multi-view in sim (clean poses); set 1 on real (single-view is "
+                        "drift-robust: mesh rendered back into its own observation frame).")
     p.add_argument("--det-dropout", type=float, default=0.0, help="corruption: drop-detection prob")
     p.add_argument("--det-jitter", type=int, default=0, help="corruption: bbox/mask jitter px")
     p.add_argument("--det-track-break", type=float, default=0.0, help="corruption: id-break prob")

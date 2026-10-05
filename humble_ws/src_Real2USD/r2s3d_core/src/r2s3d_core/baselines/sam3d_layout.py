@@ -267,6 +267,71 @@ def refine_icp(source_pts: np.ndarray, target_pts: np.ndarray, init_T: np.ndarra
     return np.asarray(reg.transformation), {"fitness": float(reg.fitness), "fallback": None}
 
 
+def refine_icp_gravity(source_pts: np.ndarray, target_pts: np.ndarray, init_T: np.ndarray,
+                       voxel: float = 0.01, dist: float = 0.03, max_iter: int = 30,
+                       min_fitness: float = 0.10, estimate_yaw: bool = True) -> Tuple[np.ndarray, dict]:
+    """Gravity-aligned point-to-point ICP: the pose delta is constrained to a translation
+    plus a yaw about the world up-axis (Z), never a full SO(3) rotation.
+
+    Indoor furniture stands upright, and the SAM3D layout already gives a good upright
+    orientation; the pose error that registration should fix is in-plane (yaw + position).
+    Unconstrained ICP, fed a one-sided partial cloud, instead tips/rolls the mesh to hug the
+    visible surface, which *worsens* rotation (real-robot: layout 5 deg -> icp 16 deg). Fixing
+    only yaw + translation removes that failure mode. Each iteration solves the closed-form
+    2D orthogonal-Procrustes yaw over the current correspondences. Falls back to ``init_T`` on
+    low inlier fitness (marked in info).
+    """
+    try:
+        import open3d as o3d
+    except ImportError as e:  # pragma: no cover
+        raise RuntimeError("gravity ICP needs open3d: `uv sync --extra registration`") from e
+    from scipy.spatial import cKDTree
+
+    src0 = np.asarray(source_pts, dtype=np.float64)
+    tgt = np.asarray(target_pts, dtype=np.float64)
+    if len(src0) > 30:
+        src0 = np.asarray(o3d.geometry.PointCloud(
+            o3d.utility.Vector3dVector(src0)).voxel_down_sample(voxel).points)
+    tgt = np.asarray(o3d.geometry.PointCloud(
+        o3d.utility.Vector3dVector(tgt)).voxel_down_sample(voxel).points)
+    if len(tgt) < 30:
+        return init_T, {"fitness": 0.0, "fallback": "too_few_target_points", "mode": "gravity"}
+
+    tree = cKDTree(tgt)
+    T = np.asarray(init_T, dtype=np.float64).copy()
+    n_src = max(len(src0), 1)
+    fitness = 0.0
+    for _ in range(max_iter):
+        src_w = (T[:3, :3] @ src0.T + T[:3, 3:4]).T
+        d, idx = tree.query(src_w)
+        inl = d <= dist
+        n_in = int(inl.sum())
+        fitness = n_in / n_src
+        if n_in < 10:
+            break
+        P, Q = src_w[inl], tgt[idx[inl]]
+        pc, qc = P.mean(0), Q.mean(0)
+        if estimate_yaw:
+            # closed-form optimal yaw (rotation about Z) via 2D orthogonal Procrustes on xy
+            Pp, Qp = P - pc, Q - qc
+            cross = float(np.sum(Pp[:, 0] * Qp[:, 1] - Pp[:, 1] * Qp[:, 0]))
+            dot = float(np.sum(Pp[:, 0] * Qp[:, 0] + Pp[:, 1] * Qp[:, 1]))
+            theta = np.arctan2(cross, dot)
+        else:
+            theta = 0.0  # translation-only: keep the generator's orientation entirely
+        c, s = np.cos(theta), np.sin(theta)
+        Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        t = qc - Rz @ pc
+        delta = np.eye(4)
+        delta[:3, :3], delta[:3, 3] = Rz, t
+        T = delta @ T
+        if abs(theta) < 1e-4 and float(np.linalg.norm(t)) < 1e-4:
+            break
+    if fitness < min_fitness:
+        return init_T, {"fitness": float(fitness), "fallback": "low_fitness", "mode": "gravity"}
+    return T, {"fitness": float(fitness), "fallback": None, "mode": "gravity"}
+
+
 def _masked_depth_cloud(frame: Frame, mask: np.ndarray) -> np.ndarray:
     """Back-project masked, valid depth pixels into the world frame."""
     H, W = frame.depth.shape
@@ -485,7 +550,7 @@ def _silhouette_scale_transform(posed: trimesh.Trimesh, obs_mask, frame, reg: fl
 
 
 def _fit_scale_to_extent(posed: trimesh.Trimesh, target_extent_sorted: np.ndarray,
-                         clamp=(0.25, 4.0)):
+                         clamp=(0.25, 4.0), grow_only: bool = False):
     """World transform that rescales ``posed`` so its OBB extents match the (metric,
     depth-derived) ``target_extent_sorted``, per axis, about the mesh's OBB centre.
 
@@ -493,19 +558,27 @@ def _fit_scale_to_extent(posed: trimesh.Trimesh, target_extent_sorted: np.ndarra
     ~1-2% on observed axes, thin axis recovered by multi-view fusion), so matching the
     SPAN sets scale correctly — unlike ICP (can't rescale) or TEASER point-NN (shrinks
     onto the partial cloud). Anisotropic + axis-sorted; scale factors clamped for safety.
+
+    ``grow_only`` clamps each scale factor to be >= 1: the observed depth extent is a
+    LOWER BOUND on the true size (occlusion removes surface, never adds), so we may only
+    ENLARGE an under-sized mesh, never shrink it onto a partial view. In-distribution,
+    where SAM3D's scale is already good, this is a no-op (keeps the generator's scale);
+    OOD, where SAM3D under-sizes ~3x, it grows the mesh to the observed span.
     """
     T, ext_m = _fast_obb(posed)
     R, c = T[:3, :3], T[:3, 3]
     tgt = np.sort(np.asarray(target_extent_sorted, float))[::-1]
     order = np.argsort(ext_m)[::-1]          # mesh axes, largest -> smallest
+    lo = 1.0 if grow_only else clamp[0]
     scales = np.ones(3)
     for rank, ax in enumerate(order):
-        scales[ax] = np.clip(tgt[rank] / max(ext_m[ax], 1e-6), *clamp)
+        scales[ax] = np.clip(tgt[rank] / max(ext_m[ax], 1e-6), lo, clamp[1])
     A = R @ np.diag(scales) @ R.T            # scale along mesh OBB axes, about centre c
     M = np.eye(4)
     M[:3, :3] = A
     M[:3, 3] = c - A @ c
-    return M, {"scales": scales.tolist(), "mesh_ext": ext_m.tolist(), "target_ext": tgt.tolist()}
+    return M, {"scales": scales.tolist(), "mesh_ext": ext_m.tolist(), "target_ext": tgt.tolist(),
+               "grow_only": bool(grow_only)}
 
 
 def _run(source, gt: Optional[List[GTObject]], config: dict, registration: str) -> List[SceneObject]:

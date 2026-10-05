@@ -211,7 +211,48 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
             "validation": val,
         }
 
-        if registration != "none":
+        if registration != "none" and config.get("render_compare"):
+            # Render-and-compare: fit pose+scale so the mesh's rendered silhouette+depth
+            # matches the observed masks across the track's kept views (masks >> the
+            # contaminated fused cloud). Replaces ICP/scale-fit for this track.
+            from ..registration.render_compare import refine_render_compare
+            # rc_scale_only pairs depth-ICP POSE with silhouette SCALE: run the rigid ICP
+            # pose step first (pose from 3D geometry), then render-compare fixes size only.
+            if config.get("rc_scale_only") and len(t.fused_cloud) >= 30:
+                icp_tgt = (s3d._denoise_cloud(t.fused_cloud)
+                           if config.get("icp_denoise") else t.fused_cloud)
+                src_pts = (geo.sample_surface(posed, 2000, seed=t.track_id)
+                           if len(posed.faces) else np.asarray(posed.vertices))
+                dlt, iinfo = s3d.refine_icp(src_pts, icp_tgt, np.eye(4))
+                posed.apply_transform(dlt)
+                post = dlt @ post
+                prov["icp"] = iinfo
+            views = []
+            for o in t.kept_views:
+                if getattr(o, "mask", None) is None:
+                    continue
+                fr = frames[o.frame_index]
+                views.append({"mask": np.asarray(o.mask) > 0,
+                              "K": np.asarray(fr.K, float).reshape(3, 3),
+                              "Twc": np.asarray(fr.T_world_cam, float),
+                              "depth": np.asarray(fr.depth, float)})
+            if len(views) >= 1:
+                delta, info = refine_render_compare(
+                    np.asarray(posed.vertices, float), np.asarray(posed.faces, np.int32),
+                    views, config)
+                posed.apply_transform(delta)
+                post = delta @ post
+                prov["render_compare"] = info
+                _rc_name = "layout+icp+rc_scale" if config.get("rc_scale_only") else "layout+render_compare"
+                prov["registration"] = (_rc_name if info.get("fallback") is None
+                                        else "layout(rc_fallback)")
+            else:
+                prov["registration"] = "layout(rc_too_few_views)"
+            # re-derive OBB from the transformed mesh (the render-compare branch skips the
+            # shared _fast_obb finalization below)
+            T_world_obj, extents = s3d._fast_obb(posed, seed=t.track_id)
+
+        elif registration != "none":
             do_scale = registration in ("scale", "scale_icp")
             do_icp = registration in ("icp", "scale_icp")
             # register against the track's FUSED multi-view cloud (Phase-2 upgrade over
@@ -256,16 +297,33 @@ def _run(source, gt: Optional[List[GTObject]], config: dict, *, reid: bool,
                     if tgt_ext is None:
                         prov["scale_fit"] = {"skipped": "degenerate_target"}
                         return 0.0, np.eye(4)
-                    M, sinfo = s3d._fit_scale_to_extent(posed, tgt_ext)
+                    M, sinfo = s3d._fit_scale_to_extent(
+                        posed, tgt_ext, grow_only=bool(config.get("scale_grow_only")))
                     posed.apply_transform(M)
                     prov["scale_fit"] = sinfo
                     return float(np.max(np.abs(np.asarray(sinfo["scales"]) - 1.0))), M
 
+                # ICP target: the raw fused cloud is detector-mask-contaminated (edge bleed
+                # inflates it ~3x, the same reason the cluster payload denoises before boxing).
+                # Registering against it drags pose off; ``icp_denoise`` cleans it first
+                # (SOR + largest-DBSCAN-cluster) so ICP fits the object body, not the leak.
+                icp_target = (s3d._denoise_cloud(target)
+                              if config.get("icp_denoise") and len(target) >= 30 else target)
+
                 def _icp_step():
-                    # rigid: recovers pose only (cannot rescale).
+                    # rigid: recovers pose only (cannot rescale). ``icp_gravity`` constrains
+                    # the delta to translation + yaw about world-up (objects stand upright),
+                    # so registration cannot tip the mesh off vertical (which worsens rotation
+                    # on one-sided real clouds).
                     src_pts = (geo.sample_surface(posed, 2000, seed=t.track_id)
                                if len(posed.faces) else np.asarray(posed.vertices))
-                    delta, info = s3d.refine_icp(src_pts, target, np.eye(4))
+                    if config.get("icp_transonly"):
+                        delta, info = s3d.refine_icp_gravity(src_pts, icp_target, np.eye(4),
+                                                             estimate_yaw=False)
+                    elif config.get("icp_gravity"):
+                        delta, info = s3d.refine_icp_gravity(src_pts, icp_target, np.eye(4))
+                    else:
+                        delta, info = s3d.refine_icp(src_pts, icp_target, np.eye(4))
                     posed.apply_transform(delta)
                     prov["icp"] = info
                     dt = float(np.linalg.norm(delta[:3, 3]))
