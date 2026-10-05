@@ -1,0 +1,94 @@
+[project]
+name = "r2s3d_core"
+version = "0.1.0"
+description = "R2S3D v2 core: ROS-free library for asset-centric metric-semantic mapping (SequenceSource, frames, tracks, registration, refinement, reconstruction, evaluation)."
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "numpy>=1.24,<2.0",
+    "scipy>=1.10",
+    "trimesh>=4.0",
+    "pyyaml>=6.0",
+    "opencv-python>=4.8",
+    "pillow>=10.0",
+    "tqdm>=4.66",
+    "plyfile>=1.0",
+]
+
+# Python is pinned to 3.10 to match ROS Humble so this package installs editable
+# inside the docker container. See docs/REWORK_PLAN.md "Environments".
+
+[project.optional-dependencies]
+# Heavy geometry/registration deps used by later phases and the ICP baseline variant.
+# Kept optional so metrics + harness run in a light env.
+registration = [
+    "open3d>=0.18",
+]
+dev = [
+    "pytest>=8.0",
+]
+# SAM 3 detector backend (detect/sam3.py). transformers with Sam3 support; torch
+# comes from the `detector` extra (cu128 for the RTX 5090). Run both extras.
+sam3 = [
+    "transformers>=4.57",
+    "pillow>=10.0",
+]
+# mesh decimation for lite GLB inspection exports (recon/scene_glb.py) +
+# paper figure plotting (scripts/figs/*, seaborn/matplotlib).
+viz = [
+    "fast-simplification>=0.1",
+    "seaborn>=0.13",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
+]
+# GT asset-mesh reading for the ProcTHOR/MolmoSpaces Mesh rows (data/thor_assets.py).
+# The MolmoSpaces `isaac/objects/thor` source ships USDA (ASCII USD), which trimesh
+# cannot read; usd-core provides `pxr` to parse it. Optional -- only the Mesh-row
+# Chamfer / footprint-IoU / scene-geometry metrics need real GT meshes (AI-8).
+mesh = [
+    "usd-core>=23.11",
+]
+# Phase 2 detector step (detect/yoloe.py). Heavy (torch); kept optional so the core
+# tracker/eval/tests stay torch-free. torch is pulled from the CUDA 12.8 index because
+# this desktop's RTX 5090 (sm_120 / Blackwell) needs cu128 — see [[sam3d-5090-env]].
+detector = [
+    "ultralytics>=8.3.60",
+    # pin the known-good cu128 pair for the RTX 5090 (torch 2.8 / torchvision 0.23);
+    # letting these float pulled a mismatched torchvision (torchvision::nms missing).
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+]
+# Go2 rosbag SequenceSource backend (data/rosbag.py). `rosbags` is a pure-Python
+# ROS2 bag reader + CDR deserializer (NO ROS install needed); it ships the standard
+# sensor_msgs/nav_msgs/tf2_msgs definitions, so we read /odom, /camera/image_raw,
+# /camera/camera_info, /point_cloud2 without ever touching the custom go2_interfaces
+# types. Kept optional so the core harness stays ROS-free and light.
+rosbag = [
+    "rosbags>=0.9",
+]
+# ProcTHOR / MolmoSpaces dataset backend (data/procthor.py). AI2-THOR drives an
+# embedded Unity player to render RGB+depth+instance-seg; `prior` fetches the
+# ProcTHOR-10k house JSONs. Kept optional so the core harness stays light.
+# Rendering needs a GPU + display (X :1 here) or CloudRendering/Vulkan headless.
+procthor = [
+    "ai2thor>=5.0",
+    "prior>=1.0",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/r2s3d_core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

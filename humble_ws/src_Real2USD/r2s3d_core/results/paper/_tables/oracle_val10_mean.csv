@@ -1,0 +1,4 @@
+registration,n,f1,recall@0.5,scan2cad_accuracy,centroid_err_median_m,rotation_err_median_deg,scale_err_median,cd_f1,class_free_recall_1m
+layout,10,0.6229,0.2635,0.1161,0.0632,9.4069,0.2868,0.952,0.9986
+icp,10,0.7435,0.3274,0.1351,0.0468,6.2119,0.3202,0.952,0.9986
+scale_icp,10,0.6841,0.4147,0.3279,0.0336,4.8848,0.1302,0.952,0.9986

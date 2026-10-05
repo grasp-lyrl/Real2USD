@@ -1,0 +1,1180 @@
+{
+  "rescore": {
+    "200": {
+      "n_pred": 72,
+      "n_gt": 93,
+      "matched_per_scene": 45,
+      "objects_per_scene": 93,
+      "predictions_per_scene": 72,
+      "count_ratio": 0.7741935483870968,
+      "iou_threshold": 0.25,
+      "tp": 45,
+      "fp": 27,
+      "fn": 48,
+      "precision": 0.625,
+      "recall": 0.4838709677419355,
+      "f1": 0.5454545454545454,
+      "recall@0.5": 0.26881720430107525,
+      "duplicate_rate": 0.10752688172043011,
+      "scan2cad_accuracy": 0.15053763440860216,
+      "label_accuracy": 0.5555555555555556,
+      "centroid_err_median_m": 0.04540859204413135,
+      "centroid_err_mean_m": 0.10721365872804378,
+      "rotation_err_median_deg": 3.59053689913236,
+      "rotation_err_mean_deg": 12.117505844801084,
+      "scale_err_median": 0.23297087057431154,
+      "scale_err_mean": 0.402690606626255,
+      "chamfer_l1_median_m": 0.06896346941700121,
+      "chamfer_symmetric_mean_m": 0.034481734708500605,
+      "fscore@0.05_mean": 0.6776631903314227,
+      "fscore@0.02_mean": 0.48397877952208757,
+      "micro_precision": 0.3472222222222222,
+      "micro_recall": 0.26881720430107525,
+      "micro_f1": 0.30303030303030304,
+      "macro_precision": 0.21616161616161617,
+      "macro_recall": 0.2575757575757576,
+      "macro_f1": 0.21727272727272726,
+      "per_class": {
+        "apple": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "armchair": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "baseballbat": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "bed": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "book": {
+          "tp": 0,
+          "fp": 3,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 3,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "bowl": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "box": {
+          "tp": 0,
+          "fp": 4,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 4,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "butterknife": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "candle": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "cd": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "cellphone": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "chair": {
+          "tp": 5,
+          "fp": 13,
+          "fn": 1,
+          "n_gt": 6,
+          "n_pred": 18,
+          "precision": 0.2777777777777778,
+          "recall": 0.8333333333333334,
+          "f1": 0.4166666666666667
+        },
+        "clothesdryer": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "countertop": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "creditcard": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "desk": {
+          "tp": 1,
+          "fp": 8,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 9,
+          "precision": 0.1111111111111111,
+          "recall": 1.0,
+          "f1": 0.19999999999999998
+        },
+        "diningtable": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 4,
+          "n_gt": 4,
+          "n_pred": 1,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "drawer": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 4,
+          "n_gt": 4,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "dresser": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "faucet": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "floorlamp": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "fridge": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "garbagecan": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "houseplant": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6666666666666666
+        },
+        "kettle": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "keychain": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "laptop": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "laundryhamper": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "lettuce": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "mug": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "painting": {
+          "tp": 5,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 5,
+          "n_pred": 5,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "pen": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 1,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "pencil": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "peppershaker": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "pillow": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 0.5,
+          "f1": 0.5
+        },
+        "plate": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "plunger": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "potato": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "remotecontrol": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 0.5,
+          "f1": 0.5
+        },
+        "shelf": {
+          "tp": 0,
+          "fp": 3,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 3,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "sink": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "sinkbasin": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "soapbottle": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 0.5,
+          "f1": 0.5
+        },
+        "sofa": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "spatula": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "spraybottle": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "statue": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 2,
+          "n_gt": 3,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 0.3333333333333333,
+          "f1": 0.5
+        },
+        "television": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "toaster": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "toilet": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "toiletpaper": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "tomato": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "tvstand": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "vase": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 1,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "watch": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        }
+      },
+      "label_aware_matched": 25,
+      "cd_tau": 1.0,
+      "cd_precision": 0.8333333333333334,
+      "cd_recall": 0.6451612903225806,
+      "cd_f1": 0.7272727272727272,
+      "cd_matched": 60,
+      "cd_micro_f1": 0.3878787878787879,
+      "cd_micro_precision": 0.4444444444444444,
+      "cd_micro_recall": 0.34408602150537637,
+      "cd_macro_f1": 0.2915151515151515,
+      "cd_macro_precision": 0.29292929292929293,
+      "cd_macro_recall": 0.33636363636363636,
+      "cd_per_class": {
+        "apple": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "armchair": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "baseballbat": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "bed": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "book": {
+          "tp": 1,
+          "fp": 2,
+          "fn": 2,
+          "n_gt": 3,
+          "n_pred": 3,
+          "precision": 0.3333333333333333,
+          "recall": 0.3333333333333333,
+          "f1": 0.3333333333333333
+        },
+        "bowl": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "box": {
+          "tp": 0,
+          "fp": 4,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 4,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "butterknife": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "candle": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "cd": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "cellphone": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "chair": {
+          "tp": 6,
+          "fp": 12,
+          "fn": 0,
+          "n_gt": 6,
+          "n_pred": 18,
+          "precision": 0.3333333333333333,
+          "recall": 1.0,
+          "f1": 0.5
+        },
+        "clothesdryer": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "countertop": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "creditcard": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "desk": {
+          "tp": 1,
+          "fp": 8,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 9,
+          "precision": 0.1111111111111111,
+          "recall": 1.0,
+          "f1": 0.19999999999999998
+        },
+        "diningtable": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 4,
+          "n_gt": 4,
+          "n_pred": 1,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "drawer": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 4,
+          "n_gt": 4,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "dresser": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "faucet": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "floorlamp": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "fridge": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "garbagecan": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "houseplant": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6666666666666666
+        },
+        "kettle": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "keychain": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "laptop": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "laundryhamper": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "lettuce": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "mug": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "painting": {
+          "tp": 5,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 5,
+          "n_pred": 5,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "pen": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6666666666666666
+        },
+        "pencil": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "peppershaker": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "pillow": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 0.5,
+          "f1": 0.5
+        },
+        "plate": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "plunger": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "potato": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "remotecontrol": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 0.5,
+          "f1": 0.5
+        },
+        "shelf": {
+          "tp": 1,
+          "fp": 2,
+          "fn": 2,
+          "n_gt": 3,
+          "n_pred": 3,
+          "precision": 0.3333333333333333,
+          "recall": 0.3333333333333333,
+          "f1": 0.3333333333333333
+        },
+        "sink": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "sinkbasin": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 1.0,
+          "f1": 0.6666666666666666
+        },
+        "soapbottle": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 1,
+          "n_gt": 2,
+          "n_pred": 2,
+          "precision": 0.5,
+          "recall": 0.5,
+          "f1": 0.5
+        },
+        "sofa": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "spatula": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "spraybottle": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "statue": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 2,
+          "n_gt": 3,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 0.3333333333333333,
+          "f1": 0.5
+        },
+        "television": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "toaster": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "toilet": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "n_gt": 1,
+          "n_pred": 1,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "toiletpaper": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "tomato": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "n_gt": 2,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "tvstand": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "vase": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 3,
+          "n_gt": 3,
+          "n_pred": 1,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "watch": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "n_gt": 1,
+          "n_pred": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        }
+      },
+      "cd_micro_f1_many_to_one": 0.4574923547400612,
+      "cd_micro_precision_many_to_one": 0.6111111111111112,
+      "cd_micro_recall_many_to_one": 0.3655913978494624,
+      "class_free_recall_1m": 1.0,
+      "centroid_f1_by_tau": {
+        "0.25": 0.6545454545454547,
+        "0.5": 0.7030303030303029,
+        "0.75": 0.7272727272727272,
+        "1.0": 0.7272727272727272,
+        "1.5": 0.7393939393939394
+      },
+      "centroid_recall_by_tau": {
+        "0.25": 0.5806451612903226,
+        "0.5": 0.6236559139784946,
+        "0.75": 0.6451612903225806,
+        "1.0": 0.6451612903225806,
+        "1.5": 0.6559139784946236
+      },
+      "scene_chamfer_mean_m": 0.09976105285445233,
+      "surf_recall@0.05": 0.6660537634408602,
+      "surf_precision@0.05": 0.5304777777777778,
+      "surf_fscore@0.05": 0.5905848832882058,
+      "surf_recall@0.02": 0.4505569892473118,
+      "surf_precision@0.02": 0.3424,
+      "surf_fscore@0.02": 0.38910234782019115
+    }
+  }
+}

@@ -1,0 +1,374 @@
+"""Evaluation runner.
+
+Usage::
+
+    python -m r2s3d_core.eval.run --source replica --scene room0 --method sam3d_layout
+
+Runs a method over one or more scenes, computes the Phase-0 metric bundle against
+GT, and writes ``results/<phase>_<name>/run.json`` with full provenance. Plots and
+tables are always regenerated from run.json, never hand-edited.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import subprocess
+import time
+from pathlib import Path
+from typing import List
+
+import numpy as np
+
+from ..baselines import AVAILABLE, get_method
+from ..data.registry import make_source
+from ..eval.metrics import SceneObject, evaluate, gt_to_scene_object
+
+PKG_ROOT = Path(__file__).resolve().parents[3]  # r2s3d_core/
+DEFAULT_RESULTS = PKG_ROOT / "results"
+
+
+def _git_sha() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=str(PKG_ROOT), stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        return "unknown"
+
+
+def _json_default(o):
+    if isinstance(o, (np.floating,)):
+        return float(o)
+    if isinstance(o, (np.integer,)):
+        return int(o)
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    raise TypeError(f"not serializable: {type(o)}")
+
+
+def run(args: argparse.Namespace) -> Path:
+    method_fn = get_method(args.method)
+    config = {
+        "method": args.method,
+        "source": args.source,
+        "stride": args.stride,
+        "iou_threshold": args.iou_threshold,
+        "compute_geometry": not args.no_geometry,
+        "surface_points": args.surface_points,
+        "seed": args.seed,
+        "trans_noise_m": args.trans_noise_m,
+        "rot_noise_deg": args.rot_noise_deg,
+        "scale_noise": args.scale_noise,
+        "full_frame": args.full_frame,
+        "icp_accumulate": args.icp_accumulate,
+        # object_track (Phase 2)
+        "detections": args.detections,
+        "reid": args.reid,
+        "late_merge": args.late_merge,
+        "assoc_reproj": args.assoc_reproj,
+        "reproj_pix_gate": args.reproj_pix_gate,
+        "reproj_depth_ratio_tol": args.reproj_depth_ratio_tol,
+        "track_gate": args.track_gate,
+        "gate_min_obs": args.gate_min_obs,
+        "gate_min_score": args.gate_min_score,
+        "v1_dedup": args.v1_dedup,
+        "icp": args.icp,
+        "registration": args.registration,
+        "node_payload": args.node_payload,
+        "cluster_denoise": args.cluster_denoise,
+        "scale_source": args.scale_source,
+        "scale_icp_iters": args.scale_icp_iters,
+        "icp_gravity": args.icp_gravity,
+        "icp_denoise": args.icp_denoise,
+        "icp_transonly": args.icp_transonly,
+        "scale_grow_only": args.scale_grow_only,
+        "render_compare": args.render_compare,
+        "rc_scale_only": args.rc_scale_only,
+        "rc_max_views": args.rc_max_views,
+        "debug_html": args.debug_html,
+        "corrupt": {"dropout": args.det_dropout, "jitter_px": args.det_jitter,
+                    "track_break": args.det_track_break, "split": args.det_split_prob},
+    }
+
+    # Compute the output dir up front so the SAM3D queue and GLB exports live inside it.
+    name = args.name or f"{args.source}_{args.method}"
+    out_dir = Path(args.out) if args.out else DEFAULT_RESULTS / f"{args.phase}_{name}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Per-experiment SAM3D queue: each run is self-contained so objects from different
+    # experiments never mix in one queue. Reruns of the SAME experiment still hit the
+    # input-hash cache in this dir (collect is free). Override with --sam3d-queue to
+    # share a queue deliberately.
+    config["sam3d_queue"] = args.sam3d_queue or str(out_dir / "sam3d_queue")
+
+    per_scene = {}
+    t0 = time.time()
+    for scene in args.scene:
+        # gt_mesh/asset_root are procthor-only; pass only when set so other backends
+        # (replica, ...) that don't accept them are unaffected.
+        src_kwargs = {}
+        if args.split is not None:
+            src_kwargs["split"] = args.split
+        if args.gt_mesh is not None:
+            src_kwargs["gt_mesh"] = args.gt_mesh
+        if args.asset_root is not None:
+            src_kwargs["asset_root"] = args.asset_root
+        src = make_source(args.source, scene, root=args.data_root, stride=args.stride, **src_kwargs)
+        gt = src.gt()
+        if not gt:
+            print(f"[{scene}] WARNING: no GT available; skipping (need semantic assets).")
+            per_scene[scene] = {"error": "no_gt"}
+            continue
+        preds: List[SceneObject] = method_fn(src, gt, config)
+        gts = [gt_to_scene_object(g) for g in gt]
+        if args.label_map == "clip":
+            from .label_map import remap_pred_labels
+            vocab = sorted({(g.label or "").strip().lower() for g in gt if g.label})
+            mapping = remap_pred_labels(preds, vocab, threshold=args.label_map_threshold)
+            changed = {k: v for k, v in mapping.items() if k != v}
+            print(f"[{scene}] CLIP label-map: snapped {len(changed)}/{len(mapping)} distinct "
+                  f"labels to the {len(vocab)}-word GT vocab")
+        m = evaluate(preds, gts, iou_threshold=args.iou_threshold,
+                     compute_geometry=config["compute_geometry"],
+                     surface_points=args.surface_points)
+        # merge any method-reported scene stats (e.g. object_track SAM3D invocations,
+        # fragmentation) into the scene metrics so they land in run.json + aggregate.
+        m.update(config.get("_method_stats", {}).get(scene, {}))
+        per_scene[scene] = m
+        print(f"[{scene}] pred={m['n_pred']} gt={m['n_gt']} "
+              f"F1={m['f1']:.3f} S2C={m['scan2cad_accuracy']:.3f} "
+              f"cent={m['centroid_err_median_m']:.3f}m rot={m['rotation_err_median_deg']:.1f}deg "
+              f"dup={m['duplicate_rate']:.2f}"
+              + (f" sam3d={m['sam3d_invocations']} tracks/gt={m.get('tracks_per_gt', float('nan')):.2f}"
+                 if "sam3d_invocations" in m else ""))
+
+        # Always emit a viewable GLB of the placement (pred / gt / overlay) unless
+        # disabled — visual inspection is a standing requirement, reused across phases.
+        if not args.no_glb and preds:
+            try:
+                from ..recon.scene_glb import export_pred_vs_gt
+                paths = export_pred_vs_gt(preds, gts, out_dir / str(scene),
+                                          lite=True, full=args.glb_full)
+                print(f"[{scene}] GLB -> {paths.get('compare_lite')}")
+            except Exception as e:  # never let viz failure kill a metrics run
+                print(f"[{scene}] WARNING: GLB export failed: {e}")
+
+        # release backend resources (e.g. the AI2-THOR renderer) so processes don't leak
+        # across scenes; without this each scene left a lingering thor-Linux64 process.
+        if hasattr(src, "close"):
+            try:
+                src.close()
+            except Exception:
+                pass
+
+    # aggregate across scenes (mean of per-scene metrics that are scalar and finite)
+    agg = {}
+    scene_metrics = [m for m in per_scene.values() if "error" not in m]
+    if scene_metrics:
+        for k in scene_metrics[0]:
+            vals = [m[k] for m in scene_metrics if isinstance(m.get(k), (int, float))]
+            vals = [v for v in vals if np.isfinite(v)]
+            if vals:
+                agg[k] = float(np.mean(vals))
+
+    record = {
+        "git_sha": _git_sha(),
+        "config": {k: v for k, v in config.items() if not k.startswith("_")},
+        "dataset": args.source,
+        "scenes": list(args.scene),
+        "metrics": {"aggregate": agg, "per_scene": per_scene},
+        "wall_time_s": time.time() - t0,
+        "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+
+    out_path = out_dir / "run.json"
+    with open(out_path, "w") as f:
+        json.dump(record, f, indent=2, default=_json_default)
+    print(f"\nwrote {out_path}")
+
+    # Per-scene object-centric scene graph: results/<run>/<scene>/scene_graph.json. Each
+    # object carries label + metric center/extents/pose + a ref to its cached mesh, so the
+    # scene graph is directly consumable for downstream inference (e.g. navigation) and a
+    # visualizer can rebuild posed meshes (apply T_world_mesh to the mesh) with no re-run.
+    placements = config.get("_placements")
+    if placements and not args.no_placements:
+        # GT-detector methods carry ground-truth labels; the detector path carries predicted.
+        label_source = "detector" if args.method.startswith("object_track") else "gt"
+        for scene, data in placements.items():
+            sg = {
+                "scene": scene, "source": args.source, "method": args.method,
+                "label_source": label_source,
+                "frame": "world: gravity-aligned Z-up, meters (OpenCV-optical cameras)",
+                "git_sha": record["git_sha"], "created_at": record["created_at"],
+                "sam3d_queue": data.get("sam3d_queue"),
+                "objects": data["objects"],
+            }
+            spath = out_dir / str(scene) / "scene_graph.json"
+            spath.parent.mkdir(parents=True, exist_ok=True)
+            with open(spath, "w") as f:
+                json.dump(sg, f, indent=2, default=_json_default)
+            print(f"wrote {spath}  ({len(data['objects'])} objects, labels={label_source})")
+    return out_path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="R2S3D v2 evaluation runner")
+    p.add_argument("--source", default="replica", help="SequenceSource backend")
+    p.add_argument("--scene", nargs="+", required=True, help="scene id(s), e.g. room0")
+    p.add_argument("--method", required=True, choices=AVAILABLE)
+    p.add_argument("--data-root", default=None, help="override dataset root")
+    p.add_argument("--stride", type=int, default=20, help="use every Nth frame")
+    p.add_argument("--split", default=None,
+                   help="procthor: dataset split (default 'val' = the benchmark slice; a given "
+                        "id is a DIFFERENT house on train vs val)")
+    p.add_argument("--gt-mesh", default=None, choices=["box", "asset", "none"],
+                   help="procthor: GT mesh policy. 'box' (default) = OBB as a box; 'asset' = "
+                        "real THOR asset meshes fitted to the OBB (activates the Mesh rows / "
+                        "Chamfer + geo-recall; needs `--extra mesh` + AI-8 download); 'none'.")
+    p.add_argument("--asset-root", default=None,
+                   help="procthor: THOR asset dir (else $R2S3D_THOR_ASSETS or the data-root default)")
+    p.add_argument("--iou-threshold", type=float, default=0.25)
+    p.add_argument("--label-map", default="none", choices=["none", "clip"],
+                   help="'clip': snap each predicted label to the closest GT-vocab word by "
+                        "CLIP text cosine before scoring (coworker fairi-sgbench protocol; "
+                        "needed for fair open-vocab / generic / pf label F1). Default 'none' "
+                        "= exact normalized-string match (our stricter diagnostic).")
+    p.add_argument("--label-map-threshold", type=float, default=None,
+                   help="with --label-map clip: cosine floor below which a label maps to "
+                        "'unknown' instead of being forced onto a class (default None = force).")
+    p.add_argument("--no-geometry", action="store_true", help="skip Chamfer/F-score (faster)")
+    p.add_argument("--surface-points", type=int, default=10000)
+    p.add_argument("--name", default=None, help="results subdir name")
+    p.add_argument("--phase", default="phase0", help="results subdir prefix (e.g. phase2)")
+    p.add_argument("--out", default=None, help="explicit output dir")
+    p.add_argument("--sam3d-queue", default=None,
+                   help="SAM3D disk-queue dir. Default: <out_dir>/sam3d_queue so each "
+                        "experiment is self-contained. Set to share a queue deliberately.")
+    p.add_argument("--no-glb", action="store_true",
+                   help="skip the pred/gt/overlay GLB export (on by default)")
+    p.add_argument("--no-placements", action="store_true",
+                   help="skip writing placements.json (per-object T_world_mesh for reviz)")
+    p.add_argument("--glb-full", action="store_true",
+                   help="also write full-texture GLBs (large) alongside the lite ones")
+    # sam3d_layout: full frame (default) vs tight crop fed to SAM3D
+    p.add_argument("--crop", dest="full_frame", action="store_false",
+                   help="feed SAM3D a tight bbox crop instead of the full frame "
+                        "(default full frame; crop over-predicts scale — see STATUS.md)")
+    p.set_defaults(full_frame=True)
+    p.add_argument("--icp-accumulate", action="store_true",
+                   help="sam3d_layout_icp: fuse the object's masked depth over ALL views as "
+                        "the ICP target (default single best view). Proto multi-view fusion.")
+    # object_track (Phase 2): detector-driven tracks
+    p.add_argument("--detections", default=None,
+                   help="dir of cached DetectionSets (from `python -m r2s3d_core.detect.run`)")
+    p.add_argument("--reid", dest="reid", action="store_true", default=None,
+                   help="force re-ID (step-2 association) on")
+    p.add_argument("--no-reid", dest="reid", action="store_false",
+                   help="force re-ID off (object_track_naive default)")
+    p.add_argument("--late-merge", dest="late_merge", action="store_true", default=None,
+                   help="force late-merge on")
+    p.add_argument("--no-late-merge", dest="late_merge", action="store_false",
+                   help="force late-merge off")
+    p.add_argument("--assoc-reproj", action="store_true",
+                   help="use the anisotropic reprojection association gate (PHASE_SPECS 6a); "
+                        "default off = legacy isotropic world-space gate")
+    p.add_argument("--reproj-pix-gate", type=float, default=None,
+                   help="tuning (with --assoc-reproj): perpendicular-to-ray pixel tolerance "
+                        "(default 60; PROVISIONAL, needs a sweep on scene 200)")
+    p.add_argument("--reproj-depth-ratio-tol", type=float, default=None,
+                   help="tuning (with --assoc-reproj): along-ray depth-ratio tolerance "
+                        "(default 0.35; PROVISIONAL, needs a sweep on scene 200)")
+    p.add_argument("--track-gate", action="store_true",
+                   help="object_track: precision gate — demote weakly-supported MATURE tracks "
+                        "(short-lived / low-confidence spurious detections) to REJECTED. "
+                        "Default off; cuts the detector-driven false-positive tracks that floor "
+                        "precision on real data (see scripts/rs_coverage_diag.py).")
+    p.add_argument("--gate-min-obs", type=int, default=None,
+                   help="tuning (with --track-gate): min associated observations to keep a "
+                        "mature track (default 6)")
+    p.add_argument("--gate-min-score", type=float, default=None,
+                   help="tuning (with --track-gate): min mean detector confidence to keep a "
+                        "mature track (default 0.40)")
+    p.add_argument("--v1-dedup", action="store_true",
+                   help="object_track_naive: add v1's 0.5 m same-label position suppression")
+    p.add_argument("--icp", action="store_true",
+                   help="object_track: refine each track against its fused multi-view cloud "
+                        "(legacy alias for --registration icp)")
+    p.add_argument("--registration", default=None,
+                   choices=["none", "icp", "scale", "scale_icp"],
+                   help="object_track: registration mode against the track's fused cloud. "
+                        "'scale'/'scale_icp' add the depth-extent scale-fit (the lever rigid "
+                        "ICP lacks); overrides --icp when set.")
+    p.add_argument("--no-cluster-denoise", dest="cluster_denoise", action="store_false",
+                   default=True,
+                   help="node-payload cluster: use the RAW fused cloud (no SOR+DBSCAN cleaning). "
+                        "Default cleans it (ConceptGraphs/HOV-SG convention) for a faithful "
+                        "clustering-method node; --no-cluster-denoise is the raw-cloud ablation.")
+    p.add_argument("--node-payload", default="asset", choices=["asset", "cluster"],
+                   help="object_track: object representation. 'asset' (default) = SAM3D mesh + "
+                        "scale-fit + ICP; 'cluster' = the track's fused observed point cloud (no "
+                        "SAM3D, no registration) -- the ablation baseline isolating generation "
+                        "(stands in for clustering scene-graph methods). See "
+                        "docs/GENERATION_ABLATION_PLAN.md.")
+    p.add_argument("--scale-source", default="fused",
+                   choices=["fused", "fused_robust", "reproj", "reproj_mv", "silhouette"],
+                   help="how scale-fit measures the object's metric size: 'fused' = raw "
+                        "fused-cloud OBB (contaminated on detector masks); 'fused_robust' = "
+                        "outlier-rejected cloud (Method A); 'reproj' = clean 2D mask + median "
+                        "depth, SAM3D aspect for the 3rd axis (Method B); 'reproj_mv' = same but "
+                        "3rd axis from a second ~orthogonal view (Method B2).")
+    p.add_argument("--scale-icp-iters", type=int, default=5,
+                   help="scale_icp: max scale<->ICP alternations (converges early per object).")
+    p.add_argument("--icp-gravity", action="store_true",
+                   help="object_track icp/scale_icp: constrain the ICP delta to translation + "
+                        "yaw about world-up (gravity-aligned), so registration cannot tip an "
+                        "upright object off vertical. Fixes ICP degrading rotation on one-sided "
+                        "real clouds.")
+    p.add_argument("--icp-denoise", action="store_true",
+                   help="object_track icp/scale_icp: denoise the fused-cloud ICP target "
+                        "(SOR + largest-DBSCAN-cluster) before registering, so ICP fits the "
+                        "object body rather than detector-mask edge-bleed.")
+    p.add_argument("--icp-transonly", action="store_true",
+                   help="object_track icp/scale_icp: translation-only ICP -- keep the SAM3D "
+                        "layout orientation entirely and only snap position. Use when the "
+                        "generator's orientation is already good and ICP would only perturb it.")
+    p.add_argument("--scale-grow-only", action="store_true",
+                   help="object_track scale/scale_icp: grow-only scale-fit -- only ENLARGE the "
+                        "mesh to the observed depth extent, never shrink. The observed extent is "
+                        "a lower bound on true size, so this fixes under-sized (OOD) meshes "
+                        "without regressing already-correct (in-distribution) ones.")
+    p.add_argument("--render-compare", action="store_true",
+                   help="object_track icp/scale_icp: fit pose+scale by matching the mesh's "
+                        "rendered silhouette+depth to the observed masks across the track's kept "
+                        "views (replaces ICP/scale-fit). Needs a GPU EGL context.")
+    p.add_argument("--rc-scale-only", action="store_true",
+                   help="render-compare: freeze pose to the layout and optimize ONLY per-axis "
+                        "scale (silhouette fixes size without the pose search degrading rotation "
+                        "on viewpoint-clustered tracks). Use with --render-compare.")
+    p.add_argument("--rc-max-views", type=int, default=4,
+                   help="render-compare: max views matched against (largest mask first). "
+                        "Multi-view in sim (clean poses); set 1 on real (single-view is "
+                        "drift-robust: mesh rendered back into its own observation frame).")
+    p.add_argument("--det-dropout", type=float, default=0.0, help="corruption: drop-detection prob")
+    p.add_argument("--det-jitter", type=int, default=0, help="corruption: bbox/mask jitter px")
+    p.add_argument("--det-track-break", type=float, default=0.0, help="corruption: id-break prob")
+    p.add_argument("--det-split-prob", type=float, default=0.0,
+                   help="corruption: split one detection into two (fragmentation stress)")
+    p.add_argument("--debug-html", default=None,
+                   help="object_track: dir to write per-scene association/merge debug HTML")
+    # oracle_noisy knobs
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--trans-noise-m", type=float, default=0.05)
+    p.add_argument("--rot-noise-deg", type=float, default=5.0)
+    p.add_argument("--scale-noise", type=float, default=0.05)
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    run(args)
+
+
+if __name__ == "__main__":
+    main()

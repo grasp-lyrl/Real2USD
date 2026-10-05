@@ -1,0 +1,75 @@
+{
+  "git_sha": "1bfc7ba004b11704cd4275fcc51199c53c4118fa",
+  "config": {
+    "method": "oracle",
+    "source": "synthetic",
+    "stride": 1,
+    "iou_threshold": 0.25,
+    "compute_geometry": true,
+    "surface_points": 10000,
+    "seed": 0,
+    "trans_noise_m": 0.05,
+    "rot_noise_deg": 5.0,
+    "scale_noise": 0.05
+  },
+  "dataset": "synthetic",
+  "scenes": [
+    "synthetic"
+  ],
+  "metrics": {
+    "aggregate": {
+      "n_pred": 4.0,
+      "n_gt": 4.0,
+      "count_ratio": 1.0,
+      "iou_threshold": 0.25,
+      "tp": 4.0,
+      "fp": 0.0,
+      "fn": 0.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "recall@0.5": 1.0,
+      "duplicate_rate": 0.0,
+      "scan2cad_accuracy": 1.0,
+      "label_accuracy": 1.0,
+      "centroid_err_median_m": 0.0,
+      "centroid_err_mean_m": 0.0,
+      "rotation_err_median_deg": 0.0,
+      "rotation_err_mean_deg": 0.0,
+      "scale_err_median": 0.0,
+      "scale_err_mean": 0.0,
+      "chamfer_l1_median_m": 0.01859299979910026,
+      "fscore@0.05_mean": 1.0,
+      "fscore@0.02_mean": 0.9350107264846136
+    },
+    "per_scene": {
+      "synthetic": {
+        "n_pred": 4,
+        "n_gt": 4,
+        "count_ratio": 1.0,
+        "iou_threshold": 0.25,
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "recall@0.5": 1.0,
+        "duplicate_rate": 0.0,
+        "scan2cad_accuracy": 1.0,
+        "label_accuracy": 1.0,
+        "centroid_err_median_m": 0.0,
+        "centroid_err_mean_m": 0.0,
+        "rotation_err_median_deg": 0.0,
+        "rotation_err_mean_deg": 0.0,
+        "scale_err_median": 0.0,
+        "scale_err_mean": 0.0,
+        "chamfer_l1_median_m": 0.01859299979910026,
+        "fscore@0.05_mean": 1.0,
+        "fscore@0.02_mean": 0.9350107264846136
+      }
+    }
+  },
+  "wall_time_s": 0.062463998794555664,
+  "created_at": "2026-07-07T15:46:16"
+}

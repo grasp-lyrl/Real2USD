@@ -3,6 +3,10 @@ humble_ws/build
 humble_ws/install
 humble_ws/log
 
+# External Meta SAM3D fork clone (its own git repo + gated ~13GB checkpoints; see
+# real2sam3d/sam3d_setup.sh to (re)create). Never vendored into this repo.
+humble_ws/src_Real2USD/real2sam3d/sam-3d-objects/
+
 # Gemini API key
 humble_ws/src_Real2USD/real2usd/config/gemini_key.py
 humble_ws/src_Real2USD/real2sam3d/config/gemini_key.py
@@ -35,6 +39,16 @@ data
 .ros
 .vscode
 
+# The bare `data` rule above (dataset dirs) also matches the r2s3d_core source
+# package literally named `data/` (the SequenceSource backends). Re-include it so the
+# backends are tracked — without this a fresh clone has no dataset adapters.
+!/humble_ws/src_Real2USD/r2s3d_core/src/r2s3d_core/data/
+!/humble_ws/src_Real2USD/r2s3d_core/src/r2s3d_core/data/*.py
+
+# SAM3D disk-queue contents are regenerable scratch (per-job meta/rgb/mask/depth +
+# generated meshes). Keep only the run.json records under results/<exp>/.
+sam3d_queue/
+
 # User data directory (all hidden files go here via HOME=/home/me/tmp)
 humble_ws/tmp
 *.log
@@ -62,3 +76,6 @@ lib
 lib64
 .pytest_cache/
 .pytest_ros_log/
+# paper/figs: PDFs are the figures the paper includes; the fig scripts also dump PNG
+# previews of the same renders (~0.6 MB each). Regenerable duplicates — don't track.
+paper/figs/*.png
