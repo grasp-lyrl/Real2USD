@@ -8,6 +8,135 @@ it honest: "done" means *verified* (tests pass / numbers produced), not "code wr
 - **Things only the human can do: `ACTION_ITEMS.md`** (Claude adds to it on every gated dependency)
 - Datasets & access: `DATASETS.md` · In-family systems & ideas to steal: `RELATED_WORK.md`
 
+_**★ 2026-10-05 — SeMaNa WORKSHOP PAPER SUBMITTED; LaTeX SOURCE MOVED OUT OF THIS REPO.**
+The 4-page paper was submitted (compiled externally as `SceneBuilder-IROS2026-SeMaNa.pdf`,
+kept in Chris's SceneBuilder project, not here). `paper/main.tex` + `references.bib` were
+removed from the repo so there is a single source of truth; the repo keeps only the
+regenerable figures under `paper/figs/` (PDFs tracked, PNG side-outputs ignored) and the
+`results/` provenance the tables were built from. The 2026-07-24/27 session code
+(render-and-compare, ICP variants, diagnostics, timing probe, val-10 silhouette runs)
+is committed on `v2-rework`._
+
+_**★ SESSION 2026-07-27 — PAPER AUDIT + VAL-10 SILHOUETTE PROVENANCE RECOVERED + `mainv2.tex`.**
+Full claim-by-claim audit of `paper/main.tex` against the results CSVs/run.jsons:
+`docs/PAPER_SEMANA_AUDIT.md`. Rewrite landed as `paper/mainv2.tex` (+ rebuilt
+`paper/references.bib` with keys matching the cites — the old bib was a stub with
+mismatched short keys). CFP deadline **2026-07-29**.
+
+- **Table-1 `+scale+ICP` provenance RECOVERED.** The val-10 ICP+silhouette-scale numbers
+  (0.45/0.20/0.13/5.9°/0.27) had NO run.json in `results/` — they lived in another
+  session's /tmp scratchpad (`rr/val10_rcscale`). Transferred to
+  `results/paper/sim/asset_silscaleicp_gt_s<id>/` (+ the rest of the scratch tree to
+  `results/recovered_rr_20260727/`); `agg_paper.py` regenerates the row exactly (and now
+  emits a `rot_deg` column). **Lesson: eval runs must write into `results/`, not the
+  session scratchpad — /tmp does not survive.**
+- **✅ 4 partial scenes RE-RUN to full coverage** (s137/428/534/573 had scored only a
+  subset of predictions — 60.1 vs 73.5 n_pred mean; the scratch runs raced the queue).
+  Re-run with `--render-compare --rc-scale-only --icp-denoise` (partials kept as
+  `*_partial`, excluded from agg by naming); n_pred now matches the icp runs exactly.
+  **Final val-10 `+scale+ICP` (silhouette) row — STRONGER than the partial numbers:
+  IoU-F1 0.48, rec@.5 0.23 (ties cluster), S2C 0.14, rot 6.1°, scale 0.27** —
+  beats/ties cluster on everything except centroid. `tab:sim` + intro updated in
+  mainv2. **Gotcha found:** the first re-run attempt failed `eglInitialize` on all 4 —
+  the Xorg session moved from `:0` to **`:1`** at the 2026-07-24 reboot, so the
+  `R2S3D_DISPLAY=:0` default in the run scripts is stale; `DISPLAY=:1` + the gdm
+  Xauthority works (see memory [[x-display-moved-to-1]]).
+- **Paper fixes in `mainv2.tex`** (see audit doc §A/§B for the full list): SAM3 front-end
+  row now consistently UNGATED (0.45/0.75/0.41/0.51; the old row mixed gated F1/prec/cd-F1
+  with ungated recall); oracle prose now val-10-consistent (0.62→0.74, + oracle scale-fit
+  scale 0.32→0.13, S2C 0.14→0.33); real-robot rotation caveat now cites the paired test
+  (23/34, p=0.046); "+22%"→+20%; "nearly doubles S2C"→0.09→0.13; v1 leftover overclaims cut
+  from Related Work; `fig1.pdf` pipeline teaser finally included (`fig:pipeline` was a
+  dangling ref); nav-figure paths fixed; cleveref/framed added; appendix dropped; nav LLM
+  transcript compressed; Limitations+Conclusion written. Real centroid-floor wording stays
+  on odometry drift (quick mention, per Chris) — not the extrinsic framing.
+- **Timing probe DONE** (`scripts/figs/timing_probe.py` →
+  `results/paper/_tables/timing_probe.json`, hallway-1 stride 2, warm caches):
+  YOLOE **12 ms/frame**, tracker **28 ms/frame**, placement (mesh load + layout +
+  reproj scale-fit + ICP) **1.5 s/object**, SAM3D generation **median 20.6 s/object
+  (p10–p90 18–27 s)** from 662 consecutive `_assetq` drain gaps. Paper §III-B now
+  quotes these (near-online: per-frame path real-time; cost scales with object count).
+- **NEXT:** finish the 4-scene re-run → `agg_paper.py` → update `tab:sim` numbers in
+  mainv2 if shifted (DONE: 0.48/0.23/0.14/6.1/0.27); Chris copies mainv2 into Overleaf
+  (repo is not the compile target); final length pass to 4 pp._
+
+_**★ SESSION 2026-07-24 — BACK-END ALGORITHM PUSH: DIAGNOSTICS + RENDER-AND-COMPARE.**
+Goal: strengthen the story by improving the placement algorithm. Probed every lever; most
+tweaks failed (honestly), but render-and-compare is a genuine win and two diagnostics now let
+us state limits rigorously. All new flags are OPT-IN (defaults unchanged).
+
+- **Registration rotation degradation is REAL, not an artifact.** New `scripts/figs/
+  paired_rotation_real.py` pairs the SAME objects across variants (4 real scenes, n=34):
+  +ICP worsens rotation on 23/34 objects, median +1.4°, **Wilcoxon p=0.046**. (The table's
+  per-scene rotation *median* is also confounded by the IoU-matched set, but the paired test
+  confirms the underlying effect.) `--icp-denoise` (register vs the denoised cloud, not raw)
+  is a modest real win (lounge0 F1 0.156→0.182, cent 0.31→0.29), neutral on clean sim. Kept.
+  `--icp-gravity`/`--icp-transonly` added, unproven on the noisy table median.
+- **Scale-fit is an OOD-only tool — confirmed, no variant beats status-quo reproj.** Sim s200
+  sweep: SAM3D's OWN scale (scale_err 0.217) beats every depth scale-fit (reproj 0.316,
+  fused_robust 0.448, fused 0.692); best sim config is **+ICP with NO scale-fit** (F1 0.545).
+  `--scale-grow-only` (lower-bound: only enlarge) is a **DUD** — hurts both regimes (sim
+  0.217→0.344 via box-inflation loose-F1 artifact; real 0.48→0.663 since SAM3D error is
+  bidirectional). Honest fix = make scale-fit CONDITIONAL (fire only when SAM3D grossly
+  disagrees with depth), or document as real-only. See [[teaser-registration-finding]],
+  [[scale-fit-hurts-on-detector-masks]].
+- **Recall is DETECTION-limited, not association-limited.** New `scripts/figs/
+  detection_recall_diag.py`: YOLOE detects only 68/93 = 0.731 of s200 GT in ≥1 frame; the
+  tracker already matures ~all of it (tracks/gt 0.785). Association headroom ≈ 0 → tuning
+  association won't move recall; the wall is the detector (reinforces [[perception-robustness-crux]]).
+- **★ RENDER-AND-COMPARE — the win.** New `src/r2s3d_core/registration/render_compare.py`
+  (pipeline mode `--render-compare`) fits pose+per-axis scale so the mesh's rendered
+  silhouette+depth matches the observed masks across a track's kept views (masks ≫ the
+  contaminated cloud). Verified on ProcTHOR (perfect poses): single fridge **3D-IoU 0.54→0.90,
+  scale_err 0.60→0.03**; batch of 10 objects with an **L2 scale regularizer toward the SAM3D
+  prior** (kills thin-object scale blowups while letting real corrections through, e.g. dresser
+  2.50→0.16): **native median 3D-IoU 0.372→0.621, scale_err 0.476→0.285 (7/10 improved)**;
+  YOLOE masks hold on objects with enough views. Fails on thin/complex objects (chairs,
+  paintings — silhouette under-constrains the thin axis). Prototype/validation scripts:
+  `render_compare_prototype.py` (+GT validation +overlay), `render_compare_sim.py`,
+  `render_compare_batch.py`.
+- **Real-robot back-end is CALIBRATION-limited — now proven.** Same render-compare on REAL
+  IMPROVES silhouette IoU (0.22→0.59) but WORSENS GT 3D-IoU (0.33→0.19, rot 9°→30°): a
+  3D-correct object reprojects to the wrong pixels, so mask-matching pulls it to a wrong 3D
+  pose. The sim/real contrast (identical method, only poses differ) is the evidence: the real
+  table's floor is the ~0.5 m extrinsic miscalibration, not the algorithm. Overlay:
+  `results/paper/_figs/fig1/render_compare_overlay.png` (real) vs `..._sim_overlay.png` (sim).
+- **Env:** NVIDIA driver/library mismatch (post-update) broke EGL mid-session; **reboot fixed it**
+  (Open3D headless EGL needs no DISPLAY). Only GPU rendering was affected; CPU eval unaffected.
+- **★ SCENE-LEVEL RESULT (sim s200, RESOLVED):** full joint render-compare pose+scale does NOT
+  beat ICP at scene scale (F1 0.497<0.545, rot 8.0° — pose search overfits viewpoint-clustered
+  tracks). The WIN is the decomposition **pose from ICP + SCALE from the silhouette**
+  (`--render-compare --rc-scale-only --icp-denoise`; ICP rigid pose then silhouette scale-only):
+  F1 **0.545** (ties ICP) but **rec@.5 0.22→0.31 (+40%), Scan2CAD 0.151→0.183, scale_err
+  0.269→0.216, centroid 0.045→0.041**, rot 3.6→4.6°. IoU-F1@0.25 is too loose to reward size;
+  the gain is in the STRICT metrics. **Key ablation:** among scale cues added to ICP,
+  depth-extent HURTS (F1 0.509, scale 0.316) while **silhouette HELPS** — the first scale cue
+  that improves in-distribution metric fidelity. Frame as `scale_icp` with a silhouette scale
+  cue (NOT a "hybrid"): pose from depth geometry, size from the 2D mask.
+- **DEPTH-FREE placement feasible in sim** (`scripts/figs/render_compare_depthfree.py`): with NO depth
+  anywhere in placement — position from TRIANGULATING mask-centroid rays across views (metric from the
+  camera baselines, not a depth sensor), scale from multi-view silhouette, orientation from SAM3D —
+  compact well-observed objects match depth-full (fridge 3D-IoU 0.87 vs 0.90, scale 0.04 vs 0.03;
+  paintings/bed 0.49–0.80); large flat tables degrade (triangulation ~0.30 m + silhouette thin-axis
+  ambiguity → IoU 0.11–0.51). Median depth-free 3D-IoU ≈0.50 vs depth-full ≈0.62. **Takeaway: depth is
+  NOT fundamentally required for metric mapping — multi-view + metric camera poses suffice; depth's real
+  value is enabling SINGLE-VIEW, drift-robust placement on real hardware.** Caveat: shape still from
+  SAM3D on RGB-D (cached meshes reused) → this is depth-free *placement*, not yet depth-free *generation*
+  (RGB-only SAM3D regen in progress). Framed as a Discussion/Future-Work aside, not a headline table.
+  **Full status + results + next steps: `docs/DEPTH_FREE_EXPERIMENT.md`** (RGB-only regen now DONE:
+  bimodal — volumetric objects survive depth-free, flat objects fail on both generation and placement).
+- **Scale sanity:** `rc_lambda_depth` 0 vs 0.5 negligible on s200 (F1 0.545=0.545, scale 0.223 vs 0.216)
+  → the depth term is inert; val-10 silhouette numbers valid for the depth-off method. Paper method =
+  "silhouette scale-fit" (one objective, `eq:rc`): multi-view render-and-compare in sim, single-view
+  closed-form extent on real (pose-free, drift-robust). `tab:sim` +scale+ICP updated to silhouette
+  (S2C 0.13, scale 0.27 — now beats cluster on F1/S2C/scale; cluster leads only rec@.5/cent).
+- **NEXT:** (1) confirm across **val-10** with the ICP+silhouette-scale config for the paper;
+  (2) add a **rotation column** to `tab:sim` (ICP improves sim rotation 8→4°, direct C1 evidence);
+  (3) land the do-regardless honesty edits in `docs/PAPER_FLOW_NOTES.md` (scale overclaim,
+  Table-1 reframe, front-end merge, real=calibration); (4) optional: tune `rc_lambda_scale` for
+  noisy large-correction cases. Speed: render-compare needs GPU EGL + renderer recycling
+  (`_RECYCLE_EVERY`, guards the Filament leak segfault)._
+
 _**★ SESSION 2026-07-22 — VAL-10 ORACLE UPPER BOUND + SAM 3 DETECTOR ABLATION + PAPER TIGHTENED.**
 Committed `e33d0d3` (v2-rework; SAM3D queue meshes gitignored, only run.json/CSV provenance tracked).
 - **Val-10 oracle campaign DONE** (744 GT-mask SAM3D meshes, 0 fail; `scripts/run_paper_oracle_val10.sh`
